@@ -177,8 +177,11 @@ function getIntensity(
   return 1
 }
 
-// Claude orange color (hex #da7756)
-const claudeOrange = chalk.hex('#da7756')
+// VERBOO-BRAND: cor primária roxa Verboo (hex #AD34FE).
+// Variável `claudeOrange` mantida (em vez de renomear para `verbooPurple`)
+// para minimizar churn nos call sites — upstream pode mudar o hex sem
+// que precisemos resolver conflitos em cada uso.
+const claudeOrange = chalk.hex('#AD34FE')
 
 function getHeatmapChar(intensity: number): string {
   switch (intensity) {

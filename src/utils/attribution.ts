@@ -331,8 +331,9 @@ export async function getEnhancedPRAttribution(
     return ''
   }
 
+  // VERBOO-BRAND
   const defaultAttribution =
-    '🤖 Generated with [OpenClaude](https://github.com/Gitlawb/openclaude)'
+    '🤖 Generated with [Verboo Code](https://github.com/verbeux-ai/code)'
 
   // Get AppState first
   const appState = getAppState()
@@ -378,7 +379,8 @@ export async function getEnhancedPRAttribution(
     memoryAccessCount > 0
       ? `, ${memoryAccessCount} ${memoryAccessCount === 1 ? 'memory' : 'memories'} recalled`
       : ''
-  const summary = `🤖 Generated with [OpenClaude](https://github.com/Gitlawb/openclaude) (${claudePercent}% ${promptCount}-shotted by ${shortModelName}${memSuffix})`
+  // VERBOO-BRAND
+  const summary = `🤖 Generated with [Verboo Code](https://github.com/verbeux-ai/code) (${claudePercent}% ${promptCount}-shotted by ${shortModelName}${memSuffix})`
 
   // Append trailer lines for squash-merge survival. Only for allowlisted repos
   // (INTERNAL_MODEL_REPOS) and only in builds with COMMIT_ATTRIBUTION enabled —

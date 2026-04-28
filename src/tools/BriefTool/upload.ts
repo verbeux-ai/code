@@ -67,8 +67,12 @@ function debug(msg: string): void {
  * skip → web viewer sees inert cards with no file_uuid.
  */
 function getBridgeBaseUrl(): string {
+  // VERBOO-BRAND: VERBOO_API_URL é o override canônico para o backend Verboo.
+  // ANTHROPIC_BASE_URL e BASE_API_URL do OAuth permanecem como fallbacks de
+  // compatibilidade upstream/staging.
   return (
     getBridgeBaseUrlOverride() ??
+    process.env.VERBOO_API_URL ??
     process.env.ANTHROPIC_BASE_URL ??
     getOauthConfig().BASE_API_URL
   )

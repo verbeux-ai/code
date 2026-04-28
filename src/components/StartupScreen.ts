@@ -160,13 +160,17 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     return { name, model: displayModel, baseUrl, isLocal }
   }
 
-  // Default: Anthropic - check settings.model first, then env vars
+  // VERBOO-BRAND: default provider é Verboo (Anthropic-compatible API).
+  // Fallback ANTHROPIC_BASE_URL mantido para sync upstream e testes.
   const settings = getSettings_DEPRECATED() || {}
   const modelSetting = modelOverride || settings.model || process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6'
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
-  const baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com'
+  const baseUrl =
+    process.env.VERBOO_API_URL ??
+    process.env.ANTHROPIC_BASE_URL ??
+    'https://code.verboo.ai'
   const isLocal = isLocalProviderUrl(baseUrl)
-  return { name: 'Anthropic', model: resolvedModel, baseUrl, isLocal }
+  return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
 }
 
 // ─── Box drawing ──────────────────────────────────────────────────────────────

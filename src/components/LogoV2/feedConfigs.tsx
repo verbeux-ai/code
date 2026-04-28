@@ -41,7 +41,7 @@ export function createWhatsNewFeed(releaseNotes: string[]): FeedConfig {
   });
   const emptyMessage = "external" === 'ant' ? 'Unable to fetch latest claude-cli-internal commits' : 'Check /release-notes for recent updates';
   return {
-    title: "external" === 'ant' ? "OpenClaude Updates [internal-only: Latest CC commits]" : "OpenClaude Updates",
+    title: "external" === 'ant' ? "Verboo Code Updates [internal-only: Latest CC commits]" : "Verboo Code Updates",
     lines,
     footer: lines.length > 0 ? '/release-notes for more' : undefined,
     emptyMessage
@@ -73,7 +73,7 @@ export function createProjectOnboardingFeed(steps: Step[]): FeedConfig {
 }
 export function createGuestPassesFeed(): FeedConfig {
   const reward = getCachedReferrerReward();
-  const subtitle = reward ? `Share OpenClaude and earn ${formatCreditAmount(reward)} of extra usage` : 'Share OpenClaude with friends';
+  const subtitle = reward ? `Share Verboo Code and earn ${formatCreditAmount(reward)} of extra usage` : 'Share Verboo Code with friends';
   return {
     title: '3 guest passes',
     lines: [],

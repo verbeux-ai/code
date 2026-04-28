@@ -113,6 +113,7 @@ qualidade de tool-calling.
 ## Validar após resolver conflitos
 
 ```bash
+bun run rebrand:check    # falha se literais "OpenClaude"/cor laranja voltaram
 bun run typecheck
 bun run build
 bun test
@@ -122,3 +123,27 @@ node dist/cli.mjs --version
 node dist/cli.mjs
 # Conferir: splash "Welcome to Verboo Code", cor roxa, 👻, /provider ausente.
 ```
+
+## Server URL e telemetria
+
+- Default API base apontado para `https://code.verboo.ai`. Override via
+  `VERBOO_API_URL` (canônico) ou `ANTHROPIC_BASE_URL` (compat). Aplicado em:
+  `src/upstreamproxy/upstreamproxy.ts`, `src/tools/BriefTool/upload.ts`,
+  `src/components/StartupScreen.ts`, `.env.example`.
+- Telemetria first-party Anthropic (1P/Datadog/GrowthBook) já está gated
+  off via `isAnalyticsDisabled() === true` em `src/services/analytics/config.ts`
+  — herdado do upstream openclaude. Não precisa novo gate.
+- `WebFetchTool/utils.ts:checkDomainBlocklist` adicionou gate adicional para
+  pular o request a `api.anthropic.com/api/web/domain_info` quando
+  `VERBOO_API_URL` está setado (ou `ANTHROPIC_BASE_URL` aponta fora de
+  `api.anthropic.com`). Sem deletar código upstream.
+
+## Allowlist de strings
+
+`scripts/rebrand-check.ts` mantém uma allowlist de arquivos onde literais
+"OpenClaude" são intencionalmente preservados (testes, features off, prompts
+de tool, /provider deprecated). Quando upstream adiciona um arquivo novo
+com strings da marca antiga, decida:
+1. Se é user-visible → atualizar para "Verboo Code".
+2. Se é gated/teste/comment → adicionar caminho à allowlist em
+   `scripts/rebrand-check.ts`.

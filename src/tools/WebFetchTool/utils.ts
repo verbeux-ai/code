@@ -183,6 +183,19 @@ export async function checkDomainBlocklist(
     return { status: 'allowed' }
   }
 
+  // VERBOO-BRAND: domain_info é endpoint Anthropic-only. Quando o usuário
+  // está apontando para o backend Verboo (VERBOO_API_URL setado, ou base
+  // override que não é api.anthropic.com), pular o check para não vazar
+  // tráfego residual. Mantém o código upstream intacto.
+  if (
+    process.env.VERBOO_API_URL ||
+    process.env.VERBOO_DISABLE_DOMAIN_CHECK === '1' ||
+    (process.env.ANTHROPIC_BASE_URL &&
+      !process.env.ANTHROPIC_BASE_URL.includes('api.anthropic.com'))
+  ) {
+    return { status: 'allowed' }
+  }
+
   if (DOMAIN_CHECK_CACHE.has(domain)) {
     return { status: 'allowed' }
   }

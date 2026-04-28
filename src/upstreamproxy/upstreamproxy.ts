@@ -115,10 +115,14 @@ export async function initUpstreamProxy(opts?: {
   // sessionHandler.ts). getOauthConfig() is wrong here: it keys off
   // USER_TYPE + USE_{LOCAL,STAGING}_OAUTH, none of which the container sets,
   // so it always returned the prod URL and the CA fetch 404'd.
+  // VERBOO-BRAND: default points to code.verboo.ai. VERBOO_API_URL é o
+  // override canônico; ANTHROPIC_BASE_URL continua funcionando para CCR
+  // e testes contra o upstream Anthropic original.
   const baseUrl =
     opts?.ccrBaseUrl ??
+    process.env.VERBOO_API_URL ??
     process.env.ANTHROPIC_BASE_URL ??
-    'https://api.anthropic.com'
+    'https://code.verboo.ai'
   const caBundlePath =
     opts?.caBundlePath ?? join(homedir(), '.ccr', 'ca-bundle.crt')
 

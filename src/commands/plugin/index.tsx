@@ -3,7 +3,7 @@ const plugin = {
   type: 'local-jsx',
   name: 'plugin',
   aliases: ['plugins', 'marketplace'],
-  description: 'Manage OpenClaude plugins',
+  description: 'Manage Verboo Code plugins',
   immediate: true,
   load: () => import('./plugin.js')
 } satisfies Command;

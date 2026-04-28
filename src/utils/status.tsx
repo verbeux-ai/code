@@ -263,7 +263,8 @@ export function buildAPIProviderProperties(): Property[] {
     const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
     if (anthropicBaseUrl) {
       properties.push({
-        label: 'Anthropic base URL',
+        // VERBOO-BRAND
+        label: 'Verboo base URL',
         value: anthropicBaseUrl
       });
     }

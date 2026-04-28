@@ -236,7 +236,8 @@ function checkOpenAIEnv(): CheckResult[] {
   }
 
   if (!useOpenAI) {
-    results.push(pass('Provider mode', 'Anthropic login flow enabled (CLAUDE_CODE_USE_OPENAI is off).'))
+    // VERBOO-BRAND
+    results.push(pass('Provider mode', 'Verboo login flow enabled (CLAUDE_CODE_USE_OPENAI is off).'))
     return results
   }
 

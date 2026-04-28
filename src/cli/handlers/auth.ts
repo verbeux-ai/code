@@ -325,6 +325,7 @@ export async function authLogout(): Promise<void> {
     process.stderr.write('Failed to log out.\n')
     process.exit(1)
   }
-  process.stdout.write('Successfully logged out from your Anthropic account.\n')
+  // VERBOO-BRAND
+  process.stdout.write('Successfully logged out from your Verboo account.\n')
   process.exit(0)
 }

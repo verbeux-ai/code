@@ -4,11 +4,11 @@
   "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
-    "verboo": "./bin/verboo",
-    "openclaude": "./bin/openclaude"
+    "verboo": "./bin/verboo"
   },
   "files": [
-    "bin/",
+    "bin/verboo",
+    "bin/import-specifier.mjs",
     "dist/cli.mjs",
     "README.md"
   ],

@@ -8,6 +8,7 @@
 
 import type { UUID } from 'crypto'
 import { open as fsOpen, readdir, realpath, stat } from 'fs/promises'
+import { homedir } from 'os'
 import { join } from 'path'
 import { getClaudeConfigHomeDir } from './envUtils.js'
 import { getWorktreePathsPortable } from './getWorktreePathsPortable.js'
@@ -322,8 +323,23 @@ export function sanitizePath(name: string): string {
 // Project directory discovery (shared by listSessions & getSessionMessages)
 // ---------------------------------------------------------------------------
 
+// VERBOO-BRAND: sessões e transcripts ficam em ~/.claude/projects (não em
+// ~/.verboo/projects) para preservar interop com /resume do Claude Code.
+// Verboo grava E lê do mesmo diretório que Claude Code, então usuários podem
+// retomar uma sessão Claude Code dentro do Verboo (e vice-versa) sem migração.
+//
+// Override em ordem:
+//   VERBOO_PROJECTS_DIR  (canônico — quando quiser sessões isoladas)
+//   ↓
+//   <getClaudeConfigHomeDir>/projects  (se for ~/.claude — ie usuário forçou
+//   CLAUDE_CONFIG_DIR=~/.claude, então respeita a configuração explícita)
+//   ↓
+//   ~/.claude/projects  (default — interop com Claude Code)
 export function getProjectsDir(): string {
-  return join(getClaudeConfigHomeDir(), 'projects')
+  if (process.env.VERBOO_PROJECTS_DIR) {
+    return process.env.VERBOO_PROJECTS_DIR
+  }
+  return join(homedir(), '.claude', 'projects')
 }
 
 export function getProjectDir(projectDir: string): string {

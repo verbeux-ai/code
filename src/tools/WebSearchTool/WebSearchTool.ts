@@ -678,7 +678,8 @@ export const WebSearchTool = buildTool({
           throw new Error(
             `Web search is unavailable for provider "${provider}". ` +
               `The search adapter failed (${errMsg}). ` +
-              `Try switching to a provider with built-in web search (e.g. Anthropic, Codex) or try again later.`,
+              // VERBOO-BRAND
+              `Try switching to a provider with built-in web search (e.g. Verboo, Codex) or try again later.`,
           )
         }
         console.error(

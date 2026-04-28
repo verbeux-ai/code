@@ -156,6 +156,62 @@ const RULES: Rule[] = [
       'src/components/StartupScreen.ts',
     ],
   },
+  {
+    // Captura "Anthropic" apenas dentro de strings (aspas simples, duplas ou
+    // template literals). NÃO captura imports de SDK, comments, tipos, env vars,
+    // bundle IDs. Apenas strings em runtime que podem aparecer ao usuário.
+    name: 'User-visible "Anthropic" literal (use Verboo)',
+    pattern:
+      /['"`][^'"`]*\bAnthropic\b(?!\.|_|-(?:ai|version|beta|api)|\/(?:alwaysLoad|beta))[^'"`]*['"`]/,
+    allowlist: [
+      ...COMMON_ALLOWLIST,
+      // OAuth flow (deferred):
+      'src/constants/oauth.ts',
+      'src/main.tsx',  // OAuth getOauthConfig contém refs upstream Anthropic
+      // SDK error logger uses preserved upstream identifier strings:
+      'src/services/api/sdk.ts',
+      // Auth/account model functions reference "Anthropic" provider type:
+      'src/utils/auth.ts',
+      'src/utils/auth/',
+      'src/cli/handlers/auth.ts',  // restantes refs em código de fluxo
+      // Provider type internals (compat com upstream):
+      'src/utils/providerFlag.ts',
+      'src/utils/providerAutoDetect.ts',
+      'src/utils/api.ts',
+      'src/utils/managedEnv.ts',
+      'src/utils/proxy.ts',
+      'src/utils/preauth.ts',
+      'src/utils/oauthState.ts',
+      // Internal repo allowlist (security):
+      'src/utils/commitAttribution.ts',
+      'src/utils/desktopDeepLink.ts',
+      // Plugin marketplace security:
+      'src/utils/plugins/schemas.ts',
+      // VCR / test fixtures:
+      'src/services/vcr.ts',
+      'src/services/api/vcrFixtures.ts',
+      // SDK schema docs:
+      'src/entrypoints/sdk/coreSchemas.ts',
+      'src/entrypoints/sdk/',
+      // Settings schema docs:
+      'src/utils/settings/types.ts',
+      // PackageManagerAutoUpdater references winget pkg id "Anthropic.ClaudeCode":
+      'src/components/PackageManagerAutoUpdater.tsx',
+      // Skills bundled docs:
+      'src/skills/bundled/',
+      // Grove (Anthropic-specific feature):
+      'src/components/grove/',
+      'src/commands/grove/',
+      // Coordinator example mentions anthropics/claude-code repo:
+      'src/coordinator/',
+      // Pre-approved domains list (security):
+      'src/tools/WebFetchTool/preapproved.ts',
+      // Internal Tool meta key constants (MCP spec):
+      'src/Tool.ts',
+      // Voice keyterms (gated VOICE_MODE):
+      'src/services/voiceKeyterms.ts',
+    ],
+  },
 ]
 
 const SCAN_ROOTS = ['src', 'bin', 'scripts', 'package.json', '.env.example']

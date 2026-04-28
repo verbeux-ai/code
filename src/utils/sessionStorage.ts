@@ -69,6 +69,7 @@ import { updateSessionName } from './concurrentSessions.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { logForDiagnosticsNoPII } from './diagLogs.js'
+import { homedir } from 'os'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { isFsInaccessible } from './errors.js'
 import type { FileHistorySnapshot } from './fileHistory.js'
@@ -195,8 +196,14 @@ export function isEphemeralToolProgress(dataType: unknown): boolean {
   return typeof dataType === 'string' && EPHEMERAL_PROGRESS_TYPES.has(dataType)
 }
 
+// VERBOO-BRAND: ver comentário em sessionStoragePortable.ts. Sessões ficam
+// em ~/.claude/projects para interop com /resume do Claude Code, em vez de
+// ~/.verboo/projects. Override via VERBOO_PROJECTS_DIR.
 export function getProjectsDir(): string {
-  return join(getClaudeConfigHomeDir(), 'projects')
+  if (process.env.VERBOO_PROJECTS_DIR) {
+    return process.env.VERBOO_PROJECTS_DIR
+  }
+  return join(homedir(), '.claude', 'projects')
 }
 
 export function getTranscriptPath(): string {

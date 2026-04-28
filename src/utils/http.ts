@@ -55,10 +55,12 @@ export function getMCPUserAgent(): string {
 // operators match in robots.txt); the claude-code suffix lets them distinguish
 // local CLI traffic from claude.ai server-side fetches.
 export function getWebFetchUserAgent(): string {
+  // VERBOO-BRAND: support URL aponta para Verboo. UA continua "Claude-User"
+  // por compat com domain operators (robots.txt) que reconhecem esse prefixo.
   const supportUrl =
     getAPIProvider() === 'firstParty'
-      ? 'https://support.anthropic.com/'
-      : 'https://github.com/Gitlawb/openclaude'
+      ? 'https://code.verboo.ai/support'
+      : 'https://github.com/verbeux-ai/code'
   return `Claude-User (${getClaudeCodeUserAgent()}; +${supportUrl})`
 }
 

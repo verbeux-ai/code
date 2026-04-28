@@ -1,42 +1,40 @@
 import memoize from 'lodash-es/memoize.js'
-import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
+// VERBOO-BRAND: paths SEMPRE isolados em ~/.verboo. Não há fallback para
+// ~/.openclaude ou ~/.claude — são instalações distintas que podem coexistir
+// sem conflito na mesma máquina. Sessões (getProjectsDir, em sessionStorage.ts)
+// ficam intencionalmente em ~/.claude/projects para interop com /resume —
+// tratado em outro lugar.
+//
+// Precedência de override:
+//   VERBOO_CONFIG_DIR (canônico)
+//   ↓
+//   CLAUDE_CONFIG_DIR (compat upstream — explícito do usuário)
+//   ↓
+//   ~/.verboo (sempre — sem auto-migração de paths antigos)
 export function resolveClaudeConfigHomeDir(options?: {
   configDirEnv?: string
   homeDir?: string
-  openClaudeExists?: boolean
-  legacyClaudeExists?: boolean
 }): string {
   if (options?.configDirEnv) {
     return options.configDirEnv.normalize('NFC')
   }
 
   const homeDir = options?.homeDir ?? homedir()
-  const openClaudeDir = join(homeDir, '.openclaude')
-  const legacyClaudeDir = join(homeDir, '.claude')
-  const openClaudeExists =
-    options?.openClaudeExists ?? existsSync(openClaudeDir)
-  const legacyClaudeExists =
-    options?.legacyClaudeExists ?? existsSync(legacyClaudeDir)
-
-  // Preserve existing user config/install state until we ship an explicit
-  // migration. New installs (neither path exists) use ~/.openclaude.
-  if (!openClaudeExists && legacyClaudeExists) {
-    return legacyClaudeDir.normalize('NFC')
-  }
-
-  return openClaudeDir.normalize('NFC')
+  return join(homeDir, '.verboo').normalize('NFC')
 }
 
-// Memoized: 150+ callers, many on hot paths. Keyed off CLAUDE_CONFIG_DIR so
-// tests that change the env var get a fresh value without explicit cache.clear.
+// Memoized: 150+ callers, many on hot paths. Keyed off VERBOO_CONFIG_DIR (or
+// CLAUDE_CONFIG_DIR as compat) so tests that change the env var get a fresh
+// value without explicit cache.clear.
 export const getClaudeConfigHomeDir = memoize(
   (): string => resolveClaudeConfigHomeDir({
-    configDirEnv: process.env.CLAUDE_CONFIG_DIR,
+    configDirEnv:
+      process.env.VERBOO_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR,
   }),
-  () => process.env.CLAUDE_CONFIG_DIR,
+  () => `${process.env.VERBOO_CONFIG_DIR ?? ''}::${process.env.CLAUDE_CONFIG_DIR ?? ''}`,
 )
 
 export function getTeamsDir(): string {

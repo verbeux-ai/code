@@ -11,8 +11,13 @@ import { which } from './which.js'
 type Platform = 'win32' | 'darwin' | 'linux'
 
 // Config and data paths
+// VERBOO-BRAND: arquivo global SEMPRE é ~/.verboo.json (sem auto-fallback
+// para .openclaude.json ou .claude.json — instalações distintas coexistem
+// na mesma máquina). Honra VERBOO_CONFIG_DIR > CLAUDE_CONFIG_DIR como
+// override explícito.
 export const getGlobalClaudeFile = memoize((): string => {
-  // Legacy fallback for backwards compatibility
+  // Legacy fallback for backwards compatibility (only se o usuário criou
+  // manualmente .config.json no configDir resolvido).
   if (
     getFsImplementation().existsSync(
       join(getClaudeConfigHomeDir(), '.config.json'),
@@ -22,20 +27,12 @@ export const getGlobalClaudeFile = memoize((): string => {
   }
 
   const oauthSuffix = fileSuffixForOauthConfig()
-  const configDir = process.env.CLAUDE_CONFIG_DIR || homedir()
+  const configDir =
+    process.env.VERBOO_CONFIG_DIR ||
+    process.env.CLAUDE_CONFIG_DIR ||
+    homedir()
 
-  // Default to .openclaude.json. Fall back to .claude.json only if the new
-  // file doesn't exist yet and the legacy one does (same migration pattern
-  // as resolveClaudeConfigHomeDir for the config directory).
-  const newFilename = `.openclaude${oauthSuffix}.json`
-  const legacyFilename = `.claude${oauthSuffix}.json`
-  if (
-    !getFsImplementation().existsSync(join(configDir, newFilename)) &&
-    getFsImplementation().existsSync(join(configDir, legacyFilename))
-  ) {
-    return join(configDir, legacyFilename)
-  }
-  return join(configDir, newFilename)
+  return join(configDir, `.verboo${oauthSuffix}.json`)
 })
 
 const hasInternetAccess = memoize(async (): Promise<boolean> => {

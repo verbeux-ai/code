@@ -175,6 +175,12 @@ type DomainCheckResult =
   | { status: 'blocked' }
   | { status: 'check_failed'; error: Error }
 
+// VERBOO-BRAND: domain_info é endpoint Anthropic-only. Verboo Code não bate
+// em api.anthropic.com, então o check sempre retorna allowed. Const fica em
+// false para preservar o resto do código abaixo (request + cache) com diff
+// mínimo vs upstream — bundler elimina como dead code.
+const UPSTREAM_DOMAIN_CHECK_ENABLED = false
+
 export async function checkDomainBlocklist(
   domain: string,
 ): Promise<DomainCheckResult> {
@@ -183,16 +189,7 @@ export async function checkDomainBlocklist(
     return { status: 'allowed' }
   }
 
-  // VERBOO-BRAND: domain_info é endpoint Anthropic-only. Quando o usuário
-  // está apontando para o backend Verboo (VERBOO_API_URL setado, ou base
-  // override que não é api.anthropic.com), pular o check para não vazar
-  // tráfego residual. Mantém o código upstream intacto.
-  if (
-    process.env.VERBOO_API_URL ||
-    process.env.VERBOO_DISABLE_DOMAIN_CHECK === '1' ||
-    (process.env.ANTHROPIC_BASE_URL &&
-      !process.env.ANTHROPIC_BASE_URL.includes('api.anthropic.com'))
-  ) {
+  if (!UPSTREAM_DOMAIN_CHECK_ENABLED) {
     return { status: 'allowed' }
   }
 

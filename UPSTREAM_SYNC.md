@@ -126,17 +126,22 @@ node dist/cli.mjs
 
 ## Server URL e telemetria
 
-Topologia Verboo está dividida em dois hosts:
+Topologia Verboo está dividida em dois hosts **hardcoded**, sem overrides
+via env var ou parâmetro — Verboo Code só fala com endpoints próprios:
 
-- **`router.verboo.ai`** → API LLM (completions, `/v1/messages`, `/v1/models`).
-  Equivalente a `api.anthropic.com` no setup original. Override via
-  `VERBOO_API_URL` (canônico) ou `ANTHROPIC_BASE_URL` (compat). Aplicado em:
-  `src/upstreamproxy/upstreamproxy.ts`, `src/components/StartupScreen.ts`.
-- **`code.verboo.ai`** → frontend (gerenciamento de conta, docs, suporte).
-  A API de gerenciamento (OAuth, uploads, user mgmt) fica em
-  `<VERBOO_WEB_URL>/api`. Override via `VERBOO_WEB_URL`. Aplicado em:
-  `src/utils/http.ts` (helper `getVerbooWebUrl`), `src/utils/preflightChecks.tsx`,
-  `src/tools/BriefTool/upload.ts` (uploads → `/api`).
+- **`https://router.verboo.ai`** → API LLM (completions, `/v1/messages`,
+  `/v1/models`). Hardcoded em `src/upstreamproxy/upstreamproxy.ts` e
+  `src/components/StartupScreen.ts`.
+- **`https://code.verboo.ai`** → frontend (gerenciamento de conta, docs,
+  suporte). Management API (OAuth, uploads, user mgmt) em
+  `https://code.verboo.ai/api`. Hardcoded em `src/utils/http.ts`
+  (`VERBOO_WEB_URL` const), `src/utils/preflightChecks.tsx`,
+  `src/tools/BriefTool/upload.ts`.
+
+Ao sincronizar com upstream openclaude, qualquer reintrodução de fallback
+para `ANTHROPIC_BASE_URL`, `VERBOO_API_URL`, `VERBOO_WEB_URL`, parâmetro
+`ccrBaseUrl`, ou `getOauthConfig().BASE_API_URL` nos call sites acima deve
+ser revertida — a regra é uma URL única hardcoded por call site.
 - Telemetria first-party Anthropic (1P/Datadog/GrowthBook) já está gated
   off via `isAnalyticsDisabled() === true` em `src/services/analytics/config.ts`
   — herdado do upstream openclaude. Não precisa novo gate.

@@ -19,11 +19,7 @@ import { readFile } from 'fs/promises'
 import { basename, extname } from 'path'
 import { z } from 'zod/v4'
 
-import {
-  getBridgeAccessToken,
-  getBridgeBaseUrlOverride,
-} from '../../bridge/bridgeConfig.js'
-import { getOauthConfig } from '../../constants/oauth.js'
+import { getBridgeAccessToken } from '../../bridge/bridgeConfig.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
@@ -67,19 +63,9 @@ function debug(msg: string): void {
  * skip → web viewer sees inert cards with no file_uuid.
  */
 function getBridgeBaseUrl(): string {
-  // VERBOO-BRAND: uploads (Brief feature) vão para a API de gerenciamento
-  // do frontend Verboo — code.verboo.ai/api — não para router.verboo.ai
-  // (que é só LLM completions). Ordem: override explícito > VERBOO_WEB_URL/api
-  // > ANTHROPIC_BASE_URL (compat com staging) > OAuth BASE_API_URL.
-  // Quando /login Verboo for implementado, getOauthConfig().BASE_API_URL
-  // também já apontará para code.verboo.ai/api.
-  const verbooWebUrl = process.env.VERBOO_WEB_URL
-  return (
-    getBridgeBaseUrlOverride() ??
-    (verbooWebUrl ? `${verbooWebUrl.replace(/\/+$/, '')}/api` : undefined) ??
-    process.env.ANTHROPIC_BASE_URL ??
-    getOauthConfig().BASE_API_URL
-  )
+  // VERBOO-BRAND: uploads (Brief feature) vão sempre para a management API
+  // do frontend Verboo — code.verboo.ai/api. Hardcoded, sem overrides.
+  return 'https://code.verboo.ai/api'
 }
 
 // /api/oauth/file_upload returns one of ChatMessage{Image,Blob,Document}FileSchema.

@@ -7,7 +7,7 @@ import { getOauthConfig } from '../constants/oauth.js';
 import { useTimeout } from '../hooks/useTimeout.js';
 import { Box, Text } from '../ink.js';
 import { getSSLErrorHint } from '../services/api/errorUtils.js';
-import { getUserAgent } from './http.js';
+import { getUserAgent, getVerbooWebUrl } from './http.js';
 import { logError } from './log.js';
 import { getAPIProvider } from './model/providers.js';
 export interface PreflightCheckResult {
@@ -128,8 +128,8 @@ export function PreflightStep(t0) {
   useEffect(t3, t4);
   let t5;
   if ($[6] !== isChecking || $[7] !== result || $[8] !== showSpinner) {
-    // VERBOO-BRAND
-    t5 = isChecking && showSpinner ? <Box paddingLeft={1}><Spinner /><Text>Checking connectivity...</Text></Box> : !result?.success && !isChecking && <Box flexDirection="column" gap={1}><Text color="error">Unable to connect to Verboo services</Text><Text color="error">{result?.error}</Text>{result?.sslHint ? <Box flexDirection="column" gap={1}><Text>{result.sslHint}</Text><Text color="suggestion">See https://code.verboo.ai/docs/network-config</Text></Box> : <Box flexDirection="column" gap={1}><Text>Please check your internet connection and network settings.</Text>{getAPIProvider() === 'firstParty' && <Text>Note: Verboo Code might not be available in your country. Contact your Verboo admin for supported regions.</Text>}</Box>}</Box>;
+    // VERBOO-BRAND: docs URL deriva de VERBOO_WEB_URL (default code.verboo.ai)
+    t5 = isChecking && showSpinner ? <Box paddingLeft={1}><Spinner /><Text>Checking connectivity...</Text></Box> : !result?.success && !isChecking && <Box flexDirection="column" gap={1}><Text color="error">Unable to connect to Verboo services</Text><Text color="error">{result?.error}</Text>{result?.sslHint ? <Box flexDirection="column" gap={1}><Text>{result.sslHint}</Text><Text color="suggestion">See {getVerbooWebUrl()}/docs/network-config</Text></Box> : <Box flexDirection="column" gap={1}><Text>Please check your internet connection and network settings.</Text>{getAPIProvider() === 'firstParty' && <Text>Note: Verboo Code might not be available in your country. Contact your Verboo admin for supported regions.</Text>}</Box>}</Box>;
     $[6] = isChecking;
     $[7] = result;
     $[8] = showSpinner;

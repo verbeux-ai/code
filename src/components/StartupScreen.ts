@@ -161,14 +161,15 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
   }
 
   // VERBOO-BRAND: default provider é Verboo (Anthropic-compatible API).
-  // Fallback ANTHROPIC_BASE_URL mantido para sync upstream e testes.
+  // API LLM em router.verboo.ai. Fallback ANTHROPIC_BASE_URL mantido para
+  // sync upstream e testes.
   const settings = getSettings_DEPRECATED() || {}
   const modelSetting = modelOverride || settings.model || process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6'
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
   const baseUrl =
     process.env.VERBOO_API_URL ??
     process.env.ANTHROPIC_BASE_URL ??
-    'https://code.verboo.ai'
+    'https://router.verboo.ai'
   const isLocal = isLocalProviderUrl(baseUrl)
   return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
 }

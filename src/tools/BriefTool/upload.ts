@@ -67,12 +67,16 @@ function debug(msg: string): void {
  * skip → web viewer sees inert cards with no file_uuid.
  */
 function getBridgeBaseUrl(): string {
-  // VERBOO-BRAND: VERBOO_API_URL é o override canônico para o backend Verboo.
-  // ANTHROPIC_BASE_URL e BASE_API_URL do OAuth permanecem como fallbacks de
-  // compatibilidade upstream/staging.
+  // VERBOO-BRAND: uploads (Brief feature) vão para a API de gerenciamento
+  // do frontend Verboo — code.verboo.ai/api — não para router.verboo.ai
+  // (que é só LLM completions). Ordem: override explícito > VERBOO_WEB_URL/api
+  // > ANTHROPIC_BASE_URL (compat com staging) > OAuth BASE_API_URL.
+  // Quando /login Verboo for implementado, getOauthConfig().BASE_API_URL
+  // também já apontará para code.verboo.ai/api.
+  const verbooWebUrl = process.env.VERBOO_WEB_URL
   return (
     getBridgeBaseUrlOverride() ??
-    process.env.VERBOO_API_URL ??
+    (verbooWebUrl ? `${verbooWebUrl.replace(/\/+$/, '')}/api` : undefined) ??
     process.env.ANTHROPIC_BASE_URL ??
     getOauthConfig().BASE_API_URL
   )

@@ -54,12 +54,20 @@ export function getMCPUserAgent(): string {
 // The first-party provider's publicly documented agent for user-initiated fetches (what site
 // operators match in robots.txt); the claude-code suffix lets them distinguish
 // local CLI traffic from claude.ai server-side fetches.
+// VERBOO-BRAND: frontend / web URL onde usuários gerenciam conta, leem docs
+// e abrem suporte. API LLM (completions) é separada em router.verboo.ai —
+// veja VERBOO_API_URL em upstreamproxy.ts.
+export function getVerbooWebUrl(): string {
+  return process.env.VERBOO_WEB_URL ?? 'https://code.verboo.ai'
+}
+
 export function getWebFetchUserAgent(): string {
-  // VERBOO-BRAND: support URL aponta para Verboo. UA continua "Claude-User"
-  // por compat com domain operators (robots.txt) que reconhecem esse prefixo.
+  // VERBOO-BRAND: support URL aponta para o frontend Verboo. UA continua
+  // "Claude-User" por compat com domain operators (robots.txt) que
+  // reconhecem esse prefixo.
   const supportUrl =
     getAPIProvider() === 'firstParty'
-      ? 'https://code.verboo.ai/support'
+      ? `${getVerbooWebUrl()}/support`
       : 'https://github.com/verbeux-ai/code'
   return `Claude-User (${getClaudeCodeUserAgent()}; +${supportUrl})`
 }

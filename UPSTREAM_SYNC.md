@@ -126,10 +126,17 @@ node dist/cli.mjs
 
 ## Server URL e telemetria
 
-- Default API base apontado para `https://code.verboo.ai`. Override via
+Topologia Verboo está dividida em dois hosts:
+
+- **`router.verboo.ai`** → API LLM (completions, `/v1/messages`, `/v1/models`).
+  Equivalente a `api.anthropic.com` no setup original. Override via
   `VERBOO_API_URL` (canônico) ou `ANTHROPIC_BASE_URL` (compat). Aplicado em:
-  `src/upstreamproxy/upstreamproxy.ts`, `src/tools/BriefTool/upload.ts`,
-  `src/components/StartupScreen.ts`, `.env.example`.
+  `src/upstreamproxy/upstreamproxy.ts`, `src/components/StartupScreen.ts`.
+- **`code.verboo.ai`** → frontend (gerenciamento de conta, docs, suporte).
+  A API de gerenciamento (OAuth, uploads, user mgmt) fica em
+  `<VERBOO_WEB_URL>/api`. Override via `VERBOO_WEB_URL`. Aplicado em:
+  `src/utils/http.ts` (helper `getVerbooWebUrl`), `src/utils/preflightChecks.tsx`,
+  `src/tools/BriefTool/upload.ts` (uploads → `/api`).
 - Telemetria first-party Anthropic (1P/Datadog/GrowthBook) já está gated
   off via `isAnalyticsDisabled() === true` em `src/services/analytics/config.ts`
   — herdado do upstream openclaude. Não precisa novo gate.

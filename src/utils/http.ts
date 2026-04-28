@@ -56,8 +56,8 @@ export function getMCPUserAgent(): string {
 // local CLI traffic from claude.ai server-side fetches.
 // VERBOO-BRAND: frontend Verboo (gerenciamento de conta, docs, suporte).
 // Hardcoded — única URL aceita. Management API (OAuth, uploads, user mgmt)
-// fica em VERBOO_WEB_URL/api. API LLM (completions) em router.verboo.ai —
-// veja src/upstreamproxy/upstreamproxy.ts.
+// fica em VERBOO_WEB_URL/api. API LLM (completions) em
+// code.verboo.ai/api/router — veja src/upstreamproxy/upstreamproxy.ts.
 export const VERBOO_WEB_URL = 'https://code.verboo.ai'
 
 export function getWebFetchUserAgent(): string {

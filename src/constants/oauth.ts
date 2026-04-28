@@ -50,9 +50,8 @@ export const CLAUDE_AI_OAUTH_SCOPES = [
   'user:file_upload',
 ] as const
 
-// All OAuth scopes - union of all scopes used in Claude CLI
-// When logging in, request all scopes in order to handle both Console -> Claude.ai redirect
-// Ensure that `OAuthConsentPage` in apps repo is kept in sync with this list.
+// All OAuth scopes requested by Verboo Code. The Verboo backend stores the
+// granted scope string with the authorization code and returns it on exchange.
 export const ALL_OAUTH_SCOPES = Array.from(
   new Set([...CONSOLE_OAUTH_SCOPES, ...CLAUDE_AI_OAUTH_SCOPES]),
 )
@@ -61,12 +60,7 @@ type OauthConfig = {
   BASE_API_URL: string
   CONSOLE_AUTHORIZE_URL: string
   CLAUDE_AI_AUTHORIZE_URL: string
-  /**
-   * The claude.ai web origin. Separate from CLAUDE_AI_AUTHORIZE_URL because
-   * that now routes through claude.com/cai/* for attribution — deriving
-   * .origin from it would give claude.com, breaking links to /code,
-   * /settings/connectors, and other claude.ai web pages.
-   */
+  /** Web origin used for account/consent links. */
   CLAUDE_AI_ORIGIN: string
   TOKEN_URL: string
   API_KEY_URL: string
@@ -80,23 +74,26 @@ type OauthConfig = {
   MCP_PROXY_PATH: string
 }
 
+export const VERBOO_API_BASE_URL = 'https://api.code.verboo.ai'
+export const VERBOO_FRONT_BASE_URL = 'https://code.verboo.ai'
+export const VERBOO_ROUTER_URL = 'https://api.code.verboo.ai/api/router'
+
 // Production OAuth configuration - Used in normal operation
 const PROD_OAUTH_CONFIG = {
-  BASE_API_URL: 'https://api.anthropic.com',
-  CONSOLE_AUTHORIZE_URL: 'https://platform.claude.com/oauth/authorize',
-  // Bounces through claude.com/cai/* so CLI sign-ins connect to claude.com
-  // visits for attribution. 307s to claude.ai/oauth/authorize in two hops.
-  CLAUDE_AI_AUTHORIZE_URL: 'https://claude.com/cai/oauth/authorize',
-  CLAUDE_AI_ORIGIN: 'https://claude.ai',
-  TOKEN_URL: 'https://platform.claude.com/v1/oauth/token',
-  API_KEY_URL: 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key',
-  ROLES_URL: 'https://api.anthropic.com/api/oauth/claude_cli/roles',
-  CONSOLE_SUCCESS_URL:
-    'https://platform.claude.com/buy_credits?returnUrl=/oauth/code/success%3Fapp%3Dclaude-code',
-  CLAUDEAI_SUCCESS_URL:
-    'https://platform.claude.com/oauth/code/success?app=claude-code',
-  MANUAL_REDIRECT_URL: 'https://platform.claude.com/oauth/code/callback',
-  CLIENT_ID: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+  // VERBOO-BRAND: OAuth Authorization Server and management API live on
+  // api.code.verboo.ai. OAuth endpoints are root-level (/oauth/*); application
+  // account endpoints are under /api.
+  BASE_API_URL: VERBOO_API_BASE_URL,
+  CONSOLE_AUTHORIZE_URL: `${VERBOO_API_BASE_URL}/oauth/authorize`,
+  CLAUDE_AI_AUTHORIZE_URL: `${VERBOO_API_BASE_URL}/oauth/authorize`,
+  CLAUDE_AI_ORIGIN: VERBOO_FRONT_BASE_URL,
+  TOKEN_URL: `${VERBOO_API_BASE_URL}/oauth/token`,
+  API_KEY_URL: `${VERBOO_API_BASE_URL}/api/me/groups`,
+  ROLES_URL: `${VERBOO_API_BASE_URL}/api/me`,
+  CONSOLE_SUCCESS_URL: `${VERBOO_FRONT_BASE_URL}/pt/cli-auth/success`,
+  CLAUDEAI_SUCCESS_URL: `${VERBOO_FRONT_BASE_URL}/pt/cli-auth/success`,
+  MANUAL_REDIRECT_URL: `${VERBOO_FRONT_BASE_URL}/pt/cli-auth/manual`,
+  CLIENT_ID: 'verboo-code-cli',
   // No suffix for production config
   OAUTH_FILE_SUFFIX: '',
   MCP_PROXY_URL: 'https://mcp-proxy.anthropic.com',
@@ -148,7 +145,7 @@ const STAGING_OAUTH_CONFIG =
 function getLocalOauthConfig(): OauthConfig {
   const api =
     process.env.CLAUDE_LOCAL_OAUTH_API_BASE?.replace(/\/$/, '') ??
-    'http://localhost:8000'
+    'http://localhost:8090'
   const apps =
     process.env.CLAUDE_LOCAL_OAUTH_APPS_BASE?.replace(/\/$/, '') ??
     'http://localhost:4000'
@@ -157,16 +154,16 @@ function getLocalOauthConfig(): OauthConfig {
     'http://localhost:3000'
   return {
     BASE_API_URL: api,
-    CONSOLE_AUTHORIZE_URL: `${consoleBase}/oauth/authorize`,
-    CLAUDE_AI_AUTHORIZE_URL: `${apps}/oauth/authorize`,
+    CONSOLE_AUTHORIZE_URL: `${api}/oauth/authorize`,
+    CLAUDE_AI_AUTHORIZE_URL: `${api}/oauth/authorize`,
     CLAUDE_AI_ORIGIN: apps,
-    TOKEN_URL: `${api}/v1/oauth/token`,
-    API_KEY_URL: `${api}/api/oauth/claude_cli/create_api_key`,
-    ROLES_URL: `${api}/api/oauth/claude_cli/roles`,
-    CONSOLE_SUCCESS_URL: `${consoleBase}/buy_credits?returnUrl=/oauth/code/success%3Fapp%3Dclaude-code`,
-    CLAUDEAI_SUCCESS_URL: `${consoleBase}/oauth/code/success?app=claude-code`,
-    MANUAL_REDIRECT_URL: `${consoleBase}/oauth/code/callback`,
-    CLIENT_ID: '22422756-60c9-4084-8eb7-27705fd5cf9a',
+    TOKEN_URL: `${api}/oauth/token`,
+    API_KEY_URL: `${api}/api/me/groups`,
+    ROLES_URL: `${api}/api/me`,
+    CONSOLE_SUCCESS_URL: `${consoleBase}/pt/cli-auth/success`,
+    CLAUDEAI_SUCCESS_URL: `${consoleBase}/pt/cli-auth/success`,
+    MANUAL_REDIRECT_URL: `${consoleBase}/pt/cli-auth/manual`,
+    CLIENT_ID: 'verboo-code-cli',
     OAUTH_FILE_SUFFIX: '-local-oauth',
     MCP_PROXY_URL: 'http://localhost:8205',
     MCP_PROXY_PATH: '/v1/toolbox/shttp/mcp/{server_id}',

@@ -960,7 +960,9 @@ async function run(): Promise<CommanderCommand> {
     profileCheckpoint('preAction_after_settings_sync');
   });
   // VERBOO-BRAND: program name + description
-  program.name('verboo').description(`Verboo Code - starts an interactive session by default, use -p/--print for non-interactive output`).argument('[prompt]', 'Your prompt', String)
+  const cliName = process.env.VERBOO_CLI_BRAND === 'openclaude' ? 'openclaude' : 'verboo';
+  const cliDesc = process.env.VERBOO_CLI_BRAND === 'openclaude' ? 'OpenClaude' : 'Verboo Code';
+  program.name(cliName).description(`${cliDesc} - starts an interactive session by default, use -p/--print for non-interactive output`).argument('[prompt]', 'Your prompt', String)
   // Subcommands inherit helpOption via commander's copyInheritedSettings —
   // setting it once here covers mcp, plugin, auth, and all other subcommands.
   .helpOption('-h, --help', 'Display help for command').option('-d, --debug [filter]', 'Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")', (_value: string | true) => {
@@ -3793,7 +3795,7 @@ async function run(): Promise<CommanderCommand> {
       }, renderAndRun);
     }
   // VERBOO-BRAND: --version output
-  }).version(`${MACRO.DISPLAY_VERSION ?? MACRO.VERSION} (Verboo Code)`, '-v, --version', 'Output the version number');
+  }).version(`${MACRO.DISPLAY_VERSION ?? MACRO.VERSION} (${cliDesc})`, '-v, --version', 'Output the version number');
 
   // Worktree flags
   program.option('-w, --worktree [name]', 'Create a new git worktree for this session (optionally specify a name)');

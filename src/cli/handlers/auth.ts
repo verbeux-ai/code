@@ -42,6 +42,7 @@ import {
   buildAccountProperties,
   buildAPIProviderProperties,
 } from '../../utils/status.js'
+import { getOauthConfig, VERBOO_API_BASE_URL } from '../../constants/oauth.js'
 
 /**
  * Shared post-token-acquisition logic. Saves tokens, fetches profile/roles,
@@ -92,11 +93,13 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
     logForDebugging(String(err), { level: 'error' }),
   )
 
-  if (shouldUseClaudeAIAuth(tokens.scopes)) {
+  const isVerbooOAuth = getOauthConfig().BASE_API_URL === VERBOO_API_BASE_URL
+
+  if (!isVerbooOAuth && shouldUseClaudeAIAuth(tokens.scopes)) {
     await fetchAndStoreClaudeCodeFirstTokenDate().catch(err =>
       logForDebugging(String(err), { level: 'error' }),
     )
-  } else {
+  } else if (!isVerbooOAuth) {
     // API key creation is critical for Console users — let it throw.
     const apiKey = await createAndStoreApiKey(tokens.accessToken)
     if (!apiKey) {

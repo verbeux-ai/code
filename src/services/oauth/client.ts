@@ -8,6 +8,7 @@ import {
   ALL_OAUTH_SCOPES,
   CLAUDE_AI_INFERENCE_SCOPE,
   CLAUDE_AI_OAUTH_SCOPES,
+  VERBOO_API_BASE_URL,
   getOauthConfig,
 } from '../../constants/oauth.js'
 import {
@@ -74,9 +75,7 @@ export function buildAuthUrl({
   authUrl.searchParams.append('response_type', 'code')
   authUrl.searchParams.append(
     'redirect_uri',
-    isManual
-      ? getOauthConfig().MANUAL_REDIRECT_URL
-      : `http://localhost:${port}/callback`,
+    getOAuthRedirectUri(port),
   )
   const scopesToUse = inferenceOnly
     ? [CLAUDE_AI_INFERENCE_SCOPE] // Long-lived inference-only tokens
@@ -104,20 +103,22 @@ export function buildAuthUrl({
   return authUrl.toString()
 }
 
+function getOAuthRedirectUri(port: number): string {
+  return `http://localhost:${port}/callback`
+}
+
 export async function exchangeCodeForTokens(
   authorizationCode: string,
   state: string,
   codeVerifier: string,
   port: number,
-  useManualRedirect: boolean = false,
+  _useManualRedirect: boolean = false,
   expiresIn?: number,
 ): Promise<OAuthTokenExchangeResponse> {
   const requestBody: Record<string, string | number> = {
     grant_type: 'authorization_code',
     code: authorizationCode,
-    redirect_uri: useManualRedirect
-      ? getOauthConfig().MANUAL_REDIRECT_URL
-      : `http://localhost:${port}/callback`,
+    redirect_uri: getOAuthRedirectUri(port),
     client_id: getOauthConfig().CLIENT_ID,
     code_verifier: codeVerifier,
     state,
@@ -127,20 +128,43 @@ export async function exchangeCodeForTokens(
     requestBody.expires_in = expiresIn
   }
 
-  const response = await axios.post(getOauthConfig().TOKEN_URL, requestBody, {
-    headers: { 'Content-Type': 'application/json' },
+  const response = await postOAuthForm(requestBody)
+  logEvent('tengu_oauth_token_exchange_success', {})
+  return response
+}
+
+function isVerbooOAuthBase(): boolean {
+  return getOauthConfig().BASE_API_URL === VERBOO_API_BASE_URL
+}
+
+function normalizeOAuthTokenResponse(
+  data: OAuthTokenExchangeResponse,
+): OAuthTokenExchangeResponse {
+  return {
+    ...data,
+    scope: data.scope || ALL_OAUTH_SCOPES.join(' '),
+  }
+}
+
+async function postOAuthForm(
+  body: Record<string, string | number | undefined>,
+): Promise<OAuthTokenExchangeResponse> {
+  const form = new URLSearchParams()
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== undefined) {
+      form.set(key, String(value))
+    }
+  }
+
+  const response = await axios.post(getOauthConfig().TOKEN_URL, form, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     timeout: 15000,
   })
 
   if (response.status !== 200) {
-    throw new Error(
-      response.status === 401
-        ? 'Authentication failed: Invalid authorization code'
-        : `Token exchange failed (${response.status}): ${response.statusText}`,
-    )
+    throw new Error(`OAuth token request failed: ${response.statusText}`)
   }
-  logEvent('tengu_oauth_token_exchange_success', {})
-  return response.data
+  return normalizeOAuthTokenResponse(response.data)
 }
 
 export async function refreshOAuthToken(
@@ -163,16 +187,7 @@ export async function refreshOAuthToken(
   }
 
   try {
-    const response = await axios.post(getOauthConfig().TOKEN_URL, requestBody, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
-    })
-
-    if (response.status !== 200) {
-      throw new Error(`Token refresh failed: ${response.statusText}`)
-    }
-
-    const data = response.data as OAuthTokenExchangeResponse
+    const data = await postOAuthForm(requestBody)
     const {
       access_token: accessToken,
       refresh_token: newRefreshToken = refreshToken,
@@ -276,6 +291,10 @@ export async function refreshOAuthToken(
 export async function fetchAndStoreUserRoles(
   accessToken: string,
 ): Promise<void> {
+  if (isVerbooOAuthBase()) {
+    return
+  }
+
   const response = await axios.get(getOauthConfig().ROLES_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -311,6 +330,10 @@ export async function fetchAndStoreUserRoles(
 export async function createAndStoreApiKey(
   accessToken: string,
 ): Promise<string | null> {
+  if (isVerbooOAuthBase()) {
+    return null
+  }
+
   try {
     const response = await axios.post(getOauthConfig().API_KEY_URL, null, {
       headers: { Authorization: `Bearer ${accessToken}` },

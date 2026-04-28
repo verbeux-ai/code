@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const distPath = join(__dirname, '..', 'dist', 'cli.mjs')
 
 if (existsSync(distPath)) {
+  process.env.VERBOO_CLI_BRAND = 'openclaude';
   await import(pathToFileURL(distPath).href)
 } else {
   console.error(`

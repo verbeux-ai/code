@@ -126,17 +126,17 @@ node dist/cli.mjs
 
 ## Server URL e telemetria
 
-Topologia Verboo está dividida em dois hosts **hardcoded**, sem overrides
-via env var ou parâmetro — Verboo Code só fala com endpoints próprios:
+Topologia Verboo usa hosts/path **hardcoded**, sem overrides via env var ou
+parâmetro — Verboo Code só fala com endpoints próprios:
 
-- **`https://router.verboo.ai`** → API LLM (completions, `/v1/messages`,
-  `/v1/models`). Hardcoded em `src/upstreamproxy/upstreamproxy.ts` e
-  `src/components/StartupScreen.ts`.
+- **`https://code.verboo.ai/api/router`** → API LLM (completions,
+  `/v1/messages`, `/v1/models`). Hardcoded em
+  `src/upstreamproxy/upstreamproxy.ts` e `src/components/StartupScreen.ts`.
 - **`https://code.verboo.ai`** → frontend (gerenciamento de conta, docs,
-  suporte). Management API (OAuth, uploads, user mgmt) em
-  `https://code.verboo.ai/api`. Hardcoded em `src/utils/http.ts`
-  (`VERBOO_WEB_URL` const), `src/utils/preflightChecks.tsx`,
-  `src/tools/BriefTool/upload.ts`.
+  suporte). OAuth em `https://code.verboo.ai/oauth/*`; management API
+  (uploads, user mgmt) em `https://code.verboo.ai/api`. Hardcoded em
+  `src/constants/oauth.ts`, `src/utils/http.ts` (`VERBOO_WEB_URL` const),
+  `src/utils/preflightChecks.tsx`, `src/tools/BriefTool/upload.ts`.
 
 Ao sincronizar com upstream openclaude, qualquer reintrodução de fallback
 para `ANTHROPIC_BASE_URL`, `VERBOO_API_URL`, `VERBOO_WEB_URL`, parâmetro

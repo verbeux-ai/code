@@ -161,11 +161,11 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
   }
 
   // VERBOO-BRAND: default provider é Verboo. API LLM hardcoded em
-  // router.verboo.ai (sem overrides — única URL aceita).
+  // code.verboo.ai/api/router (sem overrides — única URL aceita).
   const settings = getSettings_DEPRECATED() || {}
   const modelSetting = modelOverride || settings.model || process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6'
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
-  const baseUrl = 'https://router.verboo.ai'
+  const baseUrl = 'https://code.verboo.ai/api/router'
   const isLocal = isLocalProviderUrl(baseUrl)
   return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
 }

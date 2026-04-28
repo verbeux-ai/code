@@ -3667,7 +3667,8 @@ Read the team config to discover your teammates' names. Check the task list peri
       ])
     }
     case 'todo_reminder': {
-      if (isEnvTruthy(process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
+      // VERBOO-BRAND: dual-read env var (VERBOO_* canonical, OPENCLAUDE_* alias)
+      if (isEnvTruthy(process.env.VERBOO_DISABLE_TOOL_REMINDERS ?? process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
         return []
       }
       const todoItems = attachment.content
@@ -3690,7 +3691,8 @@ Read the team config to discover your teammates' names. Check the task list peri
       if (!isTodoV2Enabled()) {
         return []
       }
-      if (isEnvTruthy(process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
+      // VERBOO-BRAND: dual-read env var (VERBOO_* canonical, OPENCLAUDE_* alias)
+      if (isEnvTruthy(process.env.VERBOO_DISABLE_TOOL_REMINDERS ?? process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
         return []
       }
       const taskItems = attachment.content

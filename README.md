@@ -1,17 +1,16 @@
-# OpenClaude
+# Verboo Code
 
-OpenClaude is an open-source coding-agent CLI for cloud and local model providers.
+Verboo Code is an open-source coding-agent CLI for cloud and local model providers.
 
 Use OpenAI-compatible APIs, Gemini, GitHub Models, Codex OAuth, Codex, Ollama, Atomic Chat, and other supported backends while keeping one terminal-first workflow: prompts, tools, agents, MCP, slash commands, and streaming output.
 
-[![PR Checks](https://github.com/Gitlawb/openclaude/actions/workflows/pr-checks.yml/badge.svg?branch=main)](https://github.com/Gitlawb/openclaude/actions/workflows/pr-checks.yml)
-[![Release](https://img.shields.io/github/v/tag/Gitlawb/openclaude?label=release&color=0ea5e9)](https://github.com/Gitlawb/openclaude/tags)
-[![Discussions](https://img.shields.io/badge/discussions-open-7c3aed)](https://github.com/Gitlawb/openclaude/discussions)
+[![PR Checks](https://github.com/verbeux/verboo/actions/workflows/pr-checks.yml/badge.svg?branch=main)](https://github.com/verbeux/verboo/actions/workflows/pr-checks.yml)
+[![Release](https://img.shields.io/github/v/tag/verbeux/verboo?label=release&color=0ea5e9)](https://github.com/verbeux/verboo/tags)
+[![Discussions](https://img.shields.io/badge/discussions-open-7c3aed)](https://github.com/verbeux/verboo/discussions)
 [![Security Policy](https://img.shields.io/badge/security-policy-0f766e)](SECURITY.md)
 [![License](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
 
-OpenClaude is also mirrored to GitLawb:
-[gitlawb.com/node/repos/z6MkqDnb/openclaude](https://gitlawb.com/node/repos/z6MkqDnb/openclaude)
+Verboo Code is a fork of [openclaude](https://github.com/Gitlawb/openclaude), which itself originated from the Claude Code codebase. It is maintained by the Verboo team for the Verboo platform.
 
 [Quick Start](#quick-start) | [Setup Guides](#setup-guides) | [Providers](#supported-providers) | [Source Build](#source-build-and-local-development) | [VS Code Extension](#vs-code-extension) | [Sponsors](#sponsors) | [Community](#community)
 
@@ -35,9 +34,9 @@ OpenClaude is also mirrored to GitLawb:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=gitlawb/openclaude&type=date&legend=top-left)](https://www.star-history.com/?repos=gitlawb%2Fopenclaude&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/chart?repos=gitlawb/verboo&type=date&legend=top-left)](https://www.star-history.com/?repos=gitlawb%2Fverboo&type=date&legend=top-left)
 
-## Why OpenClaude
+## Why Verboo Code
 
 - Use one CLI across cloud APIs and local model backends
 - Save provider profiles inside the app with `/provider`
@@ -50,18 +49,18 @@ OpenClaude is also mirrored to GitLawb:
 ### Install
 
 ```bash
-npm install -g @gitlawb/openclaude
+npm install -g @verboo/code
 ```
 
-If the install later reports `ripgrep not found`, install ripgrep system-wide and confirm `rg --version` works in the same terminal before starting OpenClaude.
+If the install later reports `ripgrep not found`, install ripgrep system-wide and confirm `rg --version` works in the same terminal before starting Verboo Code.
 
 ### Start
 
 ```bash
-openclaude
+verboo
 ```
 
-Inside OpenClaude:
+Inside Verboo Code:
 
 - run `/provider` for guided provider setup and saved profiles
 - run `/onboard-github` for GitHub Models onboarding
@@ -75,7 +74,7 @@ export CLAUDE_CODE_USE_OPENAI=1
 export OPENAI_API_KEY=sk-your-key-here
 export OPENAI_MODEL=gpt-4o
 
-openclaude
+verboo
 ```
 
 Windows PowerShell:
@@ -85,7 +84,7 @@ $env:CLAUDE_CODE_USE_OPENAI="1"
 $env:OPENAI_API_KEY="sk-your-key-here"
 $env:OPENAI_MODEL="gpt-4o"
 
-openclaude
+verboo
 ```
 
 ### Fastest local Ollama setup
@@ -97,7 +96,7 @@ export CLAUDE_CODE_USE_OPENAI=1
 export OPENAI_BASE_URL=http://localhost:11434/v1
 export OPENAI_MODEL=qwen2.5-coder:7b
 
-openclaude
+verboo
 ```
 
 Windows PowerShell:
@@ -107,7 +106,7 @@ $env:CLAUDE_CODE_USE_OPENAI="1"
 $env:OPENAI_BASE_URL="http://localhost:11434/v1"
 $env:OPENAI_MODEL="qwen2.5-coder:7b"
 
-openclaude
+verboo
 ```
 
 ### Using Ollama's launch command
@@ -115,7 +114,7 @@ openclaude
 If you have [Ollama](https://ollama.com) installed, you can skip the env var setup entirely:
 
 ```bash
-ollama launch openclaude --model qwen2.5-coder:7b
+ollama launch verboo --model qwen2.5-coder:7b
 ```
 
 This automatically sets `ANTHROPIC_BASE_URL`, model routing, and auth so all API traffic goes through your local Ollama instance. Works with any model you have pulled — local or cloud.
@@ -141,7 +140,7 @@ Advanced and source-build guides:
 | Gemini | `/provider` or env vars | Supports API key, access token, or local ADC workflow on current `main` |
 | GitHub Models | `/onboard-github` | Interactive onboarding with saved credentials |
 | Codex OAuth | `/provider` | Opens ChatGPT sign-in in your browser and stores Codex credentials securely |
-| Codex | `/provider` | Uses existing Codex CLI auth, OpenClaude secure storage, or env credentials |
+| Codex | `/provider` | Uses existing Codex CLI auth, Verboo Code secure storage, or env credentials |
 | Ollama | `/provider`, env vars, or `ollama launch` | Local inference with no API key |
 | Atomic Chat | `/provider`, env vars, or `bun run dev:atomic-chat` | Local Model Provider; auto-detects loaded models |
 | Bedrock / Vertex / Foundry | env vars | Additional provider integrations for supported environments |
@@ -152,25 +151,25 @@ Advanced and source-build guides:
 - **Streaming responses**: Real-time token output and tool progress
 - **Tool calling**: Multi-step tool loops with model calls, tool execution, and follow-up responses
 - **Images**: URL and base64 image inputs for providers that support vision
-- **Provider profiles**: Guided setup plus saved `.openclaude-profile.json` support
+- **Provider profiles**: Guided setup plus saved `.verboo-profile.json` support
 - **Local and remote model backends**: Cloud APIs, local servers, and Apple Silicon local inference
 
 ## Provider Notes
 
-OpenClaude supports multiple providers, but behavior is not identical across all of them.
+Verboo Code supports multiple providers, but behavior is not identical across all of them.
 
 - Anthropic-specific features may not exist on other providers
 - Tool quality depends heavily on the selected model
 - Smaller local models can struggle with long multi-step tool flows
-- Some providers impose lower output caps than the CLI defaults, and OpenClaude adapts where possible
+- Some providers impose lower output caps than the CLI defaults, and Verboo Code adapts where possible
 
 For best results, use models with strong tool/function calling support.
 
 ## Agent Routing
 
-OpenClaude can route different agents to different models through settings-based routing. This is useful for cost optimization or splitting work by model strength.
+Verboo Code can route different agents to different models through settings-based routing. This is useful for cost optimization or splitting work by model strength.
 
-Add to `~/.openclaude.json`:
+Add to `~/.verboo.json`:
 
 ```json
 {
@@ -204,7 +203,7 @@ By default, `WebSearch` works on non-Anthropic models using DuckDuckGo. This giv
 
 > **Note:** DuckDuckGo fallback works by scraping search results and may be rate-limited, blocked, or subject to DuckDuckGo's Terms of Service. If you want a more reliable supported option, configure Firecrawl.
 
-For Anthropic-native backends and Codex responses, OpenClaude keeps the native provider web search behavior.
+For Anthropic-native backends and Codex responses, Verboo Code keeps the native provider web search behavior.
 
 `WebFetch` works, but its basic HTTP plus HTML-to-markdown path can still fail on JavaScript-rendered sites or sites that block plain HTTP requests.
 
@@ -225,7 +224,7 @@ Free tier at [firecrawl.dev](https://firecrawl.dev) includes 500 credits. The ke
 
 ## Headless gRPC Server
 
-OpenClaude can be run as a headless gRPC service, allowing you to integrate its agentic capabilities (tools, bash, file editing) into other applications, CI/CD pipelines, or custom user interfaces. The server uses bidirectional streaming to send real-time text chunks, tool calls, and request permissions for sensitive commands.
+Verboo Code can be run as a headless gRPC service, allowing you to integrate its agentic capabilities (tools, bash, file editing) into other applications, CI/CD pipelines, or custom user interfaces. The server uses bidirectional streaming to send real-time text chunks, tool calls, and request permissions for sensitive commands.
 
 ### 1. Start the gRPC Server
 
@@ -252,7 +251,7 @@ In a separate terminal, run:
 npm run dev:grpc:cli
 ```
 
-*Note: The gRPC definitions are located in `src/proto/openclaude.proto`. You can use this file to generate clients in Python, Go, Rust, or any other language.*
+*Note: The gRPC definitions are located in `src/proto/verboo.proto`. You can use this file to generate clients in Python, Go, Rust, or any other language.*
 
 ---
 
@@ -277,7 +276,7 @@ Helpful commands:
 
 ## Testing And Coverage
 
-OpenClaude uses Bun's built-in test runner for unit tests.
+Verboo Code uses Bun's built-in test runner for unit tests.
 
 Run the full unit suite:
 
@@ -316,20 +315,20 @@ Recommended contributor validation before opening a PR:
 - `bun run test:coverage` for broader unit coverage when your change affects shared runtime or provider logic
 - focused `bun test ...` runs for the files and flows you changed
 
-Coverage output is written to `coverage/lcov.info`, and OpenClaude also generates a git-activity-style heatmap at `coverage/index.html`.
+Coverage output is written to `coverage/lcov.info`, and Verboo Code also generates a git-activity-style heatmap at `coverage/index.html`.
 ## Repository Structure
 
 - `src/` - core CLI/runtime
 - `scripts/` - build, verification, and maintenance scripts
 - `docs/` - setup, contributor, and project documentation
 - `python/` - standalone Python helpers and their tests
-- `vscode-extension/openclaude-vscode/` - VS Code extension
+- `vscode-extension/verboo-vscode/` - VS Code extension
 - `.github/` - repo automation, templates, and CI configuration
 - `bin/` - CLI launcher entrypoints
 
 ## VS Code Extension
 
-The repo includes a VS Code extension in [`vscode-extension/openclaude-vscode`](vscode-extension/openclaude-vscode) for OpenClaude launch integration, provider-aware control-center UI, and theme support.
+The repo includes a VS Code extension in [`vscode-extension/verboo-vscode`](vscode-extension/verboo-vscode) for Verboo Code launch integration, provider-aware control-center UI, and theme support.
 
 ## Security
 
@@ -337,8 +336,8 @@ If you believe you found a security issue, see [SECURITY.md](SECURITY.md).
 
 ## Community
 
-- Use [GitHub Discussions](https://github.com/Gitlawb/openclaude/discussions) for Q&A, ideas, and community conversation
-- Use [GitHub Issues](https://github.com/Gitlawb/openclaude/issues) for confirmed bugs and actionable feature work
+- Use [GitHub Discussions](https://github.com/verbeux/verboo/discussions) for Q&A, ideas, and community conversation
+- Use [GitHub Issues](https://github.com/verbeux/verboo/issues) for confirmed bugs and actionable feature work
 
 ## Contributing
 
@@ -354,9 +353,9 @@ For larger changes, open an issue first so the scope is clear before implementat
 
 ## Disclaimer
 
-OpenClaude is an independent community project and is not affiliated with, endorsed by, or sponsored by Anthropic.
+Verboo Code is an independent community project and is not affiliated with, endorsed by, or sponsored by Anthropic.
 
-OpenClaude originated from the Claude Code codebase and has since been substantially modified to support multiple providers and open use. "Claude" and "Claude Code" are trademarks of Anthropic PBC. See [LICENSE](LICENSE) for details.
+Verboo Code originated from the Claude Code codebase and has since been substantially modified to support multiple providers and open use. "Claude" and "Claude Code" are trademarks of Anthropic PBC. See [LICENSE](LICENSE) for details.
 
 ## License
 

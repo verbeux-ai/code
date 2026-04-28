@@ -1,8 +1,9 @@
 /**
- * OpenClaude startup screen — filled-block text logo with sunset gradient.
- * Called once at CLI startup before the Ink UI renders.
+ * VERBOO-BRAND: Verboo Code startup screen — filled-block text logo with
+ * Verboo purple gradient. Called once at CLI startup before the Ink UI renders.
  *
- * Addresses: https://github.com/Gitlawb/openclaude/issues/55
+ * NOTE: cores aqui são RGB hardcoded (NÃO usam theme.ts) — toda mudança
+ * de marca neste arquivo é manual.
  */
 
 import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
@@ -48,38 +49,31 @@ function paintLine(text: string, stops: RGB[], lineT: number): string {
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
+// VERBOO-BRAND: purple gradient for the logo (was sunset orange)
 const SUNSET_GRAD: RGB[] = [
-  [255, 180, 100],
-  [240, 140, 80],
-  [217, 119, 87],
-  [193, 95, 60],
-  [160, 75, 55],
-  [130, 60, 50],
+  [213, 142, 255], // light purple
+  [193, 92, 255],
+  [173, 52, 254], // brand #AD34FE
+  [146, 1, 243],
+  [110, 0, 200],
+  [80, 0, 150],
 ]
 
-const ACCENT: RGB = [240, 148, 100]
-const CREAM: RGB = [220, 195, 170]
-const DIMCOL: RGB = [120, 100, 82]
-const BORDER: RGB = [100, 80, 65]
+const ACCENT: RGB = [173, 52, 254] // VERBOO-BRAND: brand purple
+const CREAM: RGB = [220, 200, 240] // VERBOO-BRAND: soft lavender
+const DIMCOL: RGB = [120, 100, 140] // VERBOO-BRAND: muted cool gray
+const BORDER: RGB = [80, 65, 100] // VERBOO-BRAND: dark cool gray
 
 // ─── Filled Block Text Logo ───────────────────────────────────────────────────
 
-const LOGO_OPEN = [
-  `  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557  \u2588\u2588\u2557`,
-  `  \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u2550\u2550\u255d \u2588\u2588\u2588\u2557 \u2588\u2588\u2551`,
-  `  \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551 \u2588\u2588\u2588\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551`,
-  `  \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u2550\u2550\u255d \u2588\u2588\u2554\u2550\u2550\u2550\u255d   \u2588\u2588\u2554\u2588\u2588\u2588\u2588\u2551`,
-  `  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551 \u2588\u2588\u2551       \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2551`,
-  `  \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d       \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u2550\u255d`,
-]
-
-const LOGO_CLAUDE = [
-  `  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557   \u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557`,
-  `  \u2588\u2588\u2554\u2550\u2550\u2550\u2550\u2550\u255d \u2588\u2588\u2551      \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2551 \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u2550\u2550\u255d`,
-  `  \u2588\u2588\u2551       \u2588\u2588\u2551      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551 \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2588\u2588\u2588\u2588\u2557  `,
-  `  \u2588\u2588\u2551       \u2588\u2588\u2551      \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2551 \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2551   \u2588\u2588\u2551 \u2588\u2588\u2554\u2550\u2550\u2550\u255d  `,
-  `  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557`,
-  `  \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d   \u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u2550\u2550\u255d  \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d`,
+// VERBOO-BRAND: "VERBOO CODE" em uma linha, estilo rounded (cantos \u256d\u256e\u2570\u256f, tra\u00e7os \u2500)
+const LOGO_VERBOO_CODE = [
+  `  \u2588\u2588\u256e   \u2588\u2588\u256e\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256e     \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e`,
+  `  \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e   \u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f`,
+  `  \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502   \u2588\u2588\u2502   \u2588\u2588\u2502     \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u256e  `,
+  `  \u2570\u2588\u2588\u256e \u2588\u2588\u256d\u256f\u2588\u2588\u256d\u2500\u2500\u256f  \u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502   \u2588\u2588\u2502   \u2588\u2588\u2502     \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u256d\u2500\u2500\u256f  `,
+  `   \u2570\u2588\u2588\u2588\u2588\u256d\u256f \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f   \u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e`,
+  `    \u2570\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u2570\u2500\u256f  \u2570\u2500\u256f\u2570\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u256f     \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u256f`,
 ]
 
 // ─── Provider detection ───────────────────────────────────────────────────────
@@ -184,61 +178,37 @@ function boxRow(content: string, width: number, rawLen: number): string {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+// VERBOO-BRAND: compact rounded header (replaces giant ASCII splash).
+// Layout inspired by the V2 logo style \u2014 fantasma + name + meta on the right.
 export function printStartupScreen(modelOverride?: string): void {
   // Skip in non-interactive / CI / print mode
   if (process.env.CI || !process.stdout.isTTY) return
 
   const p = detectProvider(modelOverride)
-  const W = 62
   const out: string[] = []
 
+  // Resolve cwd to a tilde-shortened display path
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  const cwd = process.cwd()
+  const displayCwd = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd
+
+  const version = MACRO.DISPLAY_VERSION ?? MACRO.VERSION
+  const bold = `${ESC}1m`
+  const PURPLE = rgb(...ACCENT)
+  const SOFT = rgb(...CREAM)
+  const DIMP = `${DIM}${rgb(...DIMCOL)}`
+  const STATUS_C = p.isLocal ? rgb(130, 200, 140) : PURPLE
+  const statusLabel = p.isLocal ? 'local' : 'cloud'
+  const ep = p.baseUrl.length > 48 ? p.baseUrl.slice(0, 45) + '...' : p.baseUrl
+
   out.push('')
-
-  // Gradient logo
-  const allLogo = [...LOGO_OPEN, '', ...LOGO_CLAUDE]
-  const total = allLogo.length
-  for (let i = 0; i < total; i++) {
-    const t = total > 1 ? i / (total - 1) : 0
-    if (allLogo[i] === '') {
-      out.push('')
-    } else {
-      out.push(paintLine(allLogo[i], SUNSET_GRAD, t))
-    }
-  }
-
+  out.push(`  ${PURPLE}\ud83d\udc7b${RESET}  ${bold}${SOFT}Verboo Code${RESET} ${DIMP}v${version}${RESET}`)
+  out.push(`      ${DIMP}Tokens ilimitados \u00b7 Privacidade \u00b7 Velocidade${RESET}`)
+  out.push(`      ${DIMP}${p.name} \u00b7 ${p.model}${RESET}`)
+  out.push(`      ${DIMP}${ep}${RESET}`)
+  out.push(`      ${DIMP}${displayCwd}${RESET}`)
   out.push('')
-
-  // Tagline
-  out.push(`  ${rgb(...ACCENT)}\u2726${RESET} ${rgb(...CREAM)}Any model. Every tool. Zero limits.${RESET} ${rgb(...ACCENT)}\u2726${RESET}`)
-  out.push('')
-
-  // Provider info box
-  out.push(`${rgb(...BORDER)}\u2554${'\u2550'.repeat(W - 2)}\u2557${RESET}`)
-
-  const lbl = (k: string, v: string, c: RGB = CREAM): [string, number] => {
-    const padK = k.padEnd(9)
-    return [` ${DIM}${rgb(...DIMCOL)}${padK}${RESET} ${rgb(...c)}${v}${RESET}`, ` ${padK} ${v}`.length]
-  }
-
-  const provC: RGB = p.isLocal ? [130, 175, 130] : ACCENT
-  let [r, l] = lbl('Provider', p.name, provC)
-  out.push(boxRow(r, W, l))
-  ;[r, l] = lbl('Model', p.model)
-  out.push(boxRow(r, W, l))
-  const ep = p.baseUrl.length > 38 ? p.baseUrl.slice(0, 35) + '...' : p.baseUrl
-  ;[r, l] = lbl('Endpoint', ep)
-  out.push(boxRow(r, W, l))
-
-  out.push(`${rgb(...BORDER)}\u2560${'\u2550'.repeat(W - 2)}\u2563${RESET}`)
-
-  const sC: RGB = p.isLocal ? [130, 175, 130] : ACCENT
-  const sL = p.isLocal ? 'local' : 'cloud'
-  const sRow = ` ${rgb(...sC)}\u25cf${RESET} ${DIM}${rgb(...DIMCOL)}${sL}${RESET}    ${DIM}${rgb(...DIMCOL)}Ready \u2014 type ${RESET}${rgb(...ACCENT)}/help${RESET}${DIM}${rgb(...DIMCOL)} to begin${RESET}`
-  const sLen = ` \u25cf ${sL}    Ready \u2014 type /help to begin`.length
-  out.push(boxRow(sRow, W, sLen))
-
-  out.push(`${rgb(...BORDER)}\u255a${'\u2550'.repeat(W - 2)}\u255d${RESET}`)
-  out.push(`  ${DIM}${rgb(...DIMCOL)}openclaude ${RESET}${rgb(...ACCENT)}v${MACRO.DISPLAY_VERSION ?? MACRO.VERSION}${RESET}`)
+  out.push(`  ${STATUS_C}\u25cf${RESET}  ${DIMP}${statusLabel}${RESET}    ${DIMP}Ready \u2014 type ${RESET}${PURPLE}/help${RESET}${DIMP} to begin${RESET}`)
   out.push('')
 
   process.stdout.write(out.join('\n') + '\n')

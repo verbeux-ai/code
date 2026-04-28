@@ -189,7 +189,8 @@ export function supportsExtendedKeys(): boolean {
   // Open Claude defaults this off because some real terminals render the UI
   // but stop delivering normal typing once kitty/modifyOtherKeys negotiation
   // is enabled. Power users can opt back in explicitly.
-  if (process.env.OPENCLAUDE_ENABLE_EXTENDED_KEYS !== '1') {
+  // VERBOO-BRAND: dual-read env var (VERBOO_* canonical, OPENCLAUDE_* alias)
+  if ((process.env.VERBOO_ENABLE_EXTENDED_KEYS ?? process.env.OPENCLAUDE_ENABLE_EXTENDED_KEYS) !== '1') {
     return false
   }
   return EXTENDED_KEYS_TERMINALS.includes(env.terminal ?? '')

@@ -1,5 +1,5 @@
 /**
- * OpenClaude build script — bundles the TypeScript source into a single
+ * Verboo Code build script — bundles the TypeScript source into a single
  * distributable JS file using Bun's bundler.
  *
  * Handles:
@@ -138,7 +138,8 @@ const result = await Bun.build({
     'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
     'MACRO.ISSUES_EXPLAINER':
       JSON.stringify('report the issue at https://github.com/anthropics/claude-code/issues'),
-    'MACRO.PACKAGE_URL': JSON.stringify('@gitlawb/openclaude'),
+    // VERBOO-BRAND: package URL injected at build time
+    'MACRO.PACKAGE_URL': JSON.stringify('@verboo/code'),
     'MACRO.NATIVE_PACKAGE_URL': 'undefined',
   },
   plugins: [
@@ -482,7 +483,7 @@ if (!result.success) {
   }
   process.exitCode = 1
 } else {
-  console.log(`✓ Built openclaude v${version} → dist/cli.mjs`)
+  console.log(`✓ Built verboo v${version} → dist/cli.mjs`) // VERBOO-BRAND
 }
 
 } finally {

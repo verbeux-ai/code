@@ -74,12 +74,13 @@ export function getAttributionTexts(): AttributionTexts {
     isInternalModelRepoCached() || isKnownPublicModel
       ? getPublicModelName(model)
       : 'Claude Opus 4.6'
+  // VERBOO-BRAND: attribution + dual-read env var
   const defaultAttribution =
-    '🤖 Generated with [OpenClaude](https://github.com/Gitlawb/openclaude)'
+    '🤖 Generated with Verboo Code'
   const coAuthorDomain =
-    getAPIProvider() === 'firstParty' ? 'anthropic.com' : 'openclaude.dev'
+    getAPIProvider() === 'firstParty' ? 'anthropic.com' : 'verboo.ai'
   const defaultCommit = isEnvTruthy(
-    process.env.OPENCLAUDE_DISABLE_CO_AUTHORED_BY,
+    process.env.VERBOO_DISABLE_CO_AUTHORED_BY ?? process.env.OPENCLAUDE_DISABLE_CO_AUTHORED_BY,
   )
     ? ''
     : `Co-Authored-By: ${modelName} <noreply@${coAuthorDomain}>`

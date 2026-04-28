@@ -423,7 +423,8 @@ export async function fetchCodexUsage(): Promise<CodexUsageData> {
     storedCredentials: refreshResult.credentials,
   })
   if (!credentials.apiKey) {
-    const oauthHint = isBareMode() ? '' : ', choose Codex OAuth in /provider'
+    // VERBOO-BRAND: /provider command unregistered; route users to admin
+    const oauthHint = isBareMode() ? '' : ', or contact your Verboo admin to switch provider'
     const authHint = credentials.authPath
       ? `${oauthHint} or place a Codex auth.json at ${credentials.authPath}`
       : oauthHint

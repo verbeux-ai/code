@@ -272,7 +272,8 @@ export async function* withRetry<T>(
               'API quota exhausted or not enabled.\n' +
               'Fix:\n' +
               '- Enable billing for your provider\n' +
-              '- Or switch provider via /provider',
+              // VERBOO-BRAND: /provider command unregistered
+              '- Or contact your Verboo admin to switch provider',
             ),
             retryContext,
           );

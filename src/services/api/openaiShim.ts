@@ -807,7 +807,8 @@ function convertTools(
           description: t.description ?? '',
           parameters: normalizeSchemaForOpenAI(
             schema,
-            !isGemini && !isEnvTruthy(process.env.OPENCLAUDE_DISABLE_STRICT_TOOLS),
+            // VERBOO-BRAND: dual-read env var (VERBOO_* canonical, OPENCLAUDE_* alias)
+            !isGemini && !isEnvTruthy(process.env.VERBOO_DISABLE_STRICT_TOOLS ?? process.env.OPENCLAUDE_DISABLE_STRICT_TOOLS),
           ),
         },
       }
@@ -1480,7 +1481,8 @@ class OpenAIShimMessages {
         storedCredentials: refreshResult.credentials,
       })
       if (!credentials.apiKey) {
-        const oauthHint = isBareMode() ? '' : ', choose Codex OAuth in /provider'
+        // VERBOO-BRAND: /provider command unregistered
+        const oauthHint = isBareMode() ? '' : ', or contact your Verboo admin to switch provider'
         const authHint = credentials.authPath
           ? `${oauthHint} or place a Codex auth.json at ${credentials.authPath}`
           : oauthHint

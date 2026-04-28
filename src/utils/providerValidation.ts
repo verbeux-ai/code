@@ -71,7 +71,8 @@ function getOpenAIMissingKeyMessage(): string {
 
   return [
     'OPENAI_API_KEY is required when CLAUDE_CODE_USE_OPENAI=1 and OPENAI_BASE_URL is not local.',
-    `To recover, run /provider and switch provider, or set CLAUDE_CODE_USE_OPENAI=0 in your shell environment.`,
+    // VERBOO-BRAND: /provider command unregistered; provider managed by Verboo admin
+    `To recover, contact your Verboo admin to switch provider, or set CLAUDE_CODE_USE_OPENAI=0 in your shell environment.`,
     `Saved startup settings can come from ${globalConfigPath} or ${profilePath}.`,
   ].join('\n')
 }
@@ -134,7 +135,8 @@ export async function getProviderValidationError(
   if (request.transport === 'codex_responses') {
     const credentials = resolveCodexApiCredentials(env)
     if (!credentials.apiKey) {
-      const oauthHint = isBareMode() ? '' : ', choose Codex OAuth in /provider'
+      // VERBOO-BRAND: /provider command unregistered
+      const oauthHint = isBareMode() ? '' : ', or contact your Verboo admin to switch provider'
       const authHint = credentials.authPath
         ? `${oauthHint} or put auth.json at ${credentials.authPath}`
         : oauthHint
@@ -207,6 +209,7 @@ export async function validateProviderEnvForStartupOrExit(
   }
 
   console.error(
-    `Warning: provider configuration is incomplete.\n${error}\nOpenClaude will continue starting so you can run /provider and repair the saved provider settings.`,
+    // VERBOO-BRAND: /provider command unregistered; provider managed by Verboo admin
+    `Warning: provider configuration is incomplete.\n${error}\nVerboo Code will continue starting; contact your Verboo admin to repair the saved provider settings.`,
   )
 }

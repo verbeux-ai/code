@@ -1,6 +1,6 @@
-# OpenClaude Local Agent Playbook
+# Verboo Code Local Agent Playbook
 
-This playbook is a practical guide to run OpenClaude with a local model (Ollama), work safely, and get strong day-to-day results.
+This playbook is a practical guide to run Verboo Code with a local model (Ollama), work safely, and get strong day-to-day results.
 
 ## 1. What You Have
 
@@ -27,7 +27,7 @@ bun run dev:fast
 bun run dev:code
 ```
 
-If everything is healthy, OpenClaude starts directly.
+If everything is healthy, Verboo Code starts directly.
 
 ## 3. One-Time Setup (If Needed)
 
@@ -37,7 +37,7 @@ If everything is healthy, OpenClaude starts directly.
 bun run profile:init -- --provider ollama --model llama3.1:8b
 ```
 
-Or let OpenClaude recommend the best local model for your goal:
+Or let Verboo Code recommend the best local model for your goal:
 
 ```powershell
 bun run profile:init -- --provider ollama --goal coding

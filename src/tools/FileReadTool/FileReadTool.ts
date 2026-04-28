@@ -733,7 +733,8 @@ export const CYBER_RISK_MITIGATION_REMINDER =
 const MITIGATION_EXEMPT_MODELS = new Set(['claude-opus-4-6'])
 
 function shouldIncludeFileReadMitigation(): boolean {
-  if (isEnvTruthy(process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
+  // VERBOO-BRAND: dual-read env var (VERBOO_* canonical, OPENCLAUDE_* alias)
+  if (isEnvTruthy(process.env.VERBOO_DISABLE_TOOL_REMINDERS ?? process.env.OPENCLAUDE_DISABLE_TOOL_REMINDERS)) {
     return false
   }
   const shortName = getCanonicalName(getMainLoopModel())

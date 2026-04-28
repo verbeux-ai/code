@@ -134,7 +134,9 @@ import plan from './commands/plan/index.js'
 import fast from './commands/fast/index.js'
 import passes from './commands/passes/index.js'
 import privacySettings from './commands/privacy-settings/index.js'
-import provider from './commands/provider/index.js'
+// VERBOO-BRAND: /provider command intentionally not imported (single-provider SaaS).
+// File at src/commands/provider/ kept on disk to minimize merge conflicts with upstream.
+// import provider from './commands/provider/index.js'
 import hooks from './commands/hooks/index.js'
 import files from './commands/files/index.js'
 import branch from './commands/branch/index.js'
@@ -306,7 +308,8 @@ const COMMANDS = memoize((): Command[] => [
   outputStyle,
   remoteEnv,
   plugin,
-  provider,
+  // VERBOO-BRAND: /provider intentionally unregistered (single-provider SaaS)
+  // provider,
   pr_comments,
   releaseNotes,
   reloadPlugins,

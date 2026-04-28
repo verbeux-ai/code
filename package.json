@@ -1,9 +1,10 @@
 {
-  "name": "@gitlawb/openclaude",
+  "name": "@verboo/code",
   "version": "0.7.0",
-  "description": "OpenClaude opens coding-agent workflows to any LLM — OpenAI, Gemini, DeepSeek, Ollama, and 200+ models",
+  "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
+    "verboo": "./bin/verboo",
     "openclaude": "./bin/openclaude"
   },
   "files": [
@@ -140,10 +141,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gitlawb/openclaude.git"
+    "url": "https://github.com/verbeux/verboo-code.git"
   },
   "keywords": [
-    "claude-code",
+    "verboo",
     "openai",
     "llm",
     "cli",

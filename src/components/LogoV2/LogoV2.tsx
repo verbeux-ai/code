@@ -364,7 +364,8 @@ export function LogoV2() {
   const t17 = 1;
   let t18;
   if ($[46] !== welcomeMessage_0) {
-    t18 = <Box marginTop={1} flexDirection="column" alignItems="center"><Text bold={true}>OPEN CLAUDE</Text><Text dimColor={true}>open terminal for any LLM</Text><Text color="inactive">•</Text><Text bold={true}>{welcomeMessage_0}</Text></Box>;
+    // VERBOO-BRAND
+    t18 = <Box marginTop={1} flexDirection="column" alignItems="center"><Text bold={true}>Verboo Code</Text><Text dimColor={true}>Tokens ilimitados · Privacidade · Velocidade</Text><Text color="inactive">•</Text><Text bold={true}>{welcomeMessage_0}</Text></Box>;
     $[46] = welcomeMessage_0;
     $[47] = t18;
   } else {

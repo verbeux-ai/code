@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * OpenClaude — Claude Code with any LLM
+ * VERBOO-BRAND: Legacy alias for `verboo` binary. Kept for backward compat
+ * during transition — prefer `bin/verboo` going forward.
  *
  * If dist/cli.mjs exists (built), run that.
  * Otherwise, tell the user to build first or use `bun run dev`.
@@ -18,7 +19,7 @@ if (existsSync(distPath)) {
   await import(pathToFileURL(distPath).href)
 } else {
   console.error(`
-  openclaude: dist/cli.mjs not found.
+  verboo (openclaude alias): dist/cli.mjs not found.
 
   Build first:
     bun run build

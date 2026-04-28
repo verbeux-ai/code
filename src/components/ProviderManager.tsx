@@ -123,7 +123,7 @@ const FORM_STEPS: Array<{
     key: 'name',
     label: 'Provider name',
     placeholder: 'e.g. Ollama Home, OpenAI Work',
-    helpText: 'A short label shown in /provider and startup setup.',
+    helpText: 'A short label shown in the provider list and startup setup.',
   },
   {
     key: 'baseUrl',

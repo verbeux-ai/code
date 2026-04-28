@@ -72,7 +72,7 @@ export async function setup(
     // biome-ignore lint/suspicious/noConsole:: intentional console output
     console.error(
       chalk.bold.red(
-        'Error: OpenClaude requires Node.js version 18 or higher.',
+        'Error: Verboo Code requires Node.js version 18 or higher.', // VERBOO-BRAND
       ),
     )
     process.exit(1)

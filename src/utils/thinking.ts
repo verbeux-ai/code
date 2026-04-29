@@ -102,9 +102,12 @@ export function modelSupportsThinking(model: string): boolean {
   // launch DRI and research. This can greatly affect model quality and bashing.
   const canonical = getCanonicalName(model)
   const provider = getAPIProvider()
-  // 1P and Foundry: all Claude 4+ models (including Haiku 4.5)
+  // 1P and Foundry: all Claude 4+ models (including Haiku 4.5).
+  // Verboo firstParty routes non-Claude models (e.g. Qwen) through the same
+  // infra, so we must confirm the model is actually Claude before enabling
+  // thinking — non-Claude models return signature:null which breaks parsing.
   if (provider === 'foundry' || provider === 'firstParty') {
-    return !canonical.includes('claude-3-')
+    return canonical.includes('claude-') && !canonical.includes('claude-3-')
   }
   if (
     canonical.startsWith('deepseek-v4-') ||

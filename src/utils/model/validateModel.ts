@@ -13,6 +13,8 @@ import { getModelStrings } from './modelStrings.js'
 import { getCachedOllamaModelOptions, isOllamaProvider } from './ollamaModels.js'
 import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNimModels.js'
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
+import { isVerbooMode } from '../../constants/oauth.js'
+import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -28,6 +30,29 @@ export async function validateModel(
   // Empty model is invalid
   if (!normalizedModel) {
     return { valid: false, error: 'Model name cannot be empty' }
+  }
+
+  // For Verboo, only allow models returned by the /models endpoint
+  if (isVerbooMode()) {
+    const verbooModels = getCachedVerbooModels()
+    if (verbooModels && verbooModels.length > 0) {
+      const found = verbooModels.some(m => m.id === normalizedModel)
+      if (found) {
+        validModelCache.set(normalizedModel, true)
+        return { valid: true }
+      }
+      const MAX_SHOWN = 5
+      const names = verbooModels.map(m => m.id)
+      const shown = names.slice(0, MAX_SHOWN).join(', ')
+      const suffix = names.length > MAX_SHOWN ? ` e mais ${names.length - MAX_SHOWN}` : ''
+      return {
+        valid: false,
+        error: `Modelo '${normalizedModel}' não disponível. Disponíveis: ${shown}${suffix}`,
+      }
+    }
+    // Cache vazio: aceita temporariamente para não bloquear startup
+    validModelCache.set(normalizedModel, true)
+    return { valid: true }
   }
 
   // For Ollama provider, validate against cached model list instead of API call

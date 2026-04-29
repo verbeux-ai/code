@@ -922,17 +922,25 @@ export async function checkInstall(
     } else {
       // Unix-style PATH instructions
       const shellType = getShellType()
-      const configPaths = getShellConfigPaths()
-      const configFile = configPaths[shellType as keyof typeof configPaths]
-      const displayPath = configFile
-        ? configFile.replace(homedir(), '~')
-        : 'your shell config file'
+      if (shellType === 'fish') {
+        messages.push({
+          message: `Native installation exists but ~/.local/bin is not in your PATH. Run:\n\nfish_add_path ~/.local/bin`,
+          userActionRequired: true,
+          type: 'path',
+        })
+      } else {
+        const configPaths = getShellConfigPaths()
+        const configFile = configPaths[shellType as keyof typeof configPaths]
+        const displayPath = configFile
+          ? configFile.replace(homedir(), '~')
+          : 'your shell config file'
 
-      messages.push({
-        message: `Native installation exists but ~/.local/bin is not in your PATH. Run:\n\necho 'export PATH="$HOME/.local/bin:$PATH"' >> ${displayPath} && source ${displayPath}`,
-        userActionRequired: true,
-        type: 'path',
-      })
+        messages.push({
+          message: `Native installation exists but ~/.local/bin is not in your PATH. Run:\n\necho 'export PATH="$HOME/.local/bin:$PATH"' >> ${displayPath} && source ${displayPath}`,
+          userActionRequired: true,
+          type: 'path',
+        })
+      }
     }
   }
 

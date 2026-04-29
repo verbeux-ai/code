@@ -21,7 +21,7 @@ import {
   getIsNonInteractiveSession,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { getOauthConfig, isVerbooMode, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
+import { isVerbooMode, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import {
@@ -206,6 +206,7 @@ export async function getAnthropicClient({
       defaultHeaders,
       maxRetries,
       timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+      providerOverride,
     }) as unknown as Anthropic
   }
   if (isEnvTruthy(process.env.CLAUDE_CODE_USE_BEDROCK)) {
@@ -362,25 +363,33 @@ export async function getAnthropicClient({
   }
 
   // Determine authentication method based on available tokens
-  // Em Verboo mode sempre usa o access token como Bearer, independente de scopes
   const useOAuthToken = isClaudeAISubscriber() || isVerbooMode()
-  const verbooAccessToken = useOAuthToken
+  const accessToken = useOAuthToken
     ? getClaudeAIOAuthTokens()?.accessToken
     : undefined
 
-  if (isVerbooMode() && !verbooAccessToken) {
-    process.stderr.write(
-      '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
-    )
+  if (isVerbooMode()) {
+    if (!accessToken) {
+      process.stderr.write(
+        '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
+      )
+    }
+    const { createOpenAIShimClient } = await import('./openaiShim.js')
+    return createOpenAIShimClient({
+      defaultHeaders,
+      maxRetries,
+      timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+      providerOverride: {
+        model: model ?? '',
+        baseURL: VERBOO_ROUTER_URL,
+        apiKey: accessToken ?? '',
+      },
+    }) as unknown as Anthropic
   }
 
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: useOAuthToken ? null : apiKey || getAnthropicApiKey(),
-    authToken: verbooAccessToken,
-    baseURL:
-      process.env.USER_TYPE === 'ant' && isEnvTruthy(process.env.USE_STAGING_OAUTH)
-        ? getOauthConfig().BASE_API_URL
-        : VERBOO_ROUTER_URL,
+    authToken: accessToken,
     ...ARGS,
     ...(isDebugToStdErr() && { logger: createStderrLogger() }),
   }

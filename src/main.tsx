@@ -26,7 +26,7 @@ import mapValues from 'lodash-es/mapValues.js';
 import pickBy from 'lodash-es/pickBy.js';
 import uniqBy from 'lodash-es/uniqBy.js';
 import React from 'react';
-import { getOauthConfig } from './constants/oauth.js';
+import { getOauthConfig, isVerbooMode } from './constants/oauth.js';
 import { getRemoteSessionUrl } from './constants/product.js';
 import { getSystemContext, getUserContext } from './context.js';
 import { init, initializeTelemetryAfterTrust } from './entrypoints/init.js';
@@ -1316,10 +1316,9 @@ async function run(): Promise<CommanderCommand> {
       const fileSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID || getSessionId();
       const files = parseFileSpecs(fileSpecs);
       if (files.length > 0) {
-        // Use ANTHROPIC_BASE_URL if set (by EnvManager), otherwise use OAuth config
-        // This ensures consistency with session ingress API in all environments
+        // Em modo Verboo a URL base é fixa — ignorar ANTHROPIC_BASE_URL.
         const config: FilesApiConfig = {
-          baseUrl: process.env.ANTHROPIC_BASE_URL || getOauthConfig().BASE_API_URL,
+          baseUrl: isVerbooMode() ? getOauthConfig().BASE_API_URL : (process.env.ANTHROPIC_BASE_URL || getOauthConfig().BASE_API_URL),
           oauthToken: sessionToken,
           sessionId: fileSessionId
         };
@@ -4091,20 +4090,27 @@ async function run(): Promise<CommanderCommand> {
   const auth = program.command('auth').description('Manage authentication').configureHelp(createSortedHelpConfig());
   // VERBOO-BRAND: descrições reescritas. Fluxo OAuth ainda aponta para
   // Anthropic (deferred) — quando /login Verboo for implementado, atualizar.
-  auth.command('login').description('Sign in to your Verboo account').option('--email <email>', 'Pre-populate email address on the login page').option('--sso', 'Force SSO login flow').option('--console', 'Use Verboo Console (API usage billing) instead of subscription').option('--claudeai', 'Use Verboo subscription (default)').action(async ({
+  auth.command('login').description('Sign in to your Verboo account').option('--email <email>', 'Pre-populate email address on the login page').option('--sso', 'Force SSO login flow').option('--console', 'Use Verboo Console (API usage billing) instead of subscription').option('--claudeai', 'Use Verboo subscription (default)').option('--headless', 'Login sem navegador: exibe URL para abrir em outro dispositivo e solicita código (ideal para servidores/CI)').action(async ({
     email,
     sso,
     console: useConsole,
-    claudeai
+    claudeai,
+    headless
   }: {
     email?: string;
     sso?: boolean;
     console?: boolean;
     claudeai?: boolean;
+    headless?: boolean;
   }) => {
     const {
-      authLogin
+      authLogin,
+      authLoginHeadless
     } = await import('./cli/handlers/auth.js');
+    if (headless) {
+      await authLoginHeadless();
+      return;
+    }
     await authLogin({
       email,
       sso,

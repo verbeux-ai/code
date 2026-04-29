@@ -1050,7 +1050,7 @@ async function* openaiStreamToAnthropic(
           }
           yield {
             type: 'content_block_delta',
-            index: contentBlockIndex,
+            index: hasClosedThinking ? contentBlockIndex - 1 : contentBlockIndex,
             delta: { type: 'thinking_delta', thinking: delta.reasoning_content },
           }
         }

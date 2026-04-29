@@ -23,7 +23,7 @@
  * - Bedrock/Vertex/Foundry (different endpoints, different auth)
  */
 
-import { getOauthConfig } from '../constants/oauth.js'
+import { getOauthConfig, isVerbooMode } from '../constants/oauth.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getAPIProvider } from './model/providers.js'
 
@@ -59,11 +59,10 @@ export function preconnectAnthropicApi(): void {
     return
   }
 
-  // Use configured base URL (staging, local, or custom gateway). Covers
-  // ANTHROPIC_BASE_URL env + USE_STAGING_OAUTH + USE_LOCAL_OAUTH in one lookup.
-  // NODE_EXTRA_CA_CERTS no longer a skip — init.ts applied it before this fires.
-  const baseUrl =
-    process.env.ANTHROPIC_BASE_URL || getOauthConfig().BASE_API_URL
+  // Em modo Verboo a URL do router é fixa — ignorar ANTHROPIC_BASE_URL.
+  const baseUrl = isVerbooMode()
+    ? getOauthConfig().BASE_API_URL
+    : process.env.ANTHROPIC_BASE_URL || getOauthConfig().BASE_API_URL
 
   // Fire and forget. HEAD means no response body — the connection is eligible
   // for keep-alive pool reuse immediately after headers arrive. 10s timeout

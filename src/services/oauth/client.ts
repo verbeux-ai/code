@@ -133,6 +133,22 @@ export async function exchangeCodeForTokens(
   return response
 }
 
+export async function exchangeCodeForTokensWithUri(
+  authorizationCode: string,
+  codeVerifier: string,
+  redirectUri: string,
+): Promise<OAuthTokenExchangeResponse> {
+  const response = await postOAuthForm({
+    grant_type: 'authorization_code',
+    code: authorizationCode,
+    redirect_uri: redirectUri,
+    client_id: getOauthConfig().CLIENT_ID,
+    code_verifier: codeVerifier,
+  })
+  logEvent('tengu_oauth_token_exchange_success', {})
+  return response
+}
+
 function normalizeOAuthTokenResponse(
   data: OAuthTokenExchangeResponse,
 ): OAuthTokenExchangeResponse {

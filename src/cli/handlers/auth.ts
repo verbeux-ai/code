@@ -18,6 +18,7 @@ import {
 } from '../../services/oauth/verbooStartupAuth.js'
 import {
   createAndStoreApiKey,
+  exchangeCodeForTokensWithUri,
   fetchAndStoreUserRoles,
   refreshOAuthToken,
   shouldUseClaudeAIAuth,
@@ -48,7 +49,13 @@ import {
   buildAccountProperties,
   buildAPIProviderProperties,
 } from '../../utils/status.js'
-import { isVerbooMode } from '../../constants/oauth.js'
+import { getActiveScopes, getOauthConfig, isVerbooMode } from '../../constants/oauth.js'
+import {
+  generateCodeChallenge,
+  generateCodeVerifier,
+  generateState,
+} from '../../services/oauth/crypto.js'
+import * as readline from 'node:readline'
 
 /**
  * Shared post-token-acquisition logic. Saves tokens, fetches profile/roles,
@@ -395,4 +402,63 @@ export async function authLogout(): Promise<void> {
   // VERBOO-BRAND
   process.stdout.write('Successfully logged out from your Verboo account.\n')
   process.exit(0)
+}
+
+// URL da página que exibe o código OAuth para o usuário copiar.
+// Precisa estar registrada como redirect_uri no backend (verboo-code-cli).
+const HEADLESS_REDIRECT_URI = 'https://code.verboo.ai/pt/cli-auth/manual'
+
+export async function authLoginHeadless(): Promise<void> {
+  const config = getOauthConfig()
+
+  const codeVerifier  = generateCodeVerifier()
+  const codeChallenge = await generateCodeChallenge(codeVerifier)
+  const state         = generateState()
+
+  const params = new URLSearchParams({
+    client_id:             config.CLIENT_ID,
+    redirect_uri:          HEADLESS_REDIRECT_URI,
+    response_type:         'code',
+    code_challenge:        codeChallenge,
+    code_challenge_method: 'S256',
+    state,
+    scope:                 getActiveScopes().join(' '),
+  })
+
+  const url = `${config.CONSOLE_AUTHORIZE_URL}?${params}`
+
+  process.stdout.write('\nAbra este link em qualquer navegador:\n\n')
+  process.stdout.write(`  ${url}\n\n`)
+  process.stdout.write('Após autorizar, cole o código exibido e pressione Enter: ')
+
+  const code = (await readOneLine()).trim()
+  if (!code) {
+    process.stderr.write('\nCódigo não informado. Cancelado.\n')
+    process.exit(1)
+  }
+
+  try {
+    const tokenResponse = await exchangeCodeForTokensWithUri(code, codeVerifier, HEADLESS_REDIRECT_URI)
+    const tokens: OAuthTokens = {
+      accessToken:      tokenResponse.access_token,
+      refreshToken:     tokenResponse.refresh_token ?? null,
+      expiresAt:        Date.now() + (tokenResponse.expires_in ?? 900) * 1000,
+      scopes:           tokenResponse.scope?.split(' ').filter(Boolean) ?? [],
+      subscriptionType: null,
+      rateLimitTier:    null,
+    }
+    await installOAuthTokens(tokens)
+    process.stdout.write('Login realizado com sucesso.\n')
+    process.exit(0)
+  } catch (err) {
+    process.stderr.write(`Erro ao trocar o código: ${errorMessage(err)}\n`)
+    process.exit(1)
+  }
+}
+
+function readOneLine(): Promise<string> {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    rl.once('line', line => { rl.close(); resolve(line) })
+  })
 }

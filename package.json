@@ -1,6 +1,6 @@
 {
   "name": "@verboo/code",
-  "version": "0.7.5",
+  "version": "0.7.8",
   "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
@@ -10,10 +10,12 @@
     "bin/verboo",
     "bin/import-specifier.mjs",
     "dist/cli.mjs",
+    "scripts/postinstall.mjs",
     "README.md"
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "postinstall": "node scripts/postinstall.mjs || true",
     "dev": "bun run build && node dist/cli.mjs",
     "dev:profile": "bun run scripts/provider-launch.ts",
     "dev:profile:fast": "bun run scripts/provider-launch.ts auto --fast --bare",

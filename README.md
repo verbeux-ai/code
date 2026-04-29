@@ -10,7 +10,7 @@ Use OpenAI-compatible APIs, Gemini, GitHub Models, Codex OAuth, Codex, Ollama, A
 [![Security Policy](https://img.shields.io/badge/security-policy-0f766e)](SECURITY.md)
 [![License](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
 
-Verboo Code is a fork of [openclaude](https://github.com/Gitlawb/openclaude), which itself originated from the Claude Code codebase. It is maintained by the Verboo team for the Verboo platform.
+Verboo Code is a fork of [Claude Code](https://github.com/anthropics/claude-code), maintained by the Verboo team for the Verboo platform.
 
 [Quick Start](#quick-start) | [Setup Guides](#setup-guides) | [Providers](#supported-providers) | [Source Build](#source-build-and-local-development) | [VS Code Extension](#vs-code-extension) | [Sponsors](#sponsors) | [Community](#community)
 

@@ -1,11 +1,11 @@
 {
   "name": "@verboo/code",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
-    "verboo": "./bin/verboo",
-    "openclaude": "./bin/openclaude"
+    "verboo": "bin/verboo",
+    "openclaude": "bin/openclaude"
   },
   "files": [
     "bin/verboo",
@@ -144,7 +144,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/verbeux/verboo-code.git"
+    "url": "git+https://github.com/verbeux/verboo-code.git"
   },
   "keywords": [
     "verboo",

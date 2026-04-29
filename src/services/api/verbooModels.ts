@@ -83,7 +83,7 @@ export async function fetchVerbooModels(
   }
   if (inflight) return inflight
 
-  const endpoint = `${VERBOO_ROUTER_URL}/v1/models`
+  const endpoint = `${VERBOO_ROUTER_URL}/models`
   inflight = (async () => {
     try {
       const response = await axios.get<ModelsResponse>(endpoint, {

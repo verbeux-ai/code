@@ -78,7 +78,7 @@ type OauthConfig = {
 // (mesmo ingress). Não há subdomínio `api.`.
 export const VERBOO_API_BASE_URL = 'https://code.verboo.ai'
 export const VERBOO_FRONT_BASE_URL = 'https://code.verboo.ai'
-export const VERBOO_ROUTER_URL = 'https://code.verboo.ai/router'
+export const VERBOO_ROUTER_URL = 'https://code.verboo.ai/router/v1'
 
 // Scopes pedidos pelo CLI ao backend Verboo. Backend hoje não valida contra
 // allowlist por client, mas explicitar prepara o terreno.

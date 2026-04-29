@@ -111,8 +111,8 @@ export async function initUpstreamProxy(opts?: {
 
   setNonDumpable()
 
-  // VERBOO-BRAND: API LLM (completions, /v1/messages, /v1/models) é
-  // hardcoded em code.verboo.ai/router. Sem overrides via env var ou
+  // VERBOO-BRAND: API LLM (completions, /v1/chat/completions, /v1/models) é
+  // hardcoded em code.verboo.ai/router/v1. Sem overrides via env var ou
   // param — Verboo Code só fala com o router próprio.
   const baseUrl = 'https://code.verboo.ai/router'
   const caBundlePath =

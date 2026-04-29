@@ -1,15 +1,13 @@
 {
   "name": "@verboo/code",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
-    "verboo": "bin/verboo",
-    "openclaude": "bin/openclaude"
+    "verboo": "bin/verboo"
   },
   "files": [
     "bin/verboo",
-    "bin/openclaude",
     "bin/import-specifier.mjs",
     "dist/cli.mjs",
     "README.md"

@@ -94,7 +94,7 @@ test('openai missing key error includes recovery guidance and config locations',
     'set CLAUDE_CODE_USE_OPENAI=0 in your shell environment',
   )
   expect(message).toContain('Saved startup settings can come from')
-  expect(message).toContain('.openclaude-profile.json')
+  expect(message).toContain('.verboo-profile.json')
 })
 
 test('startup provider validation allows interactive recovery', () => {

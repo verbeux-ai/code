@@ -1,38 +1,21 @@
 import memoize from 'lodash-es/memoize.js'
-import { homedir } from 'os'
 import { join } from 'path'
 import { fileSuffixForOauthConfig } from '../constants/oauth.js'
 import { isRunningWithBun } from './bundledMode.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { findExecutable } from './findExecutable.js'
-import { getFsImplementation } from './fsOperations.js'
 import { which } from './which.js'
 
 type Platform = 'win32' | 'darwin' | 'linux'
 
 // Config and data paths
-// VERBOO-BRAND: arquivo global SEMPRE é ~/.verboo.json (sem auto-fallback
-// para .openclaude.json ou .claude.json — instalações distintas coexistem
-// na mesma máquina). Honra VERBOO_CONFIG_DIR > CLAUDE_CONFIG_DIR como
-// override explícito.
+// VERBOO-BRAND: arquivo global fica dentro de ~/.verboo e não lê/migra
+// arquivos globais antigos/de outros CLIs. Sessões de resume continuam no
+// diretório compartilhado de projetos via sessionStorage.ts.
 export const getGlobalClaudeFile = memoize((): string => {
-  // Legacy fallback for backwards compatibility (only se o usuário criou
-  // manualmente .config.json no configDir resolvido).
-  if (
-    getFsImplementation().existsSync(
-      join(getClaudeConfigHomeDir(), '.config.json'),
-    )
-  ) {
-    return join(getClaudeConfigHomeDir(), '.config.json')
-  }
-
   const oauthSuffix = fileSuffixForOauthConfig()
-  const configDir =
-    process.env.VERBOO_CONFIG_DIR ||
-    process.env.CLAUDE_CONFIG_DIR ||
-    homedir()
-
-  return join(configDir, `.verboo${oauthSuffix}.json`)
+  const fileName = oauthSuffix ? `.config${oauthSuffix}.json` : '.config.json'
+  return join(getClaudeConfigHomeDir(), fileName)
 })
 
 const hasInternetAccess = memoize(async (): Promise<boolean> => {

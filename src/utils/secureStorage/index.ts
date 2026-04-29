@@ -5,6 +5,14 @@ import { windowsCredentialStorage } from './windowsCredentialStorage.js'
 import { plainTextStorage } from './plainTextStorage.js'
 
 export interface SecureStorageData {
+  verbooOauth?: {
+    accessToken: string
+    refreshToken: string | null
+    expiresAt: number | null
+    scopes: string[]
+    subscriptionType?: string | null
+    rateLimitTier?: string | null
+  }
   codex?: {
     apiKey?: string
     accessToken: string

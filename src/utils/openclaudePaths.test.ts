@@ -24,110 +24,84 @@ afterEach(() => {
   mock.restore()
 })
 
-describe('OpenClaude paths', () => {
-  test('defaults user config home to ~/.openclaude', async () => {
+describe('Verboo paths', () => {
+  test('defaults user config home to ~/.verboo', async () => {
+    delete process.env.VERBOO_CONFIG_DIR
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
 
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-        openClaudeExists: true,
-        legacyClaudeExists: false,
-      }),
-    ).toBe(join(homedir(), '.openclaude'))
+    expect(resolveClaudeConfigHomeDir({ homeDir: homedir() })).toBe(
+      join(homedir(), '.verboo'),
+    )
   })
 
-  test('falls back to ~/.claude when legacy config exists and ~/.openclaude does not', async () => {
-    delete process.env.CLAUDE_CONFIG_DIR
-    const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
-
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-        openClaudeExists: false,
-        legacyClaudeExists: true,
-      }),
-    ).toBe(join(homedir(), '.claude'))
-  })
-
-  test('uses CLAUDE_CONFIG_DIR override when provided', async () => {
+  test('ignores CLAUDE_CONFIG_DIR and uses VERBOO_CONFIG_DIR only', async () => {
     process.env.CLAUDE_CONFIG_DIR = '/tmp/custom-openclaude'
+    process.env.VERBOO_CONFIG_DIR = '/tmp/custom-verboo'
     const { getClaudeConfigHomeDir, resolveClaudeConfigHomeDir } =
       await importFreshEnvUtils()
 
-    expect(getClaudeConfigHomeDir()).toBe('/tmp/custom-openclaude')
+    expect(getClaudeConfigHomeDir()).toBe('/tmp/custom-verboo')
     expect(
       resolveClaudeConfigHomeDir({
-        configDirEnv: '/tmp/custom-openclaude',
+        configDirEnv: process.env.VERBOO_CONFIG_DIR,
       }),
-    ).toBe('/tmp/custom-openclaude')
+    ).toBe('/tmp/custom-verboo')
   })
 
-  test('project and local settings paths use .openclaude', async () => {
+  test('project and local settings paths use .verboo', async () => {
     const { getRelativeSettingsFilePathForSource } = await importFreshSettings()
 
     expect(getRelativeSettingsFilePathForSource('projectSettings')).toBe(
-      '.openclaude/settings.json',
+      '.verboo/settings.json',
     )
     expect(getRelativeSettingsFilePathForSource('localSettings')).toBe(
-      '.openclaude/settings.local.json',
+      '.verboo/settings.local.json',
     )
   })
 
-  test('local installer uses openclaude wrapper path', async () => {
-    // Force .openclaude config home so the test doesn't fall back to
-    // ~/.claude when ~/.openclaude doesn't exist on this machine.
-    process.env.CLAUDE_CONFIG_DIR = join(homedir(), '.openclaude')
+  test('local installer uses verboo wrapper path', async () => {
+    process.env.VERBOO_CONFIG_DIR = join(homedir(), '.verboo')
     const { getLocalClaudePath } = await importFreshLocalInstaller()
 
     expect(getLocalClaudePath()).toBe(
-      join(homedir(), '.openclaude', 'local', 'openclaude'),
+      join(homedir(), '.verboo', 'local', 'verboo'),
     )
   })
 
-  test('local installation detection matches .openclaude path', async () => {
+  test('local installation detection matches .verboo path only', async () => {
     const { isManagedLocalInstallationPath } =
       await importFreshLocalInstaller()
 
+    expect(
+      isManagedLocalInstallationPath(
+        `${join(homedir(), '.verboo', 'local')}/node_modules/.bin/verboo`,
+      ),
+    ).toBe(true)
     expect(
       isManagedLocalInstallationPath(
         `${join(homedir(), '.openclaude', 'local')}/node_modules/.bin/openclaude`,
       ),
-    ).toBe(true)
+    ).toBe(false)
   })
 
-  test('local installation detection still matches legacy .claude path', async () => {
-    const { isManagedLocalInstallationPath } =
-      await importFreshLocalInstaller()
-
-    expect(
-      isManagedLocalInstallationPath(
-        `${join(homedir(), '.claude', 'local')}/node_modules/.bin/openclaude`,
-      ),
-    ).toBe(true)
-  })
-
-  test('candidate local install dirs include both openclaude and legacy claude paths', async () => {
+  test('candidate local install dirs include only Verboo path', async () => {
     const { getCandidateLocalInstallDirs } = await importFreshLocalInstaller()
 
     expect(
       getCandidateLocalInstallDirs({
-        configHomeDir: join(homedir(), '.openclaude'),
+        configHomeDir: join(homedir(), '.verboo'),
         homeDir: homedir(),
       }),
-    ).toEqual([
-      join(homedir(), '.openclaude', 'local'),
-      join(homedir(), '.claude', 'local'),
-    ])
+    ).toEqual([join(homedir(), '.verboo', 'local')])
   })
 
-  test('legacy local installs are detected when they still expose the claude binary', async () => {
+  test('local installs are detected when they expose the verboo binary', async () => {
     mock.module('fs/promises', () => ({
       ...fsPromises,
       access: async (path: string) => {
         if (
-          path === join(homedir(), '.claude', 'local', 'node_modules', '.bin', 'claude')
+          path === join(homedir(), '.verboo', 'local', 'node_modules', '.bin', 'verboo')
         ) {
           return
         }
@@ -140,7 +114,7 @@ describe('OpenClaude paths', () => {
 
     expect(await localInstallationExists()).toBe(true)
     expect(await getDetectedLocalInstallDir()).toBe(
-      join(homedir(), '.claude', 'local'),
+      join(homedir(), '.verboo', 'local'),
     )
   })
 })

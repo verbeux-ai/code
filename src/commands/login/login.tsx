@@ -2,6 +2,14 @@ import { feature } from 'bun:bundle'
 import * as React from 'react'
 
 import { resetCostState } from '../../bootstrap/state.js'
+import { isVerbooMode } from '../../constants/oauth.js'
+import {
+  checkVerbooModels,
+  getNoVerbooModelsMessage,
+  markVerbooSessionValidated,
+  preflightVerbooLogin,
+} from '../../services/oauth/verbooStartupAuth.js'
+import { getClaudeAIOAuthTokensAsync } from '../../utils/auth.js'
 import {
   clearTrustedDeviceToken,
   enrollTrustedDevice,
@@ -33,6 +41,10 @@ type LoginCompletion =
   | {
       type: 'cancel'
     }
+  | {
+      type: 'ready'
+      refreshed: boolean
+    }
 
 export async function call(
   onDone: LocalJSXCommandOnDone,
@@ -48,6 +60,27 @@ export async function call(
 
         if (result.type === 'provider-setup') {
           onDone(result.message, { display: 'system' })
+          return
+        }
+
+        const authChanged = result.type !== 'ready' || result.refreshed
+
+        if (!authChanged) {
+          if (isVerbooMode()) {
+            markVerbooSessionValidated()
+            const storedTokens = await getClaudeAIOAuthTokensAsync()
+            if (storedTokens?.accessToken) {
+              const models = await checkVerbooModels(storedTokens.accessToken)
+              const [firstModel] = models
+              if (firstModel) {
+                context.setAppState(prev => ({
+                  ...prev,
+                  mainLoopModelOverride: firstModel.id,
+                }))
+              }
+            }
+          }
+          onDone('Sessão já está válida.')
           return
         }
 
@@ -91,7 +124,25 @@ export async function call(
           authVersion: prev.authVersion + 1,
         }))
 
-        onDone('Login successful')
+        if (isVerbooMode()) {
+          markVerbooSessionValidated()
+
+          const storedTokens = await getClaudeAIOAuthTokensAsync()
+          if (storedTokens?.accessToken) {
+            const models = await checkVerbooModels(storedTokens.accessToken)
+            if (models.length === 0) {
+              onDone(getNoVerbooModelsMessage().trim(), { display: 'system' })
+              return
+            }
+            const [firstModel] = models
+            context.setAppState(prev => ({
+              ...prev,
+              mainLoopModelOverride: firstModel.id,
+            }))
+          }
+        }
+
+        onDone(result.type === 'ready' ? 'Sessão renovada.' : 'Login successful')
       }}
     />
   )
@@ -102,6 +153,34 @@ export function Login(props: {
   startingMessage?: string
 }): React.ReactNode {
   const mainLoopModel = useMainLoopModel()
+  const [preflightDone, setPreflightDone] = React.useState(!isVerbooMode())
+
+  React.useEffect(() => {
+    if (!isVerbooMode()) return
+    let cancelled = false
+    preflightVerbooLogin()
+      .then(result => {
+        if (cancelled) return
+        if (result.kind === 'ready') {
+          props.onDone(
+            { type: 'ready', refreshed: result.refreshed },
+            mainLoopModel,
+          )
+          return
+        }
+        setPreflightDone(true)
+      })
+      .catch(() => {
+        if (!cancelled) setPreflightDone(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mainLoopModel, props])
+
+  if (!preflightDone) {
+    return <Text>Validando sessão Verboo…</Text>
+  }
 
   return (
     <Dialog

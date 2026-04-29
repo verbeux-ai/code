@@ -44,11 +44,11 @@ export function getInstallationPath(): string {
   const homeDir = homedir();
   if (isWindows) {
     // Convert to Windows-style path
-    const windowsPath = join(homeDir, '.local', 'bin', 'openclaude.exe');
+    const windowsPath = join(homeDir, '.local', 'bin', 'verboo.exe');
     // Replace forward slashes with backslashes for Windows display
     return windowsPath.replace(/\//g, '\\');
   }
-  return '~/.local/bin/openclaude';
+  return '~/.local/bin/verboo';
 }
 function SetupNotes(t0) {
   const $ = _c(5);
@@ -254,7 +254,7 @@ function Install({
             <Box marginTop={1}>
               <Text dimColor>Next: Run </Text>
               <Text color="claude" bold>
-                openclaude --help
+                verboo --help
               </Text>
               <Text dimColor> to get started</Text>
             </Box>

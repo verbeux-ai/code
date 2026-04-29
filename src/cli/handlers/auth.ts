@@ -11,6 +11,12 @@ import {
 import { getSSLErrorHint } from '../../services/api/errorUtils.js'
 import { fetchAndStoreClaudeCodeFirstTokenDate } from '../../services/api/firstTokenDate.js'
 import {
+  checkVerbooModels,
+  getNoVerbooModelsMessage,
+  installVerbooOAuthTokens,
+  preflightVerbooLogin,
+} from '../../services/oauth/verbooStartupAuth.js'
+import {
   createAndStoreApiKey,
   fetchAndStoreUserRoles,
   refreshOAuthToken,
@@ -42,7 +48,7 @@ import {
   buildAccountProperties,
   buildAPIProviderProperties,
 } from '../../utils/status.js'
-import { getOauthConfig, VERBOO_API_BASE_URL } from '../../constants/oauth.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 
 /**
  * Shared post-token-acquisition logic. Saves tokens, fetches profile/roles,
@@ -93,7 +99,7 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
     logForDebugging(String(err), { level: 'error' }),
   )
 
-  const isVerbooOAuth = getOauthConfig().BASE_API_URL === VERBOO_API_BASE_URL
+  const isVerbooOAuth = isVerbooMode()
 
   if (!isVerbooOAuth && shouldUseClaudeAIAuth(tokens.scopes)) {
     await fetchAndStoreClaudeCodeFirstTokenDate().catch(err =>
@@ -110,6 +116,56 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
   }
 
   await clearAuthRelatedCaches()
+}
+
+export type RunOAuthLoginOptions = {
+  email?: string
+  sso?: boolean
+  loginWithClaudeAi: boolean
+  orgUUID?: string
+  /**
+   * Callback opcional invocado quando a URL de login está pronta. Usado pelo
+   * fluxo de startup para renderizar o componente Ink que mostra a URL ao
+   * usuário antes/durante a abertura do navegador.
+   */
+  onAuthUrl?: (url: string) => void | Promise<void>
+}
+
+/**
+ * Executa o fluxo OAuth + PKCE puro: abre o navegador, escuta o callback
+ * loopback e troca o code por tokens. Não chama process.exit nem grava
+ * estado global — apenas retorna OAuthTokens. O caller decide o que fazer.
+ */
+export async function runOAuthLoginFlow(
+  opts: RunOAuthLoginOptions,
+): Promise<OAuthTokens> {
+  const oauthService = new OAuthService()
+  const resolvedLoginMethod = opts.sso ? 'sso' : undefined
+
+  try {
+    logEvent('tengu_oauth_flow_start', {
+      loginWithClaudeAi: opts.loginWithClaudeAi,
+    })
+
+    return await oauthService.startOAuthFlow(
+      async url => {
+        if (opts.onAuthUrl) {
+          await opts.onAuthUrl(url)
+        } else {
+          process.stdout.write('Opening browser to sign in…\n')
+          process.stdout.write(`If the browser didn't open, visit: ${url}\n`)
+        }
+      },
+      {
+        loginWithClaudeAi: opts.loginWithClaudeAi,
+        loginHint: opts.email,
+        loginMethod: resolvedLoginMethod,
+        orgUUID: opts.orgUUID,
+      },
+    )
+  } finally {
+    oauthService.cleanup()
+  }
 }
 
 export async function authLogin({
@@ -188,27 +244,37 @@ export async function authLogin({
     }
   }
 
-  const resolvedLoginMethod = sso ? 'sso' : undefined
-
-  const oauthService = new OAuthService()
-
   try {
-    logEvent('tengu_oauth_flow_start', { loginWithClaudeAi })
+    if (isVerbooMode()) {
+      const preflight = await preflightVerbooLogin()
+      if (preflight.kind === 'ready') {
+        process.stdout.write(
+          preflight.refreshed
+            ? 'Sessão renovada.\n'
+            : 'Sessão já está válida.\n',
+        )
+        process.exit(0)
+      }
+    }
 
-    const result = await oauthService.startOAuthFlow(
-      async url => {
-        process.stdout.write('Opening browser to sign in…\n')
-        process.stdout.write(`If the browser didn't open, visit: ${url}\n`)
-      },
-      {
-        loginWithClaudeAi,
-        loginHint: email,
-        loginMethod: resolvedLoginMethod,
-        orgUUID,
-      },
-    )
+    const result = await runOAuthLoginFlow({
+      email,
+      sso,
+      loginWithClaudeAi,
+      orgUUID,
+    })
 
-    await installOAuthTokens(result)
+    if (isVerbooMode()) {
+      await installVerbooOAuthTokens(result)
+      const models = await checkVerbooModels(result.accessToken)
+      if (models.length === 0) {
+        process.stderr.write(getNoVerbooModelsMessage())
+        process.exit(1)
+      }
+      await preflightVerbooLogin()
+    } else {
+      await installOAuthTokens(result)
+    }
 
     const orgResult = await validateForceLoginOrg()
     if (!orgResult.valid) {
@@ -227,8 +293,6 @@ export async function authLogin({
       `Login failed: ${errorMessage(err)}\n${sslHint ? sslHint + '\n' : ''}`,
     )
     process.exit(1)
-  } finally {
-    oauthService.cleanup()
   }
 }
 
@@ -290,7 +354,7 @@ export async function authStatus(opts: {
     }
     if (!loggedIn) {
       process.stdout.write(
-        'Not logged in. Run openclaude auth login to authenticate.\n',
+        'Não autenticado. Execute `verboo /login` para entrar.\n',
       )
     }
   } else {

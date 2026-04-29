@@ -64,8 +64,8 @@ export const DANGEROUS_FILES = [
   '.profile',
   '.ripgreprc',
   '.mcp.json',
-  '.openclaude.json',
-  '.claude.json',
+  '.verboo.json',
+  '.verboo',
 ] as const
 
 /**
@@ -76,8 +76,7 @@ export const DANGEROUS_DIRECTORIES = [
   '.git',
   '.vscode',
   '.idea',
-  '.claude',
-  '.openclaude',
+  '.verboo',
 ] as const
 
 /**
@@ -94,11 +93,11 @@ export function normalizeCaseForComparison(path: string): string {
 }
 
 /**
- * If filePath is inside a .claude/skills/{name}/ directory (project or global),
+ * If filePath is inside a .verboo/skills/{name}/ directory (project or global),
  * return the skill name and a session-allow pattern scoped to just that skill.
  * Used to offer a narrower "allow edits to this skill only" option in the
  * permission dialog and SDK suggestions, so iterating on one skill doesn't
- * require granting session access to all of .claude/ (settings.json, hooks/, etc.).
+ * require granting session access to all of .verboo/ (settings.json, hooks/, etc.).
  */
 export function getClaudeSkillScope(
   filePath: string,
@@ -108,12 +107,12 @@ export function getClaudeSkillScope(
 
   const bases = [
     {
-      dir: expandPath(join(getOriginalCwd(), '.claude', 'skills')),
-      prefix: '/.claude/skills/',
+      dir: expandPath(join(getOriginalCwd(), '.verboo', 'skills')),
+      prefix: '/.verboo/skills/',
     },
     {
-      dir: expandPath(join(homedir(), '.claude', 'skills')),
-      prefix: '~/.claude/skills/',
+      dir: expandPath(join(getClaudeConfigHomeDir(), 'skills')),
+      prefix: '~/.verboo/skills/',
     },
   ]
 
@@ -147,7 +146,7 @@ export function getClaudeSkillScope(
         // Reject glob metacharacters. skillName is interpolated into a
         // gitignore pattern consumed by ignore().add() in matchingRuleForInput
         // at step 1.6. A directory literally named '*' (valid on POSIX) would
-        // produce '/.claude/skills/*/**' which matches ALL skills. Return null
+        // produce '/.verboo/skills/*/**' which matches ALL skills. Return null
         // to fall through to generateSuggestions() instead.
         if (/[*?[\]]/.test(skillName)) return null
         return { skillName, pattern: prefix + skillName + '/**' }
@@ -201,7 +200,7 @@ function getSettingsPaths(): string[] {
 
 export function isClaudeSettingsPath(filePath: string): boolean {
   // SECURITY: Normalize path structure first to prevent bypass via redundant ./
-  // sequences like `./.claude/./settings.json` which would evade the endsWith() check
+  // sequences like `./.verboo/./settings.json` which would evade the endsWith() check
   const expandedPath = expandPath(filePath)
 
   // Normalize for case-insensitive comparison to prevent bypassing security
@@ -210,12 +209,9 @@ export function isClaudeSettingsPath(filePath: string): boolean {
 
   // Use platform separator so endsWith checks work on both Unix (/) and Windows (\)
   if (
-    normalizedPath.endsWith(`${sep}.openclaude${sep}settings.json`) ||
-    normalizedPath.endsWith(`${sep}.openclaude${sep}settings.local.json`) ||
-    normalizedPath.endsWith(`${sep}.claude${sep}settings.json`) ||
-    normalizedPath.endsWith(`${sep}.claude${sep}settings.local.json`)
+    normalizedPath.endsWith(`${sep}.verboo${sep}settings.json`) ||
+    normalizedPath.endsWith(`${sep}.verboo${sep}settings.local.json`)
   ) {
-    // Include .claude/settings.json even for other projects
     return true
   }
   // Check for current project's settings files (including managed settings and CLI args)
@@ -231,23 +227,16 @@ function isClaudeConfigFilePath(filePath: string): boolean {
     return true
   }
 
-  // Check if file is within .claude/commands or .claude/agents directories
-  // using proper path segment validation (not string matching with includes())
-  // pathInWorkingPath now handles case-insensitive comparison to prevent bypasses
-  const commandsDir = join(getOriginalCwd(), '.claude', 'commands')
-  const agentsDir = join(getOriginalCwd(), '.claude', 'agents')
-  const skillsDir = join(getOriginalCwd(), '.claude', 'skills')
-  const openCommandsDir = join(getOriginalCwd(), '.openclaude', 'commands')
-  const openAgentsDir = join(getOriginalCwd(), '.openclaude', 'agents')
-  const openSkillsDir = join(getOriginalCwd(), '.openclaude', 'skills')
+  // Check if file is within .verboo/commands, .verboo/agents, or
+  // .verboo/skills directories using proper path segment validation.
+  const commandsDir = join(getOriginalCwd(), '.verboo', 'commands')
+  const agentsDir = join(getOriginalCwd(), '.verboo', 'agents')
+  const skillsDir = join(getOriginalCwd(), '.verboo', 'skills')
 
   return (
     pathInWorkingPath(filePath, commandsDir) ||
     pathInWorkingPath(filePath, agentsDir) ||
-    pathInWorkingPath(filePath, skillsDir) ||
-    pathInWorkingPath(filePath, openCommandsDir) ||
-    pathInWorkingPath(filePath, openAgentsDir) ||
-    pathInWorkingPath(filePath, openSkillsDir)
+    pathInWorkingPath(filePath, skillsDir)
   )
 }
 

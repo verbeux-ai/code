@@ -1,5 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
+import { isVerbooMode } from '../constants/oauth.js'
+import { getVerbooModelMeta } from '../services/api/verbooModels.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
@@ -80,6 +82,15 @@ export function getContextWindowForModel(
   // [1m] suffix — explicit client-side opt-in, respected over all detection
   if (has1mContext(model)) {
     return 1_000_000
+  }
+
+  // Verboo: context window vem do /router/v1/models. Tem precedência sobre
+  // tabelas estáticas porque o router pode ajustar capacidade por modelo.
+  if (isVerbooMode()) {
+    const verbooMeta = getVerbooModelMeta(model)
+    if (verbooMeta?.contextWindow) {
+      return verbooMeta.contextWindow
+    }
   }
 
   // OpenAI-compatible provider — use known context windows for the model.

@@ -59,7 +59,7 @@ export function generatePrompt(): string {
 ## Configurable settings list
 The following settings are available for you to change:
 
-### Global Settings (stored in ~/.openclaude.json)
+### Global Settings (stored in ~/.verboo/.config.json)
 ${globalSettings.join('\n')}
 
 ### Project Settings (stored in settings.json)

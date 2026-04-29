@@ -6,6 +6,7 @@
  * de marca neste arquivo é manual.
  */
 
+import { VERBOO_ROUTER_URL } from '../constants/oauth.js'
 import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js'
@@ -160,12 +161,11 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     return { name, model: displayModel, baseUrl, isLocal }
   }
 
-  // VERBOO-BRAND: default provider é Verboo. API LLM hardcoded em
-  // code.verboo.ai/api/router (sem overrides — única URL aceita).
+  // VERBOO-BRAND: default provider é Verboo. API LLM via router em code.verboo.ai/router.
   const settings = getSettings_DEPRECATED() || {}
   const modelSetting = modelOverride || settings.model || process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6'
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
-  const baseUrl = 'https://code.verboo.ai/api/router'
+  const baseUrl = VERBOO_ROUTER_URL
   const isLocal = isLocalProviderUrl(baseUrl)
   return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
 }

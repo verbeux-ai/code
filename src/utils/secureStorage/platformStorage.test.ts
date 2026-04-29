@@ -36,19 +36,19 @@ describe("Secure Storage Platform Implementations", () => {
   };
 
   describe("Config-Dir Isolation", () => {
-    test("service name changes with CLAUDE_CONFIG_DIR", () => {
+    test("service name changes with VERBOO_CONFIG_DIR", () => {
       const defaultName = getSecureStorageServiceName(CREDENTIALS_SERVICE_SUFFIX);
 
-      process.env.CLAUDE_CONFIG_DIR = "/tmp/other-config";
+      process.env.VERBOO_CONFIG_DIR = "/tmp/other-verboo-config";
       const otherName = getSecureStorageServiceName(CREDENTIALS_SERVICE_SUFFIX);
 
       expect(otherName).not.toBe(defaultName);
-      expect(otherName).toContain("Claude Code");
+      expect(otherName).toContain("Verboo Code");
       expect(otherName).toContain(CREDENTIALS_SERVICE_SUFFIX);
     });
 
     test("Linux storage uses scoped service name", () => {
-      process.env.CLAUDE_CONFIG_DIR = "/tmp/linux-scoped";
+      process.env.VERBOO_CONFIG_DIR = "/tmp/linux-scoped";
       const expectedName = getSecureStorageServiceName(CREDENTIALS_SERVICE_SUFFIX);
 
       linuxSecretStorage.update(testData);
@@ -58,7 +58,7 @@ describe("Secure Storage Platform Implementations", () => {
     });
 
     test("Windows storage uses scoped resource name", () => {
-      process.env.CLAUDE_CONFIG_DIR = "/tmp/win-scoped";
+      process.env.VERBOO_CONFIG_DIR = "/tmp/win-scoped";
       const expectedName = getSecureStorageServiceName(CREDENTIALS_SERVICE_SUFFIX);
 
       windowsCredentialStorage.update(testData);

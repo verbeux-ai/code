@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 const originalEnv = {
+  VERBOO_CONFIG_DIR: process.env.VERBOO_CONFIG_DIR,
   CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
   CLAUDE_CODE_CUSTOM_OAUTH_URL: process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL,
   USER_TYPE: process.env.USER_TYPE,
@@ -12,14 +13,20 @@ const originalEnv = {
 let tempDir: string
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), 'openclaude-env-test-'))
-  process.env.CLAUDE_CONFIG_DIR = tempDir
+  tempDir = mkdtempSync(join(tmpdir(), 'verboo-env-test-'))
+  process.env.VERBOO_CONFIG_DIR = tempDir
+  process.env.CLAUDE_CONFIG_DIR = join(tmpdir(), 'ignored-claude-config')
   delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
   delete process.env.USER_TYPE
 })
 
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
+  if (originalEnv.VERBOO_CONFIG_DIR === undefined) {
+    delete process.env.VERBOO_CONFIG_DIR
+  } else {
+    process.env.VERBOO_CONFIG_DIR = originalEnv.VERBOO_CONFIG_DIR
+  }
   if (originalEnv.CLAUDE_CONFIG_DIR === undefined) {
     delete process.env.CLAUDE_CONFIG_DIR
   } else {
@@ -41,22 +48,14 @@ async function importFreshEnvModule() {
   return import(`./env.js?ts=${Date.now()}-${Math.random()}`)
 }
 
-// getGlobalClaudeFile — three migration branches
-
-test('getGlobalClaudeFile: new install returns .openclaude.json when neither file exists', async () => {
+test('getGlobalClaudeFile: uses Verboo config home .config.json', async () => {
   const { getGlobalClaudeFile } = await importFreshEnvModule()
-  expect(getGlobalClaudeFile()).toBe(join(tempDir, '.openclaude.json'))
+  expect(getGlobalClaudeFile()).toBe(join(tempDir, '.config.json'))
 })
 
-test('getGlobalClaudeFile: existing user keeps .claude.json when only legacy file exists', async () => {
-  writeFileSync(join(tempDir, '.claude.json'), '{}')
-  const { getGlobalClaudeFile } = await importFreshEnvModule()
-  expect(getGlobalClaudeFile()).toBe(join(tempDir, '.claude.json'))
-})
-
-test('getGlobalClaudeFile: migrated user uses .openclaude.json when both files exist', async () => {
+test('getGlobalClaudeFile: ignores legacy config files', async () => {
   writeFileSync(join(tempDir, '.claude.json'), '{}')
   writeFileSync(join(tempDir, '.openclaude.json'), '{}')
   const { getGlobalClaudeFile } = await importFreshEnvModule()
-  expect(getGlobalClaudeFile()).toBe(join(tempDir, '.openclaude.json'))
+  expect(getGlobalClaudeFile()).toBe(join(tempDir, '.config.json'))
 })

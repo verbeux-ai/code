@@ -26,6 +26,8 @@ import { type FpsMetrics, FpsTracker } from './utils/fpsTracker.js';
 import { updateGithubRepoPathMapping } from './utils/githubRepoPathMapping.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
 import { usesAnthropicAccountFlow } from './utils/model/providers.js';
+import { isVerbooMode } from './constants/oauth.js';
+import { ensureVerbooAuthenticated } from './services/oauth/verbooStartupAuth.js';
 import type { PermissionMode } from './utils/permissions/PermissionMode.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
 import { getSettingsWithAllErrors } from './utils/settings/allErrors.js';
@@ -108,7 +110,13 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
     return false;
   }
 
-  const usesAnthropicSetup = usesAnthropicAccountFlow();
+  // Em modo Verboo, o gate de auth é nosso (validateVerbooSession + browser
+  // automático). O Onboarding/TrustDialog Anthropic-only não roda.
+  if (isVerbooMode()) {
+    await ensureVerbooAuthenticated();
+  }
+
+  const usesAnthropicSetup = usesAnthropicAccountFlow() && !isVerbooMode();
   const config = getGlobalConfig();
   let onboardingShown = false;
 

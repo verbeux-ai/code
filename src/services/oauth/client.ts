@@ -5,11 +5,11 @@ import {
   logEvent,
 } from 'src/services/analytics/index.js'
 import {
-  ALL_OAUTH_SCOPES,
   CLAUDE_AI_INFERENCE_SCOPE,
   CLAUDE_AI_OAUTH_SCOPES,
-  VERBOO_API_BASE_URL,
+  getActiveScopes,
   getOauthConfig,
+  isVerbooMode,
 } from '../../constants/oauth.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
@@ -79,7 +79,7 @@ export function buildAuthUrl({
   )
   const scopesToUse = inferenceOnly
     ? [CLAUDE_AI_INFERENCE_SCOPE] // Long-lived inference-only tokens
-    : ALL_OAUTH_SCOPES
+    : getActiveScopes()
   authUrl.searchParams.append('scope', scopesToUse.join(' '))
   authUrl.searchParams.append('code_challenge', codeChallenge)
   authUrl.searchParams.append('code_challenge_method', 'S256')
@@ -133,16 +133,12 @@ export async function exchangeCodeForTokens(
   return response
 }
 
-function isVerbooOAuthBase(): boolean {
-  return getOauthConfig().BASE_API_URL === VERBOO_API_BASE_URL
-}
-
 function normalizeOAuthTokenResponse(
   data: OAuthTokenExchangeResponse,
 ): OAuthTokenExchangeResponse {
   return {
     ...data,
-    scope: data.scope || ALL_OAUTH_SCOPES.join(' '),
+    scope: data.scope || getActiveScopes().join(' '),
   }
 }
 
@@ -291,7 +287,7 @@ export async function refreshOAuthToken(
 export async function fetchAndStoreUserRoles(
   accessToken: string,
 ): Promise<void> {
-  if (isVerbooOAuthBase()) {
+  if (isVerbooMode()) {
     return
   }
 
@@ -330,7 +326,7 @@ export async function fetchAndStoreUserRoles(
 export async function createAndStoreApiKey(
   accessToken: string,
 ): Promise<string | null> {
-  if (isVerbooOAuthBase()) {
+  if (isVerbooMode()) {
     return null
   }
 

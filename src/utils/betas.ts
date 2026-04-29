@@ -21,7 +21,7 @@ import {
   TOOL_SEARCH_BETA_HEADER_3P,
   WEB_SEARCH_BETA_HEADER,
 } from '../constants/betas.js'
-import { OAUTH_BETA_HEADER } from '../constants/oauth.js'
+import { OAUTH_BETA_HEADER, isVerbooMode } from '../constants/oauth.js'
 import { isClaudeAISubscriber } from './auth.js'
 import { has1mContext } from './context.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
@@ -103,8 +103,12 @@ export function modelSupportsISP(model: string): boolean {
   if (provider === 'foundry') {
     return true
   }
+  // Verboo firstParty routes non-Claude models (e.g. Qwen) through the same
+  // infra. The interleaved-thinking beta makes the backend emit thinking
+  // blocks with signature:null on these models, breaking the SDK parser and
+  // surfacing as "no response" in the REPL. Gate on claude- prefix.
   if (provider === 'firstParty') {
-    return !canonical.includes('claude-3-')
+    return canonical.includes('claude-') && !canonical.includes('claude-3-')
   }
   return (
     canonical.includes('claude-opus-4') || canonical.includes('claude-sonnet-4')
@@ -128,8 +132,12 @@ export function modelSupportsContextManagement(model: string): boolean {
   if (provider === 'foundry') {
     return true
   }
+  // Verboo firstParty routes non-Claude models through the same infra. The
+  // context-management beta is Claude-specific; sending it to non-Claude
+  // backends triggers thinking-preservation paths whose signature:null
+  // blocks break the SDK parser. Gate on claude- prefix.
   if (provider === 'firstParty') {
-    return !canonical.includes('claude-3-')
+    return canonical.includes('claude-') && !canonical.includes('claude-3-')
   }
   return (
     canonical.includes('claude-opus-4') ||
@@ -233,11 +241,13 @@ export function shouldUseGlobalCacheScope(): boolean {
 
 export const getAllModelBetas = memoize((model: string): string[] => {
   const betaHeaders = []
-  const isHaiku = getCanonicalName(model).includes('haiku')
+  const canonical = getCanonicalName(model)
+  const isHaiku = canonical.includes('haiku')
+  const isVerbooNonClaudeModel = isVerbooMode() && !canonical.includes('claude-')
   const provider = getAPIProvider()
   const includeFirstPartyOnlyBetas = shouldIncludeFirstPartyOnlyBetas()
 
-  if (!isHaiku) {
+  if (!isHaiku && !isVerbooNonClaudeModel) {
     betaHeaders.push(CLAUDE_CODE_20250219_BETA_HEADER)
     if (
       process.env.USER_TYPE === 'ant' &&
@@ -404,7 +414,9 @@ export function getMergedBetas(
   // For non-Haiku models these are already in baseBetas; for Haiku they're
   // excluded by getAllModelBetas() since non-agentic Haiku calls don't need them.
   if (options?.isAgenticQuery) {
-    if (!baseBetas.includes(CLAUDE_CODE_20250219_BETA_HEADER)) {
+    const _agenticCanonical = getCanonicalName(model)
+    const _isVerbooNonClaude = isVerbooMode() && !_agenticCanonical.includes('claude-')
+    if (!_isVerbooNonClaude && !baseBetas.includes(CLAUDE_CODE_20250219_BETA_HEADER)) {
       baseBetas.push(CLAUDE_CODE_20250219_BETA_HEADER)
     }
     if (

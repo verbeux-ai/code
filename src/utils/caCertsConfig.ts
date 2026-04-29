@@ -28,8 +28,7 @@ import { getSettingsForSource } from './settings/settings.js'
  * is lazy-initialized) and ensure Node.js compatibility.
  *
  * This is safe to call before the trust dialog because we only read from
- * user-controlled files (~/.claude/settings.json and ~/.openclaude.json),
- * not from project-level settings.
+ * user-controlled Verboo files, not from project-level settings.
  */
 export function applyExtraCACertsFromConfig(): void {
   if (process.env.NODE_EXTRA_CA_CERTS) {
@@ -52,16 +51,15 @@ export function applyExtraCACertsFromConfig(): void {
  * after the trust dialog. But we need the CA cert early to establish the TLS
  * connection to an HTTPS proxy during init().
  *
- * We read from global config (~/.openclaude.json) and user settings
- * (~/.claude/settings.json). These are user-controlled files that don't
- * require trust approval.
+ * We read from Verboo global config and user settings. These are
+ * user-controlled files that don't require trust approval.
  */
 function getExtraCertsPathFromConfig(): string | undefined {
   try {
     const globalConfig = getGlobalConfig()
     const globalEnv = globalConfig?.env
-    // Only read from user-controlled settings (~/.claude/settings.json),
-    // not project-level settings, to prevent malicious projects from
+    // Only read from user-controlled Verboo settings, not project-level
+    // settings, to prevent malicious projects from
     // injecting CA certs before the trust dialog.
     const settings = getSettingsForSource('userSettings')
     const settingsEnv = settings?.env

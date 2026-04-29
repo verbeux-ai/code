@@ -45,9 +45,13 @@ import { jsonParse } from './slowOperations.js'
 import { which } from './which.js'
 
 function getCliBinaryName(): string {
-  return MACRO.PACKAGE_URL === '@anthropic-ai/claude-code'
-    ? 'claude'
-    : 'openclaude'
+  if (MACRO.PACKAGE_URL === '@anthropic-ai/claude-code') {
+    return 'claude'
+  }
+  if (MACRO.PACKAGE_URL === '@verboo/code') {
+    return 'verboo'
+  }
+  return 'openclaude'
 }
 
 function getNativeDataDirName(): string {
@@ -491,13 +495,13 @@ async function detectConfigurationIssues(
         // Alias exists but points to invalid target
         warnings.push({
           issue: 'Local installation not accessible',
-          fix: `Alias exists but points to invalid target: ${existingAlias}. Update alias: alias ${getCliBinaryName()}="~/.openclaude/local/${getCliBinaryName()}"`,
+          fix: `Alias exists but points to invalid target: ${existingAlias}. Update alias: alias ${getCliBinaryName()}="~/.verboo/local/${getCliBinaryName()}"`,
         })
       } else {
         // No alias exists and not in PATH
         warnings.push({
           issue: 'Local installation not accessible',
-          fix: `Create alias: alias ${getCliBinaryName()}="~/.openclaude/local/${getCliBinaryName()}"`,
+          fix: `Create alias: alias ${getCliBinaryName()}="~/.verboo/local/${getCliBinaryName()}"`,
         })
       }
     }

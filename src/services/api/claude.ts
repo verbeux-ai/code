@@ -25,6 +25,7 @@ import {
   isFirstPartyAnthropicBaseUrl,
   isGithubNativeAnthropicMode,
 } from 'src/utils/model/providers.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import {
   getAttributionHeader,
   getCLISyspromptPrefix,
@@ -1750,6 +1751,11 @@ async function* queryModel(
         output_config: outputConfig,
       }),
       ...(speed !== undefined && { speed }),
+      // Em verboo mode com modelos não-Claude (Qwen3 etc.), o LiteLLM/vLLM
+      // ativa thinking por padrão. enable_thinking=false desativa via extra body.
+      ...(isVerbooMode() && !modelSupportsThinking(options.model) && {
+        enable_thinking: false,
+      }),
     }
   }
 
@@ -2167,6 +2173,10 @@ async function* queryModel(
                       actual_type:
                         contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
                     })
+                    // Em modo Verboo o router (LiteLLM+Qwen) pode enviar
+                    // signature_delta para blocos que não são thinking — ignorar
+                    // em vez de quebrar o stream.
+                    if (isVerbooMode()) break
                     throw new Error('Content block is not a thinking block')
                   }
                   contentBlock.signature = delta.signature
@@ -2181,6 +2191,10 @@ async function* queryModel(
                       actual_type:
                         contentBlock.type as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
                     })
+                    // Em modo Verboo o router (LiteLLM+Qwen) pode enviar
+                    // thinking_delta para blocos que não são thinking — ignorar
+                    // em vez de quebrar o stream.
+                    if (isVerbooMode()) break
                     throw new Error('Content block is not a thinking block')
                   }
                   contentBlock.thinking += delta.thinking

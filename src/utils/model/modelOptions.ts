@@ -42,6 +42,8 @@ import { getCachedOllamaModelOptions, isOllamaProvider } from './ollamaModels.js
 import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNimModels.js'
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
 import { getAntModels } from './antModels.js'
+import { isVerbooMode } from '../../constants/oauth.js'
+import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
@@ -380,6 +382,27 @@ function getCopilotModelOptions(): ModelOption[] {
 }
 
 function getModelOptionsBase(fastMode = false): ModelOption[] {
+  if (isVerbooMode()) {
+    const cached = getCachedVerbooModels()
+    if (cached && cached.length > 0) {
+      return cached.map(m => ({
+        value: m.id,
+        label: m.displayName ?? m.id,
+        description:
+          m.description ??
+          (m.contextWindow
+            ? `${Math.round(m.contextWindow / 1000)}K context`
+            : m.id),
+      }))
+    }
+    const currentModel =
+      getUserSpecifiedModelSetting() ?? getInitialMainLoopModel()
+    if (currentModel) {
+      return [{ value: currentModel, label: currentModel, description: 'Current model' }]
+    }
+    return []
+  }
+
   if (getAPIProvider() === 'github') {
     return [getDefaultOptionForUser(fastMode), ...getCopilotModelOptions()]
   }

@@ -395,6 +395,22 @@ async function main(): Promise<void> {
     startCapturingEarlyInput();
   }
   profileCheckpoint('cli_before_main_import');
+  // VERBOO-BRAND: gate de autenticação Verboo. Em TTY abre browser
+  // automaticamente; em headless lança erro pt-BR claro.
+  const { isVerbooMode } = await import('../constants/oauth.js');
+  if (isVerbooMode() && !(args[0] === 'auth' && args[1] === 'login')) {
+    const { ensureVerbooAuthenticated } = await import(
+      '../services/oauth/verbooStartupAuth.js'
+    );
+    try {
+      await ensureVerbooAuthenticated();
+    } catch (err) {
+      process.stderr.write(
+        `${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    }
+  }
   const {
     main: cliMain
   } = await import('../main.js');

@@ -355,8 +355,8 @@ exec ${command}
  *
  * Only positive detections are persisted. A negative result from the
  * filesystem scan is not cached, because it may come from a machine that
- * shares ~/.openclaude.json but has no local Chrome (e.g. a remote dev
- * environment using the bridge), and caching it would permanently poison
+ * shares Verboo config but has no local Chrome (e.g. a remote dev environment
+ * using the bridge), and caching it would permanently poison
  * auto-enable for every session on every machine that reads that config.
  */
 function isChromeExtensionInstalled_CACHED_MAY_BE_STALE(): boolean {

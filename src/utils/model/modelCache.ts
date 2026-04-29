@@ -1,5 +1,5 @@
 /**
- * Model Caching for OpenClaude
+ * Model Caching for Verboo Code
  * 
  * Caches model lists to disk for faster startup and offline access.
  * Uses async fs operations to avoid blocking the event loop.
@@ -8,12 +8,12 @@
 import { access, readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { getClaudeConfigHomeDir } from '../envUtils.js'
 import { getAPIProvider } from './providers.js'
 
 const CACHE_VERSION = '1'
 const CACHE_TTL_HOURS = 24
-const CACHE_DIR_NAME = '.openclaude-model-cache'
+const CACHE_DIR_NAME = 'model-cache'
 
 interface ModelCache {
   version: string
@@ -23,8 +23,7 @@ interface ModelCache {
 }
 
 function getCacheDir(): string {
-  const home = homedir()
-  const cacheDir = join(home, CACHE_DIR_NAME)
+  const cacheDir = join(getClaudeConfigHomeDir(), CACHE_DIR_NAME)
   if (!existsSync(cacheDir)) {
     mkdir(cacheDir, { recursive: true })
   }

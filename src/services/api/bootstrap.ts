@@ -6,7 +6,7 @@ import {
   hasProfileScope,
 } from 'src/utils/auth.js'
 import { z } from 'zod'
-import { getOauthConfig, OAUTH_BETA_HEADER } from '../../constants/oauth.js'
+import { getOauthConfig, isVerbooMode, OAUTH_BETA_HEADER } from '../../constants/oauth.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { withOAuth401Retry } from '../../utils/http.js'
@@ -57,6 +57,12 @@ type BootstrapCachePayload = {
 async function fetchBootstrapAPI(): Promise<BootstrapResponse | null> {
   if (isEssentialTrafficOnly()) {
     logForDebugging('[Bootstrap] Skipped: Nonessential traffic disabled')
+    return null
+  }
+
+  // Backend Verboo não expõe /api/claude_cli/bootstrap; pular evita 404 ruidoso.
+  if (isVerbooMode()) {
+    logForDebugging('[Bootstrap] Skipped: Verboo mode')
     return null
   }
 

@@ -1,5 +1,6 @@
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../../services/analytics/index.js'
 import { shouldUseCodexTransport } from '../../services/api/providerConfig.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import { isEnvTruthy } from '../envUtils.js'
 
 export type APIProvider =
@@ -17,6 +18,11 @@ export type APIProvider =
   | 'xai'
 
 export function getAPIProvider(): APIProvider {
+  // Modo Verboo roteia via router Anthropic-compatible em code.verboo.ai/router;
+  // ignoramos env vars que selecionariam outros provedores.
+  if (isVerbooMode()) {
+    return 'firstParty'
+  }
   if (isEnvTruthy(process.env.NVIDIA_NIM)) {
     return 'nvidia-nim'
   }

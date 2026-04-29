@@ -3,7 +3,6 @@
  */
 
 import { access, chmod, writeFile } from 'fs/promises'
-import { homedir } from 'os'
 import { join } from 'path'
 import { type ReleaseChannel, saveGlobalConfig } from './config.js'
 import { getClaudeConfigHomeDir } from './envUtils.js'
@@ -13,46 +12,32 @@ import { getFsImplementation } from './fsOperations.js'
 import { logError } from './log.js'
 import { jsonStringify } from './slowOperations.js'
 
-// Lazy getters: getClaudeConfigHomeDir() is memoized and reads process.env.
-// Evaluating at module scope would capture the value before entrypoints like
-// hfi.tsx get a chance to set CLAUDE_CONFIG_DIR in main(), and would also
-// populate the memoize cache with that stale value for all 150+ other callers.
+// Lazy getter: getClaudeConfigHomeDir() is memoized and reads process.env.
+// Evaluating at module scope would capture the value before entrypoints set
+// VERBOO_CONFIG_DIR and would populate the memoize cache with that stale value.
 function getLocalInstallDir(): string {
   return join(getClaudeConfigHomeDir(), 'local')
-}
-
-function getLegacyLocalInstallDir(homeDir = homedir()): string {
-  return join(homeDir, '.claude', 'local')
 }
 
 export function getCandidateLocalInstallDirs(options?: {
   configHomeDir?: string
   homeDir?: string
 }): string[] {
-  const homeDir = options?.homeDir ?? homedir()
   const configHomeDir = options?.configHomeDir ?? getClaudeConfigHomeDir()
-  return Array.from(
-    new Set([join(configHomeDir, 'local'), getLegacyLocalInstallDir(homeDir)]),
-  )
+  return [join(configHomeDir, 'local')]
 }
 
 function getCandidateLocalBinaryPaths(localInstallDir: string): string[] {
-  return [
-    join(localInstallDir, 'node_modules', '.bin', 'openclaude'),
-    join(localInstallDir, 'node_modules', '.bin', 'claude'),
-  ]
+  return [join(localInstallDir, 'node_modules', '.bin', 'verboo')]
 }
 
 export function isManagedLocalInstallationPath(execPath: string): boolean {
   const normalizedExecPath = execPath.replace(/\\+/g, '/')
-  return (
-    normalizedExecPath.includes('/.openclaude/local/node_modules/') ||
-    normalizedExecPath.includes('/.claude/local/node_modules/')
-  )
+  return normalizedExecPath.includes('/.verboo/local/node_modules/')
 }
 
 export function getLocalClaudePath(): string {
-  return join(getLocalInstallDir(), 'openclaude')
+  return join(getLocalInstallDir(), 'verboo')
 }
 
 /**
@@ -95,7 +80,7 @@ export async function ensureLocalPackageEnvironment(): Promise<boolean> {
     await writeIfMissing(
       join(localInstallDir, 'package.json'),
       jsonStringify(
-        { name: 'openclaude-local', version: '0.0.1', private: true },
+        { name: 'verboo-local', version: '0.0.1', private: true },
         null,
         2,
       ),
@@ -105,7 +90,7 @@ export async function ensureLocalPackageEnvironment(): Promise<boolean> {
     const wrapperPath = getLocalClaudePath()
     const created = await writeIfMissing(
       wrapperPath,
-      `#!/bin/sh\nexec "${localInstallDir}/node_modules/.bin/openclaude" "$@"`,
+      `#!/bin/sh\nexec "${localInstallDir}/node_modules/.bin/verboo" "$@"`,
       0o755,
     )
     if (created) {
@@ -121,7 +106,7 @@ export async function ensureLocalPackageEnvironment(): Promise<boolean> {
 }
 
 /**
- * Install or update Claude CLI package in the local directory
+ * Install or update Verboo CLI package in the local directory
  * @param channel - Release channel to use (latest or stable)
  * @param specificVersion - Optional specific version to install (overrides channel)
  */
@@ -149,7 +134,7 @@ export async function installOrUpdateClaudePackage(
 
     if (result.code !== 0) {
       const error = new Error(
-        `Failed to install Claude CLI package: ${result.stderr}`,
+        `Failed to install Verboo CLI package: ${result.stderr}`,
       )
       logError(error)
       return result.code === 190 ? 'in_progress' : 'install_failed'

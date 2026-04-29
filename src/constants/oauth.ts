@@ -74,15 +74,31 @@ type OauthConfig = {
   MCP_PROXY_PATH: string
 }
 
-export const VERBOO_API_BASE_URL = 'https://api.code.verboo.ai'
+// VERBOO-BRAND: backend, OAuth e router moram todos em code.verboo.ai
+// (mesmo ingress). Não há subdomínio `api.`.
+export const VERBOO_API_BASE_URL = 'https://code.verboo.ai'
 export const VERBOO_FRONT_BASE_URL = 'https://code.verboo.ai'
-export const VERBOO_ROUTER_URL = 'https://api.code.verboo.ai/api/router'
+export const VERBOO_ROUTER_URL = 'https://code.verboo.ai/router'
+
+// Scopes pedidos pelo CLI ao backend Verboo. Backend hoje não valida contra
+// allowlist por client, mas explicitar prepara o terreno.
+export const VERBOO_OAUTH_SCOPES = ['user:profile', 'user:inference'] as const
+
+// Modo Verboo cobre prod (code.verboo.ai) e local DEV (localhost:8090).
+// Detectar pelo CLIENT_ID seedado em ambas as configs.
+export function isVerbooMode(): boolean {
+  return getOauthConfig().CLIENT_ID === 'verboo-code-cli'
+}
+
+export function getActiveScopes(): readonly string[] {
+  return isVerbooMode() ? VERBOO_OAUTH_SCOPES : ALL_OAUTH_SCOPES
+}
 
 // Production OAuth configuration - Used in normal operation
 const PROD_OAUTH_CONFIG = {
-  // VERBOO-BRAND: OAuth Authorization Server and management API live on
-  // api.code.verboo.ai. OAuth endpoints are root-level (/oauth/*); application
-  // account endpoints are under /api.
+  // VERBOO-BRAND: OAuth Authorization Server, API e router moram no mesmo
+  // ingress code.verboo.ai. OAuth em /oauth/*, conta em /api/*, router em
+  // /router/*.
   BASE_API_URL: VERBOO_API_BASE_URL,
   CONSOLE_AUTHORIZE_URL: `${VERBOO_API_BASE_URL}/oauth/authorize`,
   CLAUDE_AI_AUTHORIZE_URL: `${VERBOO_API_BASE_URL}/oauth/authorize`,

@@ -772,7 +772,7 @@ describe('setActiveProviderProfile', () => {
   })
 
   test('persists no-key openai-compatible profiles for restart fallback', async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'openclaude-provider-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'verboo-provider-'))
     process.chdir(tempDir)
     process.env.OPENAI_API_KEY = 'sk-shell-should-not-persist'
 
@@ -795,7 +795,7 @@ describe('setActiveProviderProfile', () => {
 
       const result = setActiveProviderProfile('ollama_prof')
       const persisted = JSON.parse(
-        readFileSync(join(tempDir, '.openclaude-profile.json'), 'utf8'),
+        readFileSync(join(tempDir, '.verboo-profile.json'), 'utf8'),
       )
 
       expect(result?.id).toBe('ollama_prof')
@@ -811,7 +811,7 @@ describe('setActiveProviderProfile', () => {
   })
 
   test('persists primary model for keyed openai-compatible multi-model profiles', async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'openclaude-provider-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'verboo-provider-'))
     process.chdir(tempDir)
 
     try {
@@ -834,7 +834,7 @@ describe('setActiveProviderProfile', () => {
 
       const result = setActiveProviderProfile('deepseek_prof')
       const persisted = JSON.parse(
-        readFileSync(join(tempDir, '.openclaude-profile.json'), 'utf8'),
+        readFileSync(join(tempDir, '.verboo-profile.json'), 'utf8'),
       )
 
       expect(result?.id).toBe('deepseek_prof')

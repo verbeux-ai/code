@@ -27,21 +27,21 @@ import type { SecureStorageData } from './index.js'
 export const CREDENTIALS_SERVICE_SUFFIX = '-credentials'
 
 /**
- * Get the service/resource name for secure storage, scoped by CLAUDE_CONFIG_DIR
+ * Get the service/resource name for secure storage, scoped by VERBOO_CONFIG_DIR
  * if it's set to a non-default location.
  */
 export function getSecureStorageServiceName(
   serviceSuffix: string = '',
 ): string {
   const configDir = getClaudeConfigHomeDir()
-  const isDefaultDir = !process.env.CLAUDE_CONFIG_DIR
+  const isDefaultDir = !process.env.VERBOO_CONFIG_DIR
 
   // Use a hash of the config dir path to create a unique but stable suffix
   // Only add suffix for non-default directories to maintain backwards compatibility
   const dirHash = isDefaultDir
     ? ''
     : `-${createHash('sha256').update(configDir).digest('hex').substring(0, 8)}`
-  return `Claude Code${getOauthConfig().OAUTH_FILE_SUFFIX}${serviceSuffix}${dirHash}`
+  return `Verboo Code${getOauthConfig().OAUTH_FILE_SUFFIX}${serviceSuffix}${dirHash}`
 }
 
 export function getMacOsKeychainStorageServiceName(
@@ -54,7 +54,7 @@ export function getUsername(): string {
   try {
     return process.env.USER || userInfo().username
   } catch {
-    return 'claude-code-user'
+    return 'verboo-code-user'
   }
 }
 

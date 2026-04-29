@@ -21,8 +21,9 @@ import {
   getIsNonInteractiveSession,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { getOauthConfig, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
+import { getOauthConfig, isVerbooMode, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
+import { jsonStringify } from '../../utils/slowOperations.js'
 import {
   getAWSRegion,
   getVertexRegionForModel,
@@ -361,11 +362,21 @@ export async function getAnthropicClient({
   }
 
   // Determine authentication method based on available tokens
+  // Em Verboo mode sempre usa o access token como Bearer, independente de scopes
+  const useOAuthToken = isClaudeAISubscriber() || isVerbooMode()
+  const verbooAccessToken = useOAuthToken
+    ? getClaudeAIOAuthTokens()?.accessToken
+    : undefined
+
+  if (isVerbooMode() && !verbooAccessToken) {
+    process.stderr.write(
+      '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
+    )
+  }
+
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
-    apiKey: isClaudeAISubscriber() ? null : apiKey || getAnthropicApiKey(),
-    authToken: isClaudeAISubscriber()
-      ? getClaudeAIOAuthTokens()?.accessToken
-      : undefined,
+    apiKey: useOAuthToken ? null : apiKey || getAnthropicApiKey(),
+    authToken: verbooAccessToken,
     baseURL:
       process.env.USER_TYPE === 'ant' && isEnvTruthy(process.env.USE_STAGING_OAUTH)
         ? getOauthConfig().BASE_API_URL
@@ -439,13 +450,100 @@ function buildFetch(
     try {
       // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
       const url = input instanceof Request ? input.url : String(input)
+      const method =
+        // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
+        (input instanceof Request ? input.method : init?.method) ?? 'GET'
       const id = headers.get(CLIENT_REQUEST_ID_HEADER)
       logForDebugging(
-        `[API REQUEST] ${new URL(url).pathname}${id ? ` ${CLIENT_REQUEST_ID_HEADER}=${id}` : ''} source=${source ?? 'unknown'}`,
+        `[API REQUEST] ${method} ${url}${id ? ` ${CLIENT_REQUEST_ID_HEADER}=${id}` : ''} source=${source ?? 'unknown'}`,
       )
+      const redactedHeaders: Record<string, string> = {}
+      headers.forEach((value, key) => {
+        const lower = key.toLowerCase()
+        if (
+          lower === 'authorization' ||
+          lower === 'x-api-key' ||
+          lower === 'api-key'
+        ) {
+          redactedHeaders[key] = redactSecret(value)
+        } else {
+          redactedHeaders[key] = value
+        }
+      })
+      logForDebugging(
+        `[API REQUEST HEADERS] ${jsonStringify(redactedHeaders)}`,
+      )
+      const rawBody = init?.body
+      if (typeof rawBody === 'string' && rawBody.length > 0) {
+        logForDebugging(`[API REQUEST BODY] ${summarizeBody(rawBody)}`)
+      }
     } catch {
       // never let logging crash the fetch
     }
-    return inner(input, { ...init, headers })
+    const startedAt = Date.now()
+    const promise = inner(input, { ...init, headers })
+    promise
+      .then(res => {
+        try {
+          const elapsed = Date.now() - startedAt
+          const msg = `[API RESPONSE] ${res.status} ${res.statusText} (${elapsed}ms) ${res.url}`
+          logForDebugging(msg)
+          if (isVerbooMode() && res.status >= 400) {
+            process.stderr.write(msg + '\n')
+          }
+        } catch {
+          // ignore
+        }
+      })
+      .catch(err => {
+        try {
+          const elapsed = Date.now() - startedAt
+          const msg = `[API RESPONSE ERROR] (${elapsed}ms) ${(err as Error)?.message ?? String(err)}`
+          logForDebugging(msg)
+          if (isVerbooMode()) {
+            process.stderr.write(msg + '\n')
+          }
+        } catch {
+          // ignore
+        }
+      })
+    return promise
+  }
+}
+
+function redactSecret(value: string): string {
+  if (!value) return value
+  const trimmed = value.trim()
+  if (trimmed.length <= 12) return '***redacted***'
+  return `${trimmed.slice(0, 6)}…${trimmed.slice(-4)}`
+}
+
+function summarizeBody(raw: string): string {
+  const MAX = 4000
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const summary: Record<string, unknown> = { ...parsed }
+    if (Array.isArray(parsed.messages)) {
+      const msgs = parsed.messages as Array<{
+        role?: unknown
+        content?: unknown
+      }>
+      summary.messages = `<${msgs.length} messages: ${msgs
+        .map(m => String(m.role ?? '?'))
+        .join(',')}>`
+    }
+    if (Array.isArray(parsed.system)) {
+      summary.system = `<${(parsed.system as unknown[]).length} system blocks>`
+    } else if (typeof parsed.system === 'string') {
+      const s = parsed.system as string
+      summary.system = s.length > 200 ? `${s.slice(0, 200)}…(${s.length})` : s
+    }
+    if (Array.isArray(parsed.tools)) {
+      summary.tools = `<${(parsed.tools as unknown[]).length} tools>`
+    }
+    const out = jsonStringify(summary)
+    return out.length > MAX ? `${out.slice(0, MAX)}…(${out.length})` : out
+  } catch {
+    return raw.length > MAX ? `${raw.slice(0, MAX)}…(${raw.length})` : raw
   }
 }

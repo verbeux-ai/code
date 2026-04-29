@@ -6,6 +6,8 @@
  * during dead code elimination
  */
 import { getMainLoopModelOverride } from '../../bootstrap/state.js'
+import { isVerbooMode } from '../../constants/oauth.js'
+import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 import {
   getSubscriptionType,
   isClaudeAISubscriber,
@@ -41,6 +43,12 @@ function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefin
 
 export function getSmallFastModel(): ModelName {
   if (process.env.ANTHROPIC_SMALL_FAST_MODEL) return process.env.ANTHROPIC_SMALL_FAST_MODEL
+  if (isVerbooMode()) {
+    const cached = getCachedVerbooModels()
+    if (cached && cached.length > 0) {
+      return cached[0].id
+    }
+  }
   // For Gemini provider, use a fast model
   if (getAPIProvider() === 'gemini') {
     return process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite'
@@ -137,6 +145,19 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
   // Ignore the user-specified model if it's not in the availableModels allowlist.
   if (specifiedModel && !isModelAllowed(specifiedModel)) {
     return undefined
+  }
+
+  // In Verboo mode, ignore saved/env models that aren't in the router's model list.
+  // This prevents Anthropic model names (e.g. claude-sonnet-4-6) from leaking in
+  // when the user switches to a Verboo account that has different model IDs.
+  if (specifiedModel && isVerbooMode()) {
+    const cached = getCachedVerbooModels()
+    if (cached && cached.length > 0) {
+      const verbooIds = new Set(cached.map(m => m.id))
+      if (!verbooIds.has(specifiedModel)) {
+        return undefined
+      }
+    }
   }
 
   return specifiedModel
@@ -382,6 +403,14 @@ export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
   // Team Premium gets Opus (same as Max)
   if (isTeamPremiumSubscriber()) {
     return getDefaultOpusModel() + (isOpus1mMergeEnabled() ? '[1m]' : '')
+  }
+
+  // Verboo mode: use first available model from router cache
+  if (isVerbooMode()) {
+    const cached = getCachedVerbooModels()
+    if (cached && cached.length > 0) {
+      return cached[0].id
+    }
   }
 
   // PAYG (1P and 3P), Enterprise, Team Standard, and Pro get Sonnet as default

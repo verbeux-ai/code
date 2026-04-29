@@ -109,7 +109,7 @@ export function getPlatform(): string {
 }
 
 export function getBinaryName(platform: string): string {
-  return platform.startsWith('win32') ? 'claude.exe' : 'claude'
+  return platform.startsWith('win32') ? 'verboo.exe' : 'verboo'
 }
 
 function getBaseDirectories() {
@@ -118,13 +118,13 @@ function getBaseDirectories() {
 
   return {
     // Data directories (permanent storage)
-    versions: join(getXDGDataHome(), 'claude', 'versions'),
+    versions: join(getXDGDataHome(), 'verboo', 'versions'),
 
     // Cache directories (can be deleted)
-    staging: join(getXDGCacheHome(), 'claude', 'staging'),
+    staging: join(getXDGCacheHome(), 'verboo', 'staging'),
 
     // State directories
-    locks: join(getXDGStateHome(), 'claude', 'locks'),
+    locks: join(getXDGStateHome(), 'verboo', 'locks'),
 
     // User bin
     executable: join(getUserBinDir(), executableName),
@@ -1688,10 +1688,7 @@ export async function cleanupNpmInstallations(): Promise<{
     }
   }
 
-  // Preserve compatibility with pre-migration installs under ~/.claude/local.
-  const localInstallDirs = Array.from(
-    new Set([join(getClaudeConfigHomeDir(), 'local'), join(homedir(), '.claude', 'local')]),
-  )
+  const localInstallDirs = [join(getClaudeConfigHomeDir(), 'local')]
 
   for (const localInstallDir of localInstallDirs) {
     try {

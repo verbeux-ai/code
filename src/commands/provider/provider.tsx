@@ -678,7 +678,7 @@ function ProviderChooser({
     options.push({
       label: 'Clear saved profile',
       value: 'clear',
-      description: 'Remove .openclaude-profile.json and return to normal startup',
+      description: 'Remove .verboo-profile.json and return to normal startup',
     })
   }
 

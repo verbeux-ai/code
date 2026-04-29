@@ -6,7 +6,7 @@ import {
   getOauthConfig,
   isVerbooMode,
 } from '../../constants/oauth.js'
-import { fetchVerbooModels, type VerbooModel } from '../api/verbooModels.js'
+import { clearVerbooModelsCache, fetchVerbooModels, type VerbooModel } from '../api/verbooModels.js'
 import {
   clearOAuthTokenCache,
   getClaudeAIOAuthTokensAsync,
@@ -234,6 +234,9 @@ export async function ensureVerbooAuthenticated(
 ): Promise<void> {
   if (!isVerbooMode() || validated) return
 
+  // Sempre buscar modelos frescos a cada restart — sem cache entre sessões.
+  clearVerbooModelsCache()
+
   const session = await validateVerbooSession()
 
   if (session.kind === 'ok') {
@@ -250,7 +253,7 @@ export async function ensureVerbooAuthenticated(
     // Tenta atualizar o cache de modelos mesmo em modo degradado.
     const stored = await getClaudeAIOAuthTokensAsync()
     if (stored?.accessToken) {
-      await fetchVerbooModels(stored.accessToken).catch(err => {
+      await fetchVerbooModels(stored.accessToken, { force: true }).catch(err => {
         logForDebugging(
           `[VerbooStartup] Falha ao atualizar modelos em modo degradado: ${(err as Error).message}`,
         )

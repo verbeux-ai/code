@@ -49,3 +49,6 @@ if (isFishShell()) {
     }
   }
 }
+
+process.stdout.write('Verboo Code instalado com sucesso!\n')
+process.stdout.write('Para começar, digite verboo no seu terminal.\n')

@@ -78,6 +78,10 @@ export function applyProviderFlag(
   provider: string,
   args: string[],
 ): { error?: string } {
+  return {
+    error: 'Verboo Code usa apenas o provider nativo Verboo.',
+  }
+
   if (!(VALID_PROVIDERS as readonly string[]).includes(provider)) {
     return {
       error: `Unknown provider "${provider}". Valid providers: ${VALID_PROVIDERS.join(', ')}`,

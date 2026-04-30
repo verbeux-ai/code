@@ -158,6 +158,32 @@ export async function getAnthropicClient({
       fetch: resolvedFetch,
     }),
   }
+  // Verboo always talks to the Verboo router, regardless of any inherited
+  // third-party provider env vars from the parent Verboo session.
+  const useOAuthToken = isClaudeAISubscriber() || isVerbooMode()
+  const accessToken = useOAuthToken
+    ? getClaudeAIOAuthTokens()?.accessToken
+    : undefined
+
+  if (isVerbooMode()) {
+    if (!accessToken) {
+      process.stderr.write(
+        '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
+      )
+    }
+    const { createOpenAIShimClient } = await import('./openaiShim.js')
+    return createOpenAIShimClient({
+      defaultHeaders,
+      maxRetries,
+      timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+      providerOverride: {
+        model: model ?? '',
+        baseURL: VERBOO_ROUTER_URL,
+        apiKey: accessToken ?? '',
+      },
+    }) as unknown as Anthropic
+  }
+
   // Agent routing override: use per-agent provider when configured.
   // Strip auth-related headers to prevent leaking Anthropic credentials
   // to third-party endpoints (SSRF / credential forwarding mitigation).
@@ -363,30 +389,6 @@ export async function getAnthropicClient({
   }
 
   // Determine authentication method based on available tokens
-  const useOAuthToken = isClaudeAISubscriber() || isVerbooMode()
-  const accessToken = useOAuthToken
-    ? getClaudeAIOAuthTokens()?.accessToken
-    : undefined
-
-  if (isVerbooMode()) {
-    if (!accessToken) {
-      process.stderr.write(
-        '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
-      )
-    }
-    const { createOpenAIShimClient } = await import('./openaiShim.js')
-    return createOpenAIShimClient({
-      defaultHeaders,
-      maxRetries,
-      timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
-      providerOverride: {
-        model: model ?? '',
-        baseURL: VERBOO_ROUTER_URL,
-        apiKey: accessToken ?? '',
-      },
-    }) as unknown as Anthropic
-  }
-
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: useOAuthToken ? null : apiKey || getAnthropicApiKey(),
     authToken: accessToken,

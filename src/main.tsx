@@ -4133,6 +4133,13 @@ async function run(): Promise<CommanderCommand> {
     } = await import('./cli/handlers/auth.js');
     await authLogout();
   });
+  // VERBOO-BRAND: alias top-level `verboo logout` para `verboo auth logout`.
+  program.command('logout').description('Atalho para `auth logout`').action(async () => {
+    const {
+      authLogout
+    } = await import('./cli/handlers/auth.js');
+    await authLogout();
+  });
 
   /**
    * Helper function to handle marketplace command errors consistently.

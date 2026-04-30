@@ -122,7 +122,11 @@ const RULES: Rule[] = [
   {
     name: 'OpenClaude product literal',
     pattern: /\b(OpenClaude|Open Claude|OPEN CLAUDE)\b/,
-    allowlist: COMMON_ALLOWLIST,
+    allowlist: [
+      ...COMMON_ALLOWLIST,
+      // CLI brand fallback gated por VERBOO_CLI_BRAND=openclaude (alias deprecated):
+      'src/main.tsx',
+    ],
   },
   {
     name: '@gitlawb npm scope',

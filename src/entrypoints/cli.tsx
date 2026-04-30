@@ -398,7 +398,18 @@ async function main(): Promise<void> {
   // VERBOO-BRAND: gate de autenticação Verboo. Em TTY abre browser
   // automaticamente; em headless lança erro pt-BR claro.
   const { isVerbooMode } = await import('../constants/oauth.js');
-  if (isVerbooMode() && !(args[0] === 'auth' && args[1] === 'login')) {
+  // Comandos/flags que devem rodar sem autenticação Verboo:
+  // - --help/-h: fast-path do Commander, não toca servidor.
+  // - auth <qualquer>: login, logout, status precisam funcionar offline.
+  // - logout: alias top-level para `auth logout`.
+  // - update: atualização do binário não precisa de sessão.
+  const skipsAuth =
+    args.includes('--help') ||
+    args.includes('-h') ||
+    args[0] === 'auth' ||
+    args[0] === 'logout' ||
+    args[0] === 'update';
+  if (isVerbooMode() && !skipsAuth) {
     const { ensureVerbooAuthenticated } = await import(
       '../services/oauth/verbooStartupAuth.js'
     );

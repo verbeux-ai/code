@@ -1,0 +1,179 @@
+{
+  "name": "verboo-vscode",
+  "displayName": "Verboo",
+  "description": "Practical VS Code companion for Verboo with project-aware launch behavior and a real Control Center.",
+  "version": "0.2.0",
+  "publisher": "devnull-bootloader",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Themes",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:verboo.start",
+    "onCommand:verboo.startInWorkspaceRoot",
+    "onCommand:verboo.openDocs",
+    "onCommand:verboo.openSetupDocs",
+    "onCommand:verboo.openWorkspaceProfile",
+    "onCommand:verboo.openControlCenter",
+    "onCommand:verboo.newChat",
+    "onCommand:verboo.openChat",
+    "onCommand:verboo.resumeSession",
+    "onCommand:verboo.abortChat",
+    "onView:verboo.controlCenter",
+    "onView:verboo.chat"
+  ],
+  "main": "./src/extension.js",
+  "files": [
+    "README.md",
+    "media/**",
+    "src/extension.js",
+    "src/presentation.js",
+    "src/state.js",
+    "src/chat/**",
+    "themes/**"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "verboo.start",
+        "title": "Verboo: Launch in Terminal",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.startInWorkspaceRoot",
+        "title": "Verboo: Launch in Workspace Root",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.openDocs",
+        "title": "Verboo: Open Repository",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.openSetupDocs",
+        "title": "Verboo: Open Setup Guide",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.openWorkspaceProfile",
+        "title": "Verboo: Open Workspace Profile",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.openControlCenter",
+        "title": "Verboo: Open Control Center",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.newChat",
+        "title": "Verboo: New Chat",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.openChat",
+        "title": "Verboo: Open Chat Panel",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.resumeSession",
+        "title": "Verboo: Resume Session",
+        "category": "Verboo"
+      },
+      {
+        "command": "verboo.abortChat",
+        "title": "Verboo: Abort Generation",
+        "category": "Verboo"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "verboo",
+          "title": "Verboo",
+          "icon": "media/verboo.svg"
+        }
+      ]
+    },
+    "views": {
+      "verboo": [
+        {
+          "id": "verboo.chat",
+          "name": "Chat",
+          "type": "webview"
+        },
+        {
+          "id": "verboo.controlCenter",
+          "name": "Control Center",
+          "type": "webview"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "verboo.openChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      }
+    ],
+    "configuration": {
+      "title": "Verboo",
+      "properties": {
+        "verboo.launchCommand": {
+          "type": "string",
+          "default": "verboo",
+          "description": "Command run in the integrated terminal when launching Verboo."
+        },
+        "verboo.terminalName": {
+          "type": "string",
+          "default": "Verboo",
+          "description": "Integrated terminal tab name for Verboo sessions."
+        },
+        "verboo.useOpenAIShim": {
+          "type": "boolean",
+          "default": false,
+          "description": "Optionally set CLAUDE_CODE_USE_OPENAI=1 in launched Verboo terminals."
+        },
+        "verboo.permissionMode": {
+          "type": "string",
+          "default": "acceptEdits",
+          "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
+          "enumDescriptions": [
+            "Prompt for permission on each tool use (requires manual approval)",
+            "Auto-approve file edits, prompt for other operations (recommended)",
+            "Auto-approve all operations without prompting",
+            "Read-only mode — no file modifications allowed"
+          ],
+          "description": "Permission mode for chat sessions. Controls which tool operations are auto-approved."
+        }
+      }
+    },
+    "themes": [
+      {
+        "label": "Verboo Terminal Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/Verboo-Terminal-Black.json"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node --test ./src/*.test.js",
+    "lint": "node scripts/lint.js",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "keywords": [
+    "verboo",
+    "terminal",
+    "theme",
+    "cli",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/verbeux/verboo-code"
+  },
+  "license": "MIT"
+}

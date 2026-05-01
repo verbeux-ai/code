@@ -283,6 +283,11 @@ let isWriting = false
 let currentFlushPromise: Promise<void> | null = null
 let cleanupRegistered = false
 let lastAddedEntry: LogEntry | null = null
+// Hard cap on the in-memory queue. If flushing fails terminally (disk full,
+// permissions) the buffer would otherwise grow without bound and consume
+// arbitrary RAM in long sessions. We drop the oldest entries first.
+const MAX_PENDING_ENTRIES = 1000
+let pendingOverflowWarned = false
 // Timestamps of entries already flushed to disk that should be skipped when
 // reading. Used by removeLastFromHistory when the entry has raced past the
 // pending buffer. Session-scoped (module state resets on process restart).
@@ -403,6 +408,17 @@ async function addToPromptHistory(
   }
 
   pendingEntries.push(logEntry)
+  if (pendingEntries.length > MAX_PENDING_ENTRIES) {
+    pendingEntries.splice(0, pendingEntries.length - MAX_PENDING_ENTRIES)
+    if (!pendingOverflowWarned) {
+      pendingOverflowWarned = true
+      logForDebugging(
+        `History pending queue exceeded ${MAX_PENDING_ENTRIES} entries — dropping oldest. Disk write likely failing.`,
+      )
+    }
+  } else if (pendingEntries.length < MAX_PENDING_ENTRIES / 2) {
+    pendingOverflowWarned = false
+  }
   lastAddedEntry = logEntry
   currentFlushPromise = flushPromptHistory(0)
   void currentFlushPromise

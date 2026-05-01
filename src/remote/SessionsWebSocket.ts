@@ -69,6 +69,12 @@ type WebSocketLike = {
   close(): void
   send(data: string): void
   ping?(): void // Bun & ws both support this
+  terminate?(): void // ws package only
+}
+
+type WsListenerRef = {
+  event: string
+  handler: (...args: any[]) => void
 }
 
 /**
@@ -81,6 +87,7 @@ type WebSocketLike = {
  */
 export class SessionsWebSocket {
   private ws: WebSocketLike | null = null
+  private wsListeners: WsListenerRef[] = []
   private state: WebSocketState = 'closed'
   private reconnectAttempts = 0
   private sessionNotFoundRetries = 0
@@ -103,6 +110,12 @@ export class SessionsWebSocket {
       return
     }
 
+    // Defensive: tear down any lingering socket before opening a new one.
+    // Without this, listeners on the old ws remain registered until the
+    // underlying TCP socket closes, retaining their closures (and `this`)
+    // across every reconnect.
+    this.teardownCurrentSocket()
+
     this.state = 'connecting'
 
     const baseUrl = getOauthConfig().BASE_API_URL.replace('https://', 'wss://')
@@ -117,6 +130,25 @@ export class SessionsWebSocket {
       'anthropic-version': '2023-06-01',
     }
 
+    const onOpen = () => {
+      logForDebugging(
+        '[SessionsWebSocket] Connection opened, authenticated via headers',
+      )
+      this.state = 'connected'
+      this.reconnectAttempts = 0
+      this.sessionNotFoundRetries = 0
+      this.startPingInterval()
+      this.callbacks.onConnected?.()
+    }
+    const onError = () => {
+      const err = new Error('[SessionsWebSocket] WebSocket error')
+      logError(err)
+      this.callbacks.onError?.(err)
+    }
+    const onPong = () => {
+      logForDebugging('[SessionsWebSocket] Pong received')
+    }
+
     if (typeof Bun !== 'undefined') {
       // Bun's WebSocket supports headers/proxy options but the DOM typings don't
       // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
@@ -127,40 +159,32 @@ export class SessionsWebSocket {
       } as unknown as string[])
       this.ws = ws
 
-      ws.addEventListener('open', () => {
-        logForDebugging(
-          '[SessionsWebSocket] Connection opened, authenticated via headers',
-        )
-        this.state = 'connected'
-        this.reconnectAttempts = 0
-        this.sessionNotFoundRetries = 0
-        this.startPingInterval()
-        this.callbacks.onConnected?.()
-      })
-
-      ws.addEventListener('message', (event: MessageEvent) => {
+      const onMessage = (event: MessageEvent) => {
         const data =
           typeof event.data === 'string' ? event.data : String(event.data)
         this.handleMessage(data)
-      })
-
-      ws.addEventListener('error', () => {
-        const err = new Error('[SessionsWebSocket] WebSocket error')
-        logError(err)
-        this.callbacks.onError?.(err)
-      })
-
+      }
       // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
-      ws.addEventListener('close', (event: CloseEvent) => {
+      const onClose = (event: CloseEvent) => {
         logForDebugging(
           `[SessionsWebSocket] Closed: code=${event.code} reason=${event.reason}`,
         )
         this.handleClose(event.code)
-      })
+      }
 
-      ws.addEventListener('pong', () => {
-        logForDebugging('[SessionsWebSocket] Pong received')
-      })
+      ws.addEventListener('open', onOpen)
+      ws.addEventListener('message', onMessage)
+      ws.addEventListener('error', onError)
+      ws.addEventListener('close', onClose)
+      ws.addEventListener('pong', onPong)
+
+      this.wsListeners = [
+        { event: 'open', handler: onOpen },
+        { event: 'message', handler: onMessage },
+        { event: 'error', handler: onError },
+        { event: 'close', handler: onClose },
+        { event: 'pong', handler: onPong },
+      ]
     } else {
       const { default: WS } = await import('ws')
       const ws = new WS(url, {
@@ -170,37 +194,78 @@ export class SessionsWebSocket {
       })
       this.ws = ws
 
-      ws.on('open', () => {
-        logForDebugging(
-          '[SessionsWebSocket] Connection opened, authenticated via headers',
-        )
-        // Auth is handled via headers, so we're immediately connected
-        this.state = 'connected'
-        this.reconnectAttempts = 0
-        this.sessionNotFoundRetries = 0
-        this.startPingInterval()
-        this.callbacks.onConnected?.()
-      })
-
-      ws.on('message', (data: Buffer) => {
+      const onMessage = (data: Buffer) => {
         this.handleMessage(data.toString())
-      })
-
-      ws.on('error', (err: Error) => {
+      }
+      const onErrorWs = (err: Error) => {
         logError(new Error(`[SessionsWebSocket] Error: ${err.message}`))
         this.callbacks.onError?.(err)
-      })
-
-      ws.on('close', (code: number, reason: Buffer) => {
+      }
+      const onCloseWs = (code: number, reason: Buffer) => {
         logForDebugging(
           `[SessionsWebSocket] Closed: code=${code} reason=${reason.toString()}`,
         )
         this.handleClose(code)
-      })
+      }
 
-      ws.on('pong', () => {
-        logForDebugging('[SessionsWebSocket] Pong received')
-      })
+      ws.on('open', onOpen)
+      ws.on('message', onMessage)
+      ws.on('error', onErrorWs)
+      ws.on('close', onCloseWs)
+      ws.on('pong', onPong)
+
+      this.wsListeners = [
+        { event: 'open', handler: onOpen },
+        { event: 'message', handler: onMessage },
+        { event: 'error', handler: onErrorWs },
+        { event: 'close', handler: onCloseWs },
+        { event: 'pong', handler: onPong },
+      ]
+    }
+  }
+
+  /**
+   * Remove all listeners from the current ws and close it. Safe to call
+   * when there is no socket. Always pairs with creating a new socket or
+   * fully closing the connection.
+   */
+  private teardownCurrentSocket(): void {
+    const ws = this.ws as
+      | (WebSocketLike & {
+          removeEventListener?: (event: string, handler: any) => void
+          off?: (event: string, handler: any) => void
+        })
+      | null
+    const listeners = this.wsListeners
+    this.wsListeners = []
+    this.ws = null
+
+    if (!ws) return
+
+    for (const { event, handler } of listeners) {
+      try {
+        if (typeof ws.removeEventListener === 'function') {
+          ws.removeEventListener(event, handler)
+        }
+        if (typeof ws.off === 'function') {
+          ws.off(event, handler)
+        }
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    try {
+      ws.close()
+    } catch {
+      // already closed
+    }
+    if (typeof ws.terminate === 'function') {
+      try {
+        ws.terminate()
+      } catch {
+        // already terminated
+      }
     }
   }
 
@@ -238,7 +303,9 @@ export class SessionsWebSocket {
       return
     }
 
-    this.ws = null
+    // Detach listeners from the old ws so its closures (and the buffered
+    // messages they may capture) can be GC'd before we open a new one.
+    this.teardownCurrentSocket()
 
     const previousState = this.state
     this.state = 'closed'
@@ -376,14 +443,7 @@ export class SessionsWebSocket {
       this.reconnectTimer = null
     }
 
-    if (this.ws) {
-      // Null out event handlers to prevent race conditions during reconnect.
-      // Under Bun (native WebSocket), onX handlers are the clean way to detach.
-      // Under Node (ws package), the listeners were attached with .on() in connect(),
-      // but since we're about to close and null out this.ws, no cleanup is needed.
-      this.ws.close()
-      this.ws = null
-    }
+    this.teardownCurrentSocket()
   }
 
   /**

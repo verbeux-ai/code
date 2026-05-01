@@ -88,6 +88,10 @@ function validateWorkingDirectory(cwd: string | undefined): string | null {
   return null
 }
 
+// Track which env keys we've already logged about so we don't spam the
+// debug log every time a child is spawned with the same dirty env.
+const warnedDirtyEnvKeys = new Set<string>()
+
 function sanitizeEnvironment(
   env: NodeJS.ProcessEnv | undefined,
 ): { value?: NodeJS.ProcessEnv; error?: string } {
@@ -95,6 +99,14 @@ function sanitizeEnvironment(
     return {}
   }
 
+  // Keys with control characters are still rejected — there is no safe way
+  // to forward them and they almost certainly indicate tampering. Values
+  // with control characters are dropped instead of aborting the whole spawn:
+  // the most common cause is a multi-line value exported by the user's
+  // shell rc (PS1, PROMPT_COMMAND, ssh keys), and rejecting the whole call
+  // turned simple operations like `git clone` into hard failures.
+  const sanitized: NodeJS.ProcessEnv = {}
+  const droppedKeys: string[] = []
   for (const [key, value] of Object.entries(env)) {
     if (CONTROL_CHAR_PATTERN.test(key)) {
       return {
@@ -102,14 +114,26 @@ function sanitizeEnvironment(
       }
     }
     if (typeof value === 'string' && CONTROL_CHAR_PATTERN.test(value)) {
-      return {
-        error:
-          'Unsafe environment: control characters are not allowed in values',
-      }
+      droppedKeys.push(key)
+      continue
+    }
+    sanitized[key] = value
+  }
+
+  if (droppedKeys.length > 0) {
+    const newKeys = droppedKeys.filter(k => !warnedDirtyEnvKeys.has(k))
+    if (newKeys.length > 0) {
+      for (const k of newKeys) warnedDirtyEnvKeys.add(k)
+      // Use console.warn so the user sees this without DEBUG=1; it is
+      // strictly less noisy than the previous behavior of failing the
+      // command outright.
+      console.warn(
+        `[verboo] Dropping env var(s) with control characters before spawning child: ${newKeys.join(', ')}. Fix the source (likely your shell rc) to silence this.`,
+      )
     }
   }
 
-  return { value: env }
+  return { value: sanitized }
 }
 
 /**

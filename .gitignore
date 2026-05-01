@@ -5,6 +5,7 @@ dist/
 .env.*
 !.env.example
 .openclaude-profile.json
+.verboo-profile.json
 reports/
 GEMINI.md
 CLAUDE.md

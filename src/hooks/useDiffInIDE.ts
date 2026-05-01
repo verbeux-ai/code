@@ -29,6 +29,35 @@ import { WindowsToWSLConverter } from '../utils/idePathConversion.js'
 import { logError } from '../utils/log.js'
 import { getPlatform } from '../utils/platform.js'
 
+// Single shared `beforeExit` listener that fans out to per-call cleanups.
+// Without this, every concurrent diff would `process.on('beforeExit', ...)`,
+// stacking listeners on the global process and eventually tripping the
+// MaxListenersExceededWarning while retaining their closures.
+const pendingDiffCleanups = new Set<() => Promise<void> | void>()
+let beforeExitListenerInstalled = false
+
+async function runAllPendingDiffCleanups() {
+  const cleanups = Array.from(pendingDiffCleanups)
+  pendingDiffCleanups.clear()
+  for (const fn of cleanups) {
+    try {
+      await fn()
+    } catch (e) {
+      logError(e as Error)
+    }
+  }
+}
+
+function ensureBeforeExitListener() {
+  if (beforeExitListenerInstalled) return
+  beforeExitListenerInstalled = true
+  process.on('beforeExit', () => {
+    // Returning the promise lets the active `await` keep the event loop
+    // alive long enough for the IDE RPC to flush before Node exits.
+    return runAllPendingDiffCleanups()
+  })
+}
+
 type Props = {
   onChange(
     option: PermissionOption,
@@ -246,13 +275,14 @@ async function showDiffInIDE(
       logError(e as Error)
     }
 
-    process.off('beforeExit', cleanup)
+    pendingDiffCleanups.delete(cleanup)
     toolUseContext.abortController.signal.removeEventListener('abort', cleanup)
   }
 
   // Cleanup if the user hits esc to cancel the tool call - or on exit
   toolUseContext.abortController.signal.addEventListener('abort', cleanup)
-  process.on('beforeExit', cleanup)
+  pendingDiffCleanups.add(cleanup)
+  ensureBeforeExitListener()
 
   // Open the diff in the IDE
   const ideClient = getConnectedIdeClient(toolUseContext.options.mcpClients)

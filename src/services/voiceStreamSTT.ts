@@ -535,6 +535,14 @@ export async function connectVoiceStream(
   ws.on('error', (err: Error) => {
     logError(err)
     logForDebugging(`[voice_stream] WebSocket error: ${err.message}`)
+    // Defensive: some WebSocket implementations fire `error` without a
+    // following `close` (or with a long delay), which leaves the keepalive
+    // timer ticking and pinning the ws closure in memory.
+    if (keepaliveTimer) {
+      clearInterval(keepaliveTimer)
+      keepaliveTimer = null
+    }
+    connected = false
     if (!finalizing) {
       callbacks.onError(`Voice stream connection error: ${err.message}`)
     }

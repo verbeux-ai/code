@@ -1,5 +1,6 @@
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { LRUCache } from 'lru-cache'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import { QueryEngine } from '../QueryEngine.js'
@@ -22,10 +23,40 @@ const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
 const openclaudeProto = protoDescriptor.openclaude.v1
 
 const MAX_SESSIONS = 1000
+// Drop sessions inactive for 1h. A multi-tenant gRPC server with clients
+// dropping TCP without `end` would otherwise retain `previousMessages` (KB
+// to MB each) for the lifetime of the process.
+const SESSION_TTL_MS = 60 * 60 * 1000
+// 256 MB hard cap on total session payload bytes so a few enormous
+// sessions cannot starve the rest. Roughly proportional to JSON length.
+const MAX_SESSIONS_BYTES = 256 * 1024 * 1024
 
 export class GrpcServer {
   private server: grpc.Server
-  private sessions: Map<string, any[]> = new Map()
+  // 8 KB average per message is a rough upper bound for a session
+  // transcript entry (text + small metadata). Using a constant avoids
+  // running JSON.stringify on every set() — that path runs once per
+  // gRPC turn with N messages, so a stringify-per-message heuristic
+  // would scale O(messages²) over the lifetime of a session.
+  private static readonly AVG_MESSAGE_BYTES = 8 * 1024
+
+  private sessions: LRUCache<string, any[]> = new LRUCache<string, any[]>({
+    max: MAX_SESSIONS,
+    maxSize: MAX_SESSIONS_BYTES,
+    ttl: SESSION_TTL_MS,
+    updateAgeOnGet: true,
+    sizeCalculation: messages =>
+      Math.max(1, messages.length * GrpcServer.AVG_MESSAGE_BYTES),
+    dispose: (_value, key, reason) => {
+      if (reason === 'evict' || reason === 'expire') {
+        // Surfaces silent eviction so operators can correlate "session
+        // history disappeared" complaints with cache pressure.
+        console.warn(
+          `[gRPC] session evicted: id=${key} reason=${reason}`,
+        )
+      }
+    },
+  })
 
   constructor() {
     this.server = new grpc.Server()
@@ -190,12 +221,9 @@ export class GrpcServer {
             // Save messages for multi-turn context in subsequent requests
             previousMessages = [...engine.getMessages()]
 
-            // Persist to session store for cross-stream resumption
+            // Persist to session store for cross-stream resumption.
+            // LRUCache handles size, count and TTL eviction internally.
             if (sessionId) {
-              if (!this.sessions.has(sessionId) && this.sessions.size >= MAX_SESSIONS) {
-                // Evict oldest session (Map preserves insertion order)
-                this.sessions.delete(this.sessions.keys().next().value)
-              }
               this.sessions.set(sessionId, previousMessages)
             }
 

@@ -197,6 +197,10 @@ export class QueryEngine {
   // many turns in SDK mode.
   private discoveredSkillNames = new Set<string>()
   private loadedNestedMemoryPaths = new Set<string>()
+  // Tracks if we've already warned about an oversized message store this
+  // session. Reset when compaction shrinks the array below the threshold,
+  // so a subsequent regrowth re-warns the operator.
+  private oversizedMessagesWarned = false
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -237,6 +241,37 @@ export class QueryEngine {
     } = this.config
 
     this.discoveredSkillNames.clear()
+    // Cap per-session permission denials so they cannot grow unbounded
+    // across many turns in a long-lived SDK session. We keep accumulation
+    // semantics (consumers may aggregate denials over a session) but drop
+    // the oldest beyond a generous cap. Each entry is small (tool name +
+    // input snapshot) so the limit is forgiving.
+    const MAX_PERMISSION_DENIALS = 500
+    if (this.permissionDenials.length > MAX_PERMISSION_DENIALS) {
+      this.permissionDenials.splice(
+        0,
+        this.permissionDenials.length - MAX_PERMISSION_DENIALS,
+      )
+    }
+
+    // Defensive watermark: warn once when the message store grows past the
+    // threshold so operators notice runaway sessions where compaction is
+    // disabled or never triggers (e.g. headless gRPC reusing a single
+    // QueryEngine across hundreds of turns). Reset on shrink.
+    const MUTABLE_MESSAGES_WARN_THRESHOLD = 2000
+    if (
+      this.mutableMessages.length > MUTABLE_MESSAGES_WARN_THRESHOLD &&
+      !this.oversizedMessagesWarned
+    ) {
+      this.oversizedMessagesWarned = true
+      logForDebugging(
+        `[QueryEngine] mutableMessages large: ${this.mutableMessages.length} entries — enable compaction to keep memory bounded`,
+      )
+    } else if (
+      this.mutableMessages.length <= MUTABLE_MESSAGES_WARN_THRESHOLD / 2
+    ) {
+      this.oversizedMessagesWarned = false
+    }
     setCwd(cwd)
     const persistSession = !isSessionPersistenceDisabled()
     const startTime = Date.now()

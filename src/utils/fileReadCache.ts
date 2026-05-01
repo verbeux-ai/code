@@ -1,3 +1,4 @@
+import { LRUCache } from 'lru-cache'
 import { detectFileEncoding } from './file.js'
 import { getFsImplementation } from './fsOperations.js'
 
@@ -7,13 +8,23 @@ type CachedFileData = {
   mtime: number
 }
 
+const MAX_CACHE_ENTRIES = 1000
+// 64 MB upper bound on cached content. A FIFO Map(size=1000) on its own
+// could pin gigabytes of file content if the user reads many large files;
+// switching to LRU + bytes-budget keeps the cache useful while bounding
+// memory the same way fileStateCache.ts does.
+const MAX_CACHE_BYTES = 64 * 1024 * 1024
+
 /**
  * A simple in-memory cache for file contents with automatic invalidation based on modification time.
  * This eliminates redundant file reads in FileEditTool operations.
  */
 class FileReadCache {
-  private cache = new Map<string, CachedFileData>()
-  private readonly maxCacheSize = 1000
+  private cache = new LRUCache<string, CachedFileData>({
+    max: MAX_CACHE_ENTRIES,
+    maxSize: MAX_CACHE_BYTES,
+    sizeCalculation: value => Math.max(1, Buffer.byteLength(value.content)),
+  })
 
   /**
    * Reads a file with caching. Returns both content and encoding.
@@ -49,20 +60,12 @@ class FileReadCache {
       .readFileSync(filePath, { encoding })
       .replaceAll('\r\n', '\n')
 
-    // Update cache
+    // Update cache (LRU handles eviction by count and byte budget).
     this.cache.set(cacheKey, {
       content,
       encoding,
       mtime: stats.mtimeMs,
     })
-
-    // Evict oldest entries if cache is too large
-    if (this.cache.size > this.maxCacheSize) {
-      const firstKey = this.cache.keys().next().value
-      if (firstKey) {
-        this.cache.delete(firstKey)
-      }
-    }
 
     return { content, encoding }
   }

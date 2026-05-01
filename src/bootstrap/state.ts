@@ -554,11 +554,26 @@ export function resetTotalDurationStateAndCost_FOR_TESTS_ONLY(): void {
   STATE.totalCostUSD = 0
 }
 
+// Cap unique models tracked. In practice a session uses <10 models, but
+// pathological inputs (dynamic model names, fuzzing, custom routers that
+// stamp request IDs into model names) could otherwise grow unbounded.
+const MAX_TRACKED_MODELS = 200
+
 export function addToTotalCostState(
   cost: number,
   modelUsage: ModelUsage,
   model: string,
 ): void {
+  if (
+    !(model in STATE.modelUsage) &&
+    Object.keys(STATE.modelUsage).length >= MAX_TRACKED_MODELS
+  ) {
+    // Evict the oldest tracked model (insertion order of object keys).
+    const oldestKey = Object.keys(STATE.modelUsage)[0]
+    if (oldestKey) {
+      delete STATE.modelUsage[oldestKey]
+    }
+  }
   STATE.modelUsage[model] = modelUsage
   STATE.totalCostUSD += cost
 }

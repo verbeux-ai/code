@@ -6,6 +6,7 @@
 
 import { type ChildProcess, spawn, spawnSync } from 'child_process'
 import { readFile } from 'fs/promises'
+import { registerCleanup } from '../utils/cleanupRegistry.js'
 import { logForDebugging } from '../utils/debug.js'
 import { isEnvTruthy, isRunningOnHomespace } from '../utils/envUtils.js'
 import { logError } from '../utils/log.js'
@@ -330,6 +331,26 @@ export async function checkRecordingAvailability(): Promise<RecordingAvailabilit
 // ─── Recording (native audio on macOS/Linux/Windows, SoX/arecord fallback on Linux) ─────────────
 
 let activeRecorder: ChildProcess | null = null
+let recorderCleanupRegistered = false
+
+// Lazily register a cleanup so a stale `rec`/`arecord` process is killed
+// during graceful shutdown. Without this, an unhandled exception or
+// abort that bypasses stopRecording() leaves a child process running and
+// holding microphone/CPU until the parent dies — a classic zombie path.
+function ensureRecorderCleanupRegistered(): void {
+  if (recorderCleanupRegistered) return
+  recorderCleanupRegistered = true
+  registerCleanup(async () => {
+    if (activeRecorder) {
+      try {
+        activeRecorder.kill('SIGTERM')
+      } catch {
+        // process may already be gone
+      }
+      activeRecorder = null
+    }
+  })
+}
 let nativeRecordingActive = false
 
 export async function startRecording(
@@ -438,6 +459,7 @@ function startSoxRecording(
     )
   }
 
+  ensureRecorderCleanupRegistered()
   const child = spawn('rec', args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -452,13 +474,18 @@ function startSoxRecording(
   child.stderr?.on('data', () => {})
 
   child.on('close', () => {
-    activeRecorder = null
+    if (activeRecorder === child) activeRecorder = null
     onEnd()
   })
 
   child.on('error', err => {
     logError(err)
-    activeRecorder = null
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      // already dead
+    }
+    if (activeRecorder === child) activeRecorder = null
     onEnd()
   })
 
@@ -485,6 +512,7 @@ function startArecordRecording(
     '-', // write to stdout
   ]
 
+  ensureRecorderCleanupRegistered()
   const child = spawn('arecord', args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -499,13 +527,18 @@ function startArecordRecording(
   child.stderr?.on('data', () => {})
 
   child.on('close', () => {
-    activeRecorder = null
+    if (activeRecorder === child) activeRecorder = null
     onEnd()
   })
 
   child.on('error', err => {
     logError(err)
-    activeRecorder = null
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      // already dead
+    }
+    if (activeRecorder === child) activeRecorder = null
     onEnd()
   })
 

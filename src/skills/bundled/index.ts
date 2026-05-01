@@ -3,6 +3,7 @@ import { shouldAutoEnableClaudeInChrome } from 'src/utils/claudeInChrome/setup.j
 import { registerBatchSkill } from './batch.js'
 import { registerClaudeInChromeSkill } from './claudeInChrome.js'
 import { registerDebugSkill } from './debug.js'
+import { registerKarpathyGuidelinesSkill } from './karpathyGuidelines.js'
 import { registerKeybindingsSkill } from './keybindings.js'
 import { registerLoopSkill } from './loop.js'
 import { registerSimplifySkill } from './simplify.js'
@@ -22,6 +23,7 @@ export function initBundledSkills(): void {
   registerKeybindingsSkill()
   registerDebugSkill()
   registerSimplifySkill()
+  registerKarpathyGuidelinesSkill()
   registerBatchSkill()
   if (feature('KAIROS') || feature('KAIROS_DREAM')) {
     /* eslint-disable @typescript-eslint/no-require-imports */

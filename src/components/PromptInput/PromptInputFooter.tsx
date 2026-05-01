@@ -3,9 +3,11 @@ import * as React from 'react';
 import { memo, type ReactNode, useMemo, useRef } from 'react';
 import { isBridgeEnabled } from '../../bridge/bridgeEnabled.js';
 import { getBridgeStatus } from '../../bridge/bridgeStatusUtil.js';
+import { getSdkBetas } from '../../bootstrap/state.js';
 import { useSetPromptOverlay } from '../../context/promptOverlayContext.js';
 import type { VerificationStatus } from '../../hooks/useApiKeyVerification.js';
 import type { IDESelection } from '../../hooks/useIdeSelection.js';
+import { useMainLoopModel } from '../../hooks/useMainLoopModel.js';
 import { useSettings } from '../../hooks/useSettings.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { Box, Text } from '../../ink.js';
@@ -15,7 +17,12 @@ import type { ToolPermissionContext } from '../../Tool.js';
 import type { Message } from '../../types/message.js';
 import type { PromptInputMode, VimMode } from '../../types/textInputTypes.js';
 import type { AutoUpdaterResult } from '../../utils/autoUpdater.js';
+import { calculateContextPercentages, getContextWindowForModel } from '../../utils/context.js';
+import { formatNumber } from '../../utils/format.js';
 import { isFullscreenEnvEnabled } from '../../utils/fullscreen.js';
+import { getRuntimeMainLoopModel } from '../../utils/model/model.js';
+import type { PermissionMode } from '../../utils/permissions/PermissionMode.js';
+import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage } from '../../utils/tokens.js';
 import { isUndercover } from '../../utils/undercover.js';
 import { CoordinatorTaskPanel, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
 import { getLastAssistantMessageId, StatusLine, statusLineShouldDisplay } from '../StatusLine.js';
@@ -23,6 +30,37 @@ import { Notifications } from './Notifications.js';
 import { PromptInputFooterLeftSide } from './PromptInputFooterLeftSide.js';
 import { PromptInputFooterSuggestions, type SuggestionItem } from './PromptInputFooterSuggestions.js';
 import { PromptInputHelpMenu } from './PromptInputHelpMenu.js';
+
+const BAR_WIDTH = 20;
+
+function ContextWindowDisplay({ messages, permissionMode }: {
+  messages: Message[];
+  permissionMode: PermissionMode;
+}): React.ReactNode {
+  const mainLoopModel = useMainLoopModel();
+  const exceeds200k = doesMostRecentAssistantMessageExceed200k(messages);
+  const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: exceeds200k });
+  const usage = getCurrentUsage(messages);
+  const windowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
+  if (!usage) {
+    const emptyBar = '░'.repeat(BAR_WIDTH);
+    const windowK = formatNumber(windowSize);
+    return <Text dimColor>ctx [{emptyBar}] 0/{windowK}  0%</Text>;
+  }
+  const { used } = calculateContextPercentages(usage, windowSize);
+  const pct = Math.round(used);
+  const filled = Math.round((pct / 100) * BAR_WIDTH);
+  const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+  const color = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : undefined;
+  const inputK = formatNumber(usage.input_tokens);
+  const windowK = formatNumber(windowSize);
+  return (
+    <Text dimColor color={color}>
+      ctx [{bar}] {inputK}/{windowK}  {pct}%
+    </Text>
+  );
+}
+
 type Props = {
   apiKeyStatus: VerificationStatus;
   debug: boolean;
@@ -139,6 +177,7 @@ function PromptInputFooter({
       <Box flexDirection={isNarrow ? 'column' : 'row'} justifyContent={isNarrow ? 'flex-start' : 'space-between'} paddingX={2} gap={isNarrow ? 0 : 1}>
         <Box flexDirection="column" flexShrink={isNarrow ? 0 : 1}>
           {mode === 'prompt' && !isShort && !exitMessage.show && !isPasting && statusLineShouldDisplay(settings) && <StatusLine messagesRef={messagesRef} lastAssistantMessageId={lastAssistantMessageId} vimMode={vimMode} />}
+          {mode === 'prompt' && !exitMessage.show && !isPasting && <ContextWindowDisplay messages={messages} permissionMode={toolPermissionContext.mode} />}
           <PromptInputFooterLeftSide exitMessage={exitMessage} vimMode={vimMode} mode={mode} toolPermissionContext={toolPermissionContext} suppressHint={suppressHint} isLoading={isLoading} tasksSelected={pillSelected} teamsSelected={teamsSelected} teammateFooterIndex={teammateFooterIndex} tmuxSelected={tmuxSelected} isPasting={isPasting} isSearching={isSearching} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={onOpenTasksDialog} />
         </Box>
         <Box flexShrink={1} gap={1}>

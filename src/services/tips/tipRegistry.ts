@@ -624,6 +624,18 @@ const externalTips: Tip[] = [
       return config.numStartups > 5
     },
   },
+  {
+    id: 'karpathy-guidelines',
+    content: async ctx => {
+      const blue = color('suggestion', ctx.theme)
+      return `Use ${blue('/karpathy-guidelines')} to apply Andrej Karpathy's coding principles: think before coding, simplicity first, surgical changes`
+    },
+    cooldownSessions: 20,
+    async isRelevant() {
+      const config = getGlobalConfig()
+      return config.numStartups > 3
+    },
+  },
 ]
 const internalOnlyTips: Tip[] = []
 

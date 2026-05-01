@@ -944,8 +944,16 @@ async function* openaiStreamToAnthropic(
 
   const decoder = new TextDecoder()
   let buffer = ''
-  const STREAM_IDLE_TIMEOUT_MS = 120_000 // 2 minutes without data = connection likely dead
+  // Default raised from 2min to 10min: long Qwen reasoning runs under vLLM
+  // scheduler preemption can pause minutes between chunks even when healthy.
+  // Override via VERBOO_STREAM_IDLE_TIMEOUT_MS for diagnosis.
+  const STREAM_IDLE_TIMEOUT_MS = (() => {
+    const raw = process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS
+    const v = raw ? parseInt(raw, 10) : NaN
+    return Number.isFinite(v) && v > 0 ? v : 600_000
+  })()
   let lastDataTime = Date.now()
+  const streamStartedAt = Date.now()
 
   /**
    * Read from the stream with an idle timeout. If no data arrives within
@@ -1013,7 +1021,30 @@ async function* openaiStreamToAnthropic(
   try {
     while (true) {
       const { done, value } = await readWithTimeout()
-      if (done) break
+      if (done) {
+        // Distinguish a real end-of-stream (we already saw finish_reason) from
+        // an upstream that closed mid-flight (no finish_reason yet). The latter
+        // used to look like a natural turn end, which is the silent-stop bug
+        // users reported on long runs. Throw so withRetry/error UI surfaces it
+        // instead of yielding message_stop with no stop_reason.
+        if (!hasProcessedFinishReason) {
+          const elapsedSec = Math.round((Date.now() - streamStartedAt) / 1000)
+          logForDebugging(
+            JSON.stringify({
+              type: 'premature_stream_close',
+              model,
+              total_chunks: getStreamStats(streamState).totalChunks,
+              duration_ms: Date.now() - streamStartedAt,
+              had_content: hasEmittedContentStart || hasEmittedThinkingStart,
+            }),
+            { level: 'error' },
+          )
+          throw new Error(
+            `Upstream stream closed without finish_reason after ${elapsedSec}s — likely a guard_proxy/vLLM disconnect. The session was interrupted, not completed.`,
+          )
+        }
+        break
+      }
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')

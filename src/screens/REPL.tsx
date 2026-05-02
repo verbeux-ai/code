@@ -143,7 +143,7 @@ import { gracefulShutdownSync, isShuttingDown } from '../utils/gracefulShutdown.
 import { handlePromptSubmit, type PromptInputHelpers } from '../utils/handlePromptSubmit.js';
 import { useQueueProcessor } from '../hooks/useQueueProcessor.js';
 import { useMailboxBridge } from '../hooks/useMailboxBridge.js';
-import { queryCheckpoint, logQueryProfileReport } from '../utils/queryProfiler.js';
+import { queryCheckpoint, logQueryProfileReport, startQueryProfile } from '../utils/queryProfiler.js';
 import type { Message as MessageType, UserMessage, ProgressMessage, HookResultMessage, PartialCompactDirection } from '../types/message.js';
 import { query } from '../query.js';
 import { mergeClients, useMergedClients } from '../hooks/useMergedClients.js';
@@ -2799,12 +2799,14 @@ export function REPL({
         effortValue: effort
       });
     }
+    if (abortController.signal.aborted) return;
     queryCheckpoint('query_context_loading_start');
     const [, , defaultSystemPrompt, baseUserContext, systemContext] = await Promise.all([
       // IMPORTANT: do this after setMessages() above, to avoid UI jank
       checkAndDisableBypassPermissionsIfNeeded(toolPermissionContext, setAppState),
       // Gated on TRANSCRIPT_CLASSIFIER so GrowthBook kill switch runs wherever auto mode is built in
       feature('TRANSCRIPT_CLASSIFIER') ? checkAndDisableAutoModeIfNeeded(toolPermissionContext, setAppState, store.getState().fastMode) : undefined, getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients), getUserContext(), getSystemContext()]);
+    if (abortController.signal.aborted) return;
     const userContext = {
       ...baseUserContext,
       ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
@@ -2821,6 +2823,7 @@ export function REPL({
       appendSystemPrompt
     });
     toolUseContext.renderedSystemPrompt = systemPrompt;
+    if (abortController.signal.aborted) return;
     queryCheckpoint('query_query_start');
     resetTurnHookDuration();
     resetTurnToolDuration();
@@ -2922,6 +2925,7 @@ export function REPL({
     try {
       // isLoading is derived from queryGuard — tryStart() above already
       // transitioned dispatching→running, so no setter call needed here.
+      startQueryProfile();
       resetTimingRefs();
       // Start-of-turn cache tracker reset. The end-of-turn path at the
       // bottom of this function already resets, but mirror the call here
@@ -2948,11 +2952,13 @@ export function REPL({
       const latestMessages = messagesRef.current;
       if (input) {
         await mrOnBeforeQuery(input, latestMessages, newMessages.length);
+        if (abortController.signal.aborted) return;
       }
 
       // Pass full conversation history to callback
       if (onBeforeQueryCallback && input) {
         const shouldProceed = await onBeforeQueryCallback(input, latestMessages);
+        if (abortController.signal.aborted) return;
         if (!shouldProceed) {
           return;
         }

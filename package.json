@@ -1,6 +1,6 @@
 {
   "name": "@verboo/code",
-  "version": "0.7.18",
+  "version": "0.7.19",
   "description": "Verboo Code — coding agent for the Verboo platform",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
     "bin/verboo",
     "bin/import-specifier.mjs",
     "dist/cli.mjs",
+    "dist/vendor/ripgrep/**",
     "scripts/postinstall.mjs",
     "README.md"
   ],
@@ -138,6 +139,9 @@
     "@types/react": "19.2.14",
     "tsx": "^4.21.0",
     "typescript": "5.9.3"
+  },
+  "optionalDependencies": {
+    "@vscode/ripgrep": "^1.15.14"
   },
   "engines": {
     "node": ">=20.0.0"

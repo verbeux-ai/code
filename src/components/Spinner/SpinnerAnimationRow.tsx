@@ -105,7 +105,8 @@ export function SpinnerAnimationRow({
 
   // === Elapsed time (wall-clock, derived from refs each frame) ===
   const now = Date.now();
-  const elapsedTimeMs = pauseStartTimeRef.current !== null ? pauseStartTimeRef.current - loadingStartTimeRef.current - totalPausedMsRef.current : now - loadingStartTimeRef.current - totalPausedMsRef.current;
+  const rawElapsedTimeMs = pauseStartTimeRef.current !== null ? pauseStartTimeRef.current - loadingStartTimeRef.current - totalPausedMsRef.current : now - loadingStartTimeRef.current - totalPausedMsRef.current;
+  const elapsedTimeMs = loadingStartTimeRef.current > 0 ? Math.max(0, rawElapsedTimeMs) : 0;
 
   // Track wall-clock turn start for teammates. While a swarm is running the
   // leader's elapsedTimeMs may jump around (new API calls reset

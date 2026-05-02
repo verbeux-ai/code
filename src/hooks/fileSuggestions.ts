@@ -26,7 +26,7 @@ import {
 } from '../utils/hooks.js'
 import { logError } from '../utils/log.js'
 import { expandPath } from '../utils/path.js'
-import { ripGrep } from '../utils/ripgrep.js'
+import { RipgrepUnavailableError, ripGrep } from '../utils/ripgrep.js'
 import { getInitialSettings } from '../utils/settings/settings.js'
 import { createSignal } from '../utils/signal.js'
 
@@ -499,7 +499,19 @@ async function getProjectFiles(
     rgArgs.push('--no-ignore-vcs')
   }
 
-  const files = await ripGrep(rgArgs, '.', abortSignal)
+  let files: string[]
+  try {
+    files = await ripGrep(rgArgs, '.', abortSignal)
+  } catch (error) {
+    if (error instanceof RipgrepUnavailableError) {
+      logForDebugging(
+        `[FileIndex] ripgrep unavailable; continuing with empty non-git file index: ${error.message}`,
+      )
+      logEvent('tengu_file_suggestions_ripgrep_unavailable', {})
+      return []
+    }
+    throw error
+  }
   const relativePaths = files.map(f => path.relative(getCwd(), f))
 
   const duration = Date.now() - startTime

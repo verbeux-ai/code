@@ -6,11 +6,10 @@
  * de marca neste arquivo é manual.
  */
 
-import { VERBOO_ROUTER_URL } from '../constants/oauth.js'
+import { VERBOO_ROUTER_URL, isVerbooMode } from '../constants/oauth.js'
 import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
-import { getSettings_DEPRECATED } from '../utils/settings/settings.js'
-import { parseUserSpecifiedModel } from '../utils/model/model.js'
+import { getDefaultVerbooModel, isClaudeModelLike, parseUserSpecifiedModel } from '../utils/model/model.js'
 import { containsExactZaiGlmModelId, isZaiBaseUrl } from '../utils/zaiProvider.js'
 
 declare const MACRO: { VERSION: string; DISPLAY_VERSION?: string }
@@ -80,6 +79,17 @@ const LOGO_VERBOO_CODE = [
 // ─── Provider detection ───────────────────────────────────────────────────────
 
 export function detectProvider(modelOverride?: string): { name: string; model: string; baseUrl: string; isLocal: boolean } {
+  if (isVerbooMode()) {
+    const safeOverride =
+      modelOverride && !isClaudeModelLike(modelOverride)
+        ? modelOverride
+        : getDefaultVerbooModel()
+    const resolvedModel = parseUserSpecifiedModel(safeOverride)
+    const baseUrl = VERBOO_ROUTER_URL
+    const isLocal = isLocalProviderUrl(baseUrl)
+    return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
+  }
+
   const useGemini = process.env.CLAUDE_CODE_USE_GEMINI === '1' || process.env.CLAUDE_CODE_USE_GEMINI === 'true'
   const useGithub = process.env.CLAUDE_CODE_USE_GITHUB === '1' || process.env.CLAUDE_CODE_USE_GITHUB === 'true'
   const useOpenAI = process.env.CLAUDE_CODE_USE_OPENAI === '1' || process.env.CLAUDE_CODE_USE_OPENAI === 'true'
@@ -162,8 +172,7 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
   }
 
   // VERBOO-BRAND: default provider é Verboo. API LLM via router em code.verboo.ai/router.
-  const settings = getSettings_DEPRECATED() || {}
-  const modelSetting = modelOverride || settings.model || process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6'
+  const modelSetting = modelOverride || getDefaultVerbooModel()
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
   const baseUrl = VERBOO_ROUTER_URL
   const isLocal = isLocalProviderUrl(baseUrl)

@@ -7,6 +7,8 @@ import {
   getProviderValidationError,
   validateProviderEnvForStartupOrExit,
 } from '../utils/providerValidation.js'
+import { isVerbooMode } from '../constants/oauth.js'
+import { clearStartupProviderEnvFromProcessEnv } from '../utils/providerStartupOverrides.js'
 
 // OpenClaude: polyfill globalThis.File for Node < 20.
 // undici v7 references `File` at module evaluation time (webidl type
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
 
   // --provider: set provider env vars early so saved-profile resolution,
   // validation, and the startup banner all see the intended provider/model.
-  if (args.includes('--provider')) {
+  if (!isVerbooMode() && args.includes('--provider')) {
     const { applyProviderFlagFromArgs } = await import('../utils/providerFlag.js');
     const result = applyProviderFlagFromArgs(args);
     if (result?.error) {
@@ -109,17 +111,23 @@ async function main(): Promise<void> {
     applySafeConfigEnvironmentVariables()
   }
 
-  const startupEnv = await buildStartupEnvFromProfile({
-    processEnv: process.env,
-  })
-  if (startupEnv !== process.env) {
-    const startupProfileError = await getProviderValidationError(startupEnv)
-    if (startupProfileError) {
-      console.error(
-        `Warning: ignoring saved provider profile. ${startupProfileError}`,
-      )
-    } else {
-      applyProfileEnvToProcessEnv(process.env, startupEnv)
+  if (isVerbooMode()) {
+    clearStartupProviderEnvFromProcessEnv()
+  }
+
+  if (!isVerbooMode()) {
+    const startupEnv = await buildStartupEnvFromProfile({
+      processEnv: process.env,
+    })
+    if (startupEnv !== process.env) {
+      const startupProfileError = await getProviderValidationError(startupEnv)
+      if (startupProfileError) {
+        console.error(
+          `Warning: ignoring saved provider profile. ${startupProfileError}`,
+        )
+      } else {
+        applyProfileEnvToProcessEnv(process.env, startupEnv)
+      }
     }
   }
 
@@ -129,8 +137,10 @@ async function main(): Promise<void> {
       hydrateGithubModelsTokenFromSecureStorage,
       refreshGithubModelsTokenIfNeeded,
     } = await import('../utils/githubModelsCredentials.js')
-    await refreshGithubModelsTokenIfNeeded()
-    hydrateGithubModelsTokenFromSecureStorage()
+    if (!isVerbooMode()) {
+      await refreshGithubModelsTokenIfNeeded()
+      hydrateGithubModelsTokenFromSecureStorage()
+    }
   }
 
   await validateProviderEnvForStartupOrExit()

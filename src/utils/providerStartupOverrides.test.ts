@@ -1,6 +1,9 @@
 import { describe, expect, mock, test } from 'bun:test'
 
-import { clearStartupProviderOverrides } from './providerStartupOverrides.js'
+import {
+  clearStartupProviderEnvFromProcessEnv,
+  clearStartupProviderOverrides,
+} from './providerStartupOverrides.js'
 
 describe('clearStartupProviderOverrides', () => {
   test('removes stale provider env from user settings and global config env', () => {
@@ -38,4 +41,18 @@ describe('clearStartupProviderOverrides', () => {
     )
     expect(saveConfig.mock.results[0]?.value.env).toEqual({ KEEP_ME: '1' })
   })
+})
+
+test('clearStartupProviderEnvFromProcessEnv removes Claude/provider contamination', () => {
+  const env = {
+    CLAUDE_CODE_USE_OPENAI: '1',
+    ANTHROPIC_MODEL: 'claude-sonnet-4-6',
+    CLAUDE_MODEL: 'opus',
+    OPENAI_MODEL: 'claude-opus-4-6',
+    KEEP_ME: '1',
+  } as NodeJS.ProcessEnv
+
+  clearStartupProviderEnvFromProcessEnv(env)
+
+  expect(env).toEqual({ KEEP_ME: '1' })
 })

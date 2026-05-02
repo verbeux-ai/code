@@ -29,12 +29,16 @@ import {
   isNonCustomOpusModel,
 } from 'src/utils/model/model.js'
 import { getModelStrings } from 'src/utils/model/modelStrings.js'
-import { getAPIProvider } from 'src/utils/model/providers.js'
+import {
+  getAPIProvider,
+  isFirstPartyAnthropicBaseUrl,
+} from 'src/utils/model/providers.js'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import {
   API_PDF_MAX_PAGES,
   PDF_TARGET_RAW_SIZE,
 } from '../../constants/apiLimits.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { formatFileSize } from '../../utils/format.js'
 import { ImageResizeError } from '../../utils/imageResizer.js'
@@ -96,11 +100,24 @@ function mapOpenAICompatibilityFailureToAssistantMessage(options: {
         error: 'invalid_request',
       })
 
-    case 'auth_invalid':
+    case 'auth_invalid': {
+      // Only orient toward `/login` when we are sure the request hit the
+      // Verboo router. With a custom ANTHROPIC_BASE_URL pointing at a
+      // user-owned proxy, the OAuth Verboo session is irrelevant and the
+      // hint would be misleading.
+      const verbooFirstParty =
+        isVerbooMode() && isFirstPartyAnthropicBaseUrl()
       return createAssistantAPIErrorMessage({
-        content: `${API_ERROR_MESSAGE_PREFIX}: Authentication failed for your OpenAI-compatible provider. Verify OPENAI_API_KEY and endpoint-specific auth requirements.`,
+        content: verbooFirstParty
+          ? `${API_ERROR_MESSAGE_PREFIX}: Authentication failed. ${
+              getIsNonInteractiveSession()
+                ? 'Run `verboo /login` and retry.'
+                : 'Please run /login.'
+            }`
+          : `${API_ERROR_MESSAGE_PREFIX}: Authentication failed. Verify your provider credentials (OPENAI_API_KEY / ANTHROPIC_BASE_URL / endpoint-specific auth headers).`,
         error: 'authentication_failed',
       })
+    }
 
     case 'rate_limited':
       return createAssistantAPIErrorMessage({
@@ -305,14 +322,17 @@ export const OAUTH_ORG_NOT_ALLOWED_ERROR_MESSAGE =
   'Your account does not have access to Verboo Code. Please run /login.'
 
 export function getTokenRevokedErrorMessage(): string {
+  // Headless variant intentionally starts with `API Error:` so that
+  // `startsWithApiErrorPrefix()` keeps detecting it across compact/feedback
+  // helpers that gate on "is this an API error?".
   return getIsNonInteractiveSession()
-    ? 'Your account does not have access to Claude. Please login again or contact your administrator.'
+    ? `${API_ERROR_MESSAGE_PREFIX}: OAuth token revoked. Run \`verboo /login\` to re-authenticate, or contact your administrator.`
     : TOKEN_REVOKED_ERROR_MESSAGE
 }
 
 export function getOauthOrgNotAllowedErrorMessage(): string {
   return getIsNonInteractiveSession()
-    ? 'Your organization does not have access to Claude. Please login again or contact your administrator.'
+    ? `${API_ERROR_MESSAGE_PREFIX}: Your organization does not have access to Verboo Code. Run \`verboo /login\` to switch accounts, or contact your administrator.`
     : OAUTH_ORG_NOT_ALLOWED_ERROR_MESSAGE
 }
 
@@ -1002,7 +1022,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       error: 'authentication_failed',
       content: getIsNonInteractiveSession()
-        ? `Failed to authenticate. ${API_ERROR_MESSAGE_PREFIX}: ${error.message}`
+        ? `${API_ERROR_MESSAGE_PREFIX}: ${error.message} · Failed to authenticate. Run \`verboo /login\` to refresh credentials.`
         : `Please run /login · ${API_ERROR_MESSAGE_PREFIX}: ${error.message}`,
     })
   }

@@ -453,6 +453,15 @@ export async function* runToolUse(
       return
     }
 
+    logForDebugging(
+      JSON.stringify({
+        type: 'runToolUse_entering_stream',
+        toolName: tool.name,
+        toolUseId: toolUse.id,
+        inputKeys: Object.keys(toolInput ?? {}),
+      }),
+      { level: 'debug' },
+    )
     for await (const update of streamedCheckPermissionsAndCallTool(
       tool,
       toolUse.id,
@@ -467,6 +476,14 @@ export async function* runToolUse(
     )) {
       yield update
     }
+    logForDebugging(
+      JSON.stringify({
+        type: 'runToolUse_stream_exited',
+        toolName: tool.name,
+        toolUseId: toolUse.id,
+      }),
+      { level: 'debug' },
+    )
   } catch (error) {
     logError(error)
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -950,6 +967,16 @@ async function checkPermissionsAndCallTool(
   const permissionMode = toolUseContext.getAppState().toolPermissionContext.mode
   const permissionStart = Date.now()
 
+  logForDebugging(
+    JSON.stringify({
+      type: 'permission_decision_awaiting',
+      toolName: tool.name,
+      toolUseId: toolUseID,
+      permissionMode,
+      hasHookResult: hookPermissionResult != null,
+    }),
+    { level: 'debug' },
+  )
   const resolved = await resolveHookPermissionDecision(
     hookPermissionResult,
     tool,
@@ -958,6 +985,16 @@ async function checkPermissionsAndCallTool(
     canUseTool,
     assistantMessage,
     toolUseID,
+  )
+  logForDebugging(
+    JSON.stringify({
+      type: 'permission_decision_resolved',
+      toolName: tool.name,
+      toolUseId: toolUseID,
+      decision: resolved.decision.behavior,
+      durationMs: Date.now() - permissionStart,
+    }),
+    { level: 'debug' },
   )
   const permissionDecision = resolved.decision
   processedInput = resolved.input

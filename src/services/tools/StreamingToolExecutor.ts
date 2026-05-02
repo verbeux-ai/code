@@ -9,7 +9,13 @@ import { findToolByName, type Tools, type ToolUseContext } from '../../Tool.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
 import { createChildAbortController } from '../../utils/abortController.js'
+import { isDebugMode, logForDebugging } from '../../utils/debug.js'
 import { runToolUse } from './toolExecution.js'
+
+// Hard upper bound to escape silent limbos (e.g. processQueue busy-loop or
+// runToolUse generator that never resolves). Only active in --debug since this
+// is diagnostic instrumentation, not behavior we want to ship to users yet.
+const TOOL_EXECUTOR_WATCHDOG_MS = 60_000
 
 type MessageUpdate = {
   message?: Message
@@ -144,6 +150,20 @@ export class StreamingToolExecutor {
       if (this.canExecuteTool(tool.isConcurrencySafe)) {
         await this.executeTool(tool)
       } else {
+        if (isDebugMode()) {
+          logForDebugging(
+            JSON.stringify({
+              type: 'streaming_tool_blocked_by_concurrency',
+              toolName: tool.block.name,
+              toolUseId: tool.id,
+              isConcurrencySafe: tool.isConcurrencySafe,
+              executingNames: this.tools
+                .filter(t => t.status === 'executing')
+                .map(t => `${t.block.name}(${t.isConcurrencySafe ? 'safe' : 'unsafe'})`),
+            }),
+            { level: 'debug' },
+          )
+        }
         // Can't execute this tool yet, and since we need to maintain order for non-concurrent tools, stop here
         if (!tool.isConcurrencySafe) break
       }
@@ -455,10 +475,40 @@ export class StreamingToolExecutor {
       return
     }
 
+    const debug = isDebugMode()
+    let lastProgressAt = Date.now()
+    let iterations = 0
+
+    const snapshot = (event: string) => {
+      if (!debug) return
+      const statuses: Record<string, number> = {}
+      for (const t of this.tools) {
+        statuses[t.status] = (statuses[t.status] ?? 0) + 1
+      }
+      logForDebugging(
+        JSON.stringify({
+          type: event,
+          iterations,
+          totalTools: this.tools.length,
+          statuses,
+          hasExecuting: this.hasExecutingTools(),
+          hasCompleted: this.hasCompletedResults(),
+          hasPendingProgress: this.hasPendingProgress(),
+          msSinceProgress: Date.now() - lastProgressAt,
+        }),
+        { level: 'debug' },
+      )
+    }
+
     while (this.hasUnfinishedTools()) {
+      iterations++
+      snapshot('streaming_tool_iter_start')
       await this.processQueue()
 
+      let yieldedThisIter = false
       for (const result of this.getCompletedResults()) {
+        yieldedThisIter = true
+        lastProgressAt = Date.now()
         yield result
       }
 
@@ -479,14 +529,39 @@ export class StreamingToolExecutor {
         })
 
         if (executingPromises.length > 0) {
-          await Promise.race([...executingPromises, progressPromise])
+          // Watchdog: in --debug, never wait more than TOOL_EXECUTOR_WATCHDOG_MS
+          // for a single race. If it fires, the loop will go around again and
+          // emit a fresh snapshot, exposing what's stuck without us having to
+          // guess. Outside debug, behavior is unchanged.
+          if (debug) {
+            const watchdog = new Promise<'watchdog'>(resolve =>
+              setTimeout(() => resolve('watchdog'), TOOL_EXECUTOR_WATCHDOG_MS),
+            )
+            const winner = await Promise.race<unknown>([
+              ...executingPromises,
+              progressPromise,
+              watchdog,
+            ])
+            if (winner === 'watchdog') {
+              snapshot('streaming_tool_watchdog_fired')
+            }
+          } else {
+            await Promise.race([...executingPromises, progressPromise])
+          }
+        } else if (debug) {
+          // hasExecutingTools=true but executingPromises empty means we have a
+          // tool stuck in 'executing' with no promise — would be a busy loop.
+          snapshot('streaming_tool_executing_without_promise')
         }
+      } else if (!yieldedThisIter && debug) {
+        snapshot('streaming_tool_iter_no_progress')
       }
     }
 
     for (const result of this.getCompletedResults()) {
       yield result
     }
+    if (debug) snapshot('streaming_tool_loop_exit')
   }
 
   /**

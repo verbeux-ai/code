@@ -2307,6 +2307,7 @@ function PromptInput({
           <Text color="rgb(45,45,45)">{'▄'.repeat(columns)}</Text>
           <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-start" backgroundColor="rgb(45,45,45)">
             <PromptInputModeIndicator mode={mode} isLoading={isLoading} viewingAgentName={viewingAgentName} viewingAgentColor={viewingAgentColor} />
+            {showFastIcon && <Text color={getBorderColor()}>{' '}{getFastIconString(true, fastModeCooldown)}{' '}{showFastIconHint && <Text dimColor>/fast</Text>}</Text>}
             <Box flexGrow={1} flexShrink={1} onClick={handleInputClick}>
               {textInputElement}
             </Box>

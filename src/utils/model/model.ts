@@ -35,20 +35,72 @@ export type ModelShortName = string
 export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
 
+const VERBOO_FALLBACK_MODEL = 'gpt-5.5'
+
 function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-export function getSmallFastModel(): ModelName {
-  if (process.env.ANTHROPIC_SMALL_FAST_MODEL) return process.env.ANTHROPIC_SMALL_FAST_MODEL
-  if (isVerbooMode()) {
-    const cached = getCachedVerbooModels()
-    if (cached && cached.length > 0) {
-      return cached[0].id
-    }
+export function isClaudeModelLike(model: unknown): boolean {
+  if (typeof model !== 'string') return false
+  const normalized = model.trim().toLowerCase()
+  if (!normalized) return false
+  const withoutContext = normalized.replace(/\[1m]$/i, '').trim()
+  return (
+    withoutContext.includes('claude') ||
+    withoutContext === 'sonnet' ||
+    withoutContext === 'opus' ||
+    withoutContext === 'haiku' ||
+    withoutContext === 'best' ||
+    withoutContext === 'opusplan'
+  )
+}
+
+export function getDefaultVerbooModel(): ModelName {
+  const cached = getCachedVerbooModels()
+  const cachedModel = cached?.find(m => !isClaudeModelLike(m.id))?.id
+  if (cachedModel) return cachedModel
+
+  const envFallback =
+    normalizeModelSetting(process.env.VERBOO_DEFAULT_MODEL) ??
+    normalizeModelSetting(process.env.OPENAI_MODEL)
+  if (envFallback && !isClaudeModelLike(envFallback)) {
+    return envFallback.replace(/\[1m\]$/i, '').trim()
   }
+
+  return VERBOO_FALLBACK_MODEL
+}
+
+function getVerbooSpecifiedModel(
+  specifiedModel: ModelSetting | undefined,
+): ModelSetting | undefined {
+  if (specifiedModel === undefined || specifiedModel === null) {
+    return specifiedModel
+  }
+
+  const normalized = normalizeModelSetting(specifiedModel)
+  if (!normalized || isClaudeModelLike(normalized)) {
+    return undefined
+  }
+
+  const modelWithoutContext = normalized.replace(/\[1m\]$/i, '').trim()
+  const cached = getCachedVerbooModels()
+  if (cached && cached.length > 0) {
+    return cached.some(m => m.id === modelWithoutContext && !isClaudeModelLike(m.id))
+      ? modelWithoutContext
+      : undefined
+  }
+
+  return modelWithoutContext
+}
+
+export function getSmallFastModel(): ModelName {
+  if (isVerbooMode()) {
+    return getDefaultVerbooModel()
+  }
+  if (process.env.ANTHROPIC_SMALL_FAST_MODEL) return process.env.ANTHROPIC_SMALL_FAST_MODEL
   // For Gemini provider, use a fast model
   if (getAPIProvider() === 'gemini') {
     return process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite'
@@ -142,22 +194,15 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
       undefined
   }
 
+  // Verboo is single-provider SaaS. Never let stale Claude Code settings,
+  // ANTHROPIC_MODEL, /model aliases, or subscriber defaults select Claude.
+  if (isVerbooMode()) {
+    return getVerbooSpecifiedModel(specifiedModel)
+  }
+
   // Ignore the user-specified model if it's not in the availableModels allowlist.
   if (specifiedModel && !isModelAllowed(specifiedModel)) {
     return undefined
-  }
-
-  // In Verboo mode, ignore saved/env models that aren't in the router's model list.
-  // This prevents Anthropic model names (e.g. claude-sonnet-4-6) from leaking in
-  // when the user switches to a Verboo account that has different model IDs.
-  if (specifiedModel && isVerbooMode()) {
-    const cached = getCachedVerbooModels()
-    if (cached && cached.length > 0) {
-      const verbooIds = new Set(cached.map(m => m.id))
-      if (!verbooIds.has(specifiedModel)) {
-        return undefined
-      }
-    }
   }
 
   return specifiedModel
@@ -189,6 +234,9 @@ export function getBestModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Opus model (3P providers may lag so keep defaults unchanged).
 export function getDefaultOpusModel(): ModelName {
+  if (isVerbooMode()) {
+    return getDefaultVerbooModel()
+  }
   if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
   }
@@ -235,6 +283,9 @@ export function getDefaultOpusModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Sonnet model (3P providers may lag so keep defaults unchanged).
 export function getDefaultSonnetModel(): ModelName {
+  if (isVerbooMode()) {
+    return getDefaultVerbooModel()
+  }
   if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
   }
@@ -279,6 +330,9 @@ export function getDefaultSonnetModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Haiku model (3P providers may lag so keep defaults unchanged).
 export function getDefaultHaikuModel(): ModelName {
+  if (isVerbooMode()) {
+    return getDefaultVerbooModel()
+  }
   if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
   }
@@ -358,6 +412,10 @@ export function getRuntimeMainLoopModel(params: {
  * @returns The default model setting to use
  */
 export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
+  if (isVerbooMode()) {
+    return getDefaultVerbooModel()
+  }
+
   // GitHub Copilot provider: check settings.model first, then env, then default
   if (getAPIProvider() === 'github') {
     const settings = getSettings_DEPRECATED() || {}
@@ -722,6 +780,19 @@ export function parseUserSpecifiedModel(
   const modelString = has1mTag
     ? normalizedModel.replace(/\[1m]$/i, '').trim()
     : normalizedModel
+
+  if (isVerbooMode()) {
+    if (modelString === 'codexplan') {
+      return 'gpt-5.5'
+    }
+    if (modelString === 'codexspark') {
+      return 'gpt-5.3-codex-spark'
+    }
+    if (isClaudeModelLike(modelString)) {
+      return getDefaultVerbooModel()
+    }
+    return modelInputTrimmed.replace(/\[1m\]$/i, '').trim()
+  }
 
   if (isModelAlias(modelString)) {
     switch (modelString) {

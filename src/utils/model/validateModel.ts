@@ -15,6 +15,7 @@ import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNim
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
 import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
+import { isClaudeModelLike } from './model.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -34,6 +35,12 @@ export async function validateModel(
 
   // For Verboo, only allow models returned by the /models endpoint
   if (isVerbooMode()) {
+    if (isClaudeModelLike(normalizedModel)) {
+      return {
+        valid: false,
+        error: `Modelo '${normalizedModel}' não pode ser usado no Verboo Code.`,
+      }
+    }
     const verbooModels = getCachedVerbooModels()
     if (verbooModels && verbooModels.length > 0) {
       const found = verbooModels.some(m => m.id === normalizedModel)

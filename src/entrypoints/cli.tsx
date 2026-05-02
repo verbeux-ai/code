@@ -7,8 +7,11 @@ import {
   getProviderValidationError,
   validateProviderEnvForStartupOrExit,
 } from '../utils/providerValidation.js'
-import { isVerbooMode } from '../constants/oauth.js'
 import { clearStartupProviderEnvFromProcessEnv } from '../utils/providerStartupOverrides.js'
+
+// Keep this entrypoint free of oauth/model imports during bootstrap. Pulling
+// constants/oauth here creates a bundle-time cycle before main.tsx initializes.
+const IS_VERBOO_CLI = true
 
 // OpenClaude: polyfill globalThis.File for Node < 20.
 // undici v7 references `File` at module evaluation time (webidl type
@@ -89,7 +92,7 @@ async function main(): Promise<void> {
 
   // --provider: set provider env vars early so saved-profile resolution,
   // validation, and the startup banner all see the intended provider/model.
-  if (!isVerbooMode() && args.includes('--provider')) {
+  if (!IS_VERBOO_CLI && args.includes('--provider')) {
     const { applyProviderFlagFromArgs } = await import('../utils/providerFlag.js');
     const result = applyProviderFlagFromArgs(args);
     if (result?.error) {
@@ -111,11 +114,11 @@ async function main(): Promise<void> {
     applySafeConfigEnvironmentVariables()
   }
 
-  if (isVerbooMode()) {
+  if (IS_VERBOO_CLI) {
     clearStartupProviderEnvFromProcessEnv()
   }
 
-  if (!isVerbooMode()) {
+  if (!IS_VERBOO_CLI) {
     const startupEnv = await buildStartupEnvFromProfile({
       processEnv: process.env,
     })
@@ -137,7 +140,7 @@ async function main(): Promise<void> {
       hydrateGithubModelsTokenFromSecureStorage,
       refreshGithubModelsTokenIfNeeded,
     } = await import('../utils/githubModelsCredentials.js')
-    if (!isVerbooMode()) {
+    if (!IS_VERBOO_CLI) {
       await refreshGithubModelsTokenIfNeeded()
       hydrateGithubModelsTokenFromSecureStorage()
     }

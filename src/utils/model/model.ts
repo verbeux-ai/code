@@ -35,7 +35,8 @@ export type ModelShortName = string
 export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
 
-const VERBOO_FALLBACK_MODEL = 'gpt-5.5'
+const VERBOO_NO_MODELS_ERROR =
+  'Nenhum modelo Verboo disponível na sua conta. Compre acesso em https://code.verboo.ai e execute `verboo /login` novamente.'
 
 function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefined {
   if (typeof value !== 'string') return undefined
@@ -63,14 +64,7 @@ export function getDefaultVerbooModel(): ModelName {
   const cachedModel = cached?.find(m => !isClaudeModelLike(m.id))?.id
   if (cachedModel) return cachedModel
 
-  const envFallback =
-    normalizeModelSetting(process.env.VERBOO_DEFAULT_MODEL) ??
-    normalizeModelSetting(process.env.OPENAI_MODEL)
-  if (envFallback && !isClaudeModelLike(envFallback)) {
-    return envFallback.replace(/\[1m\]$/i, '').trim()
-  }
-
-  return VERBOO_FALLBACK_MODEL
+  throw new Error(VERBOO_NO_MODELS_ERROR)
 }
 
 function getVerbooSpecifiedModel(

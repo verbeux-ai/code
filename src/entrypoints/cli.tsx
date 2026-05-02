@@ -148,14 +148,6 @@ async function main(): Promise<void> {
 
   await validateProviderEnvForStartupOrExit()
 
-  // Parse --model early so the startup screen can display the override
-  const { eagerParseCliFlag } = await import('../utils/cliArgs.js')
-  const earlyModelFlag = eagerParseCliFlag('--model')
-
-  // VERBOO-BRAND: compact rounded startup screen (fantasma + Verboo Code)
-  const { printStartupScreen } = await import('../components/StartupScreen.js')
-  printStartupScreen(earlyModelFlag)
-
   // For all other paths, load the startup profiler
   const {
     profileCheckpoint
@@ -435,6 +427,17 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
+  if (!skipsAuth) {
+    // Parse --model after auth/model loading so Verboo's banner uses /models,
+    // never a local fallback.
+    const { eagerParseCliFlag } = await import('../utils/cliArgs.js')
+    const earlyModelFlag = eagerParseCliFlag('--model')
+
+    // VERBOO-BRAND: compact rounded startup screen (fantasma + Verboo Code)
+    const { printStartupScreen } = await import('../components/StartupScreen.js')
+    printStartupScreen(earlyModelFlag)
+  }
+
   const {
     main: cliMain
   } = await import('../main.js');

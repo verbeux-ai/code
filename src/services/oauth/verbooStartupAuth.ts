@@ -177,7 +177,7 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
 export function getNoVerbooModelsMessage(): string {
   return (
     '\n❌ Nenhum modelo disponível na sua conta.\n' +
-    '   Adquira acesso em: https://code.verboo.ai\n\n' +
+    '   Compre acesso em: https://code.verboo.ai\n\n' +
     '   Para trocar de conta, execute: verboo logout\n\n'
   )
 }
@@ -253,11 +253,7 @@ export async function ensureVerbooAuthenticated(
     // Tenta atualizar o cache de modelos mesmo em modo degradado.
     const stored = await getClaudeAIOAuthTokensAsync()
     if (stored?.accessToken) {
-      await fetchVerbooModels(stored.accessToken, { force: true }).catch(err => {
-        logForDebugging(
-          `[VerbooStartup] Falha ao atualizar modelos em modo degradado: ${(err as Error).message}`,
-        )
-      })
+      await loadAndCheckModels(stored.accessToken)
     }
     return
   }

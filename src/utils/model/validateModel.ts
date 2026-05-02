@@ -57,9 +57,10 @@ export async function validateModel(
         error: `Modelo '${normalizedModel}' não disponível. Disponíveis: ${shown}${suffix}`,
       }
     }
-    // Cache vazio: aceita temporariamente para não bloquear startup
-    validModelCache.set(normalizedModel, true)
-    return { valid: true }
+    return {
+      valid: false,
+      error: 'Nenhum modelo Verboo disponível na sua conta. Compre acesso em https://code.verboo.ai e execute `verboo /login` novamente.',
+    }
   }
 
   // For Ollama provider, validate against cached model list instead of API call

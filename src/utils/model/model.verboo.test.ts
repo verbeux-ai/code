@@ -80,9 +80,11 @@ test('Verboo ignores Claude aliases and Claude model IDs from user settings', as
   expect(parseUserSpecifiedModel('claude-sonnet-4-6')).toBe('gpt-5.4')
 })
 
-test('Verboo falls back to a non-Claude model when router cache is cold', async () => {
+test('Verboo fails instead of inventing a model when router cache is cold', async () => {
   process.env.OPENAI_MODEL = 'claude-sonnet-4-6'
   const { getDefaultMainLoopModelSetting } = await importFreshModelModule([])
 
-  expect(getDefaultMainLoopModelSetting()).toBe('gpt-5.5')
+  expect(() => getDefaultMainLoopModelSetting()).toThrow(
+    'Compre acesso em https://code.verboo.ai',
+  )
 })

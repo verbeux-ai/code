@@ -62,7 +62,9 @@ describe('Session timeout fix', () => {
     const content = await file('services/api/openaiShim.ts').text()
 
     // Extract the timeout value (supports numeric separators like 120_000)
-    const match = content.match(/STREAM_IDLE_TIMEOUT_MS\s*=\s*([\d_]+)/)
+    const match =
+      content.match(/STREAM_IDLE_TIMEOUT_MS\s*=\s*([\d_]+)/) ??
+      content.match(/:\s*([\d_]+)\s*\n\s*\}\)\(\)/)
     expect(match).not.toBeNull()
     const timeoutMs = parseInt(match![1].replace(/_/g, ''), 10)
     expect(timeoutMs).toBeGreaterThanOrEqual(60_000)
@@ -265,6 +267,20 @@ describe('AgentTool cleanup fix', () => {
     // Verify cleanup is wrapped in try/catch for defensive execution
     expect(content).toMatch(/try\s*\{\s*clearInvokedSkillsForAgent/)
     expect(content).toMatch(/try\s*\{\s*clearDumpState/)
+  })
+
+  test('foreground agent uses a task-scoped abort controller before backgrounding', async () => {
+    const agentTool = await file('tools/AgentTool/AgentTool.tsx').text()
+    const localAgentTask = await file(
+      'tasks/LocalAgentTask/LocalAgentTask.tsx',
+    ).text()
+
+    expect(localAgentTask).toContain('abortController: AbortController')
+    expect(agentTool).toContain(
+      'createChildAbortController(registration.abortController)',
+    )
+    expect(agentTool).toContain('abortController: foregroundAbortController')
+    expect(agentTool).toContain("foregroundAbortController?.abort('backgrounded')")
   })
 })
 

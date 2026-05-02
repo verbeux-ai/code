@@ -541,6 +541,7 @@ export function registerAgentForeground({
   toolUseId?: string;
 }): {
   taskId: string;
+  abortController: AbortController;
   backgroundSignal: Promise<void>;
   cancelAutoBackground?: () => void;
 } {
@@ -608,6 +609,7 @@ export function registerAgentForeground({
   }
   return {
     taskId: agentId,
+    abortController,
     backgroundSignal,
     cancelAutoBackground
   };

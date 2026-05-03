@@ -44,6 +44,10 @@ import {
 } from './services/api/errors.js'
 import { logAntError, logForDebugging } from './utils/debug.js'
 import {
+  logMemoryDiagnostics,
+  maybeLogMemoryHighWatermark,
+} from './utils/memoryDiagnostics.js'
+import {
   createUserMessage,
   createUserInterruptionMessage,
   normalizeMessagesForAPI,
@@ -231,15 +235,30 @@ export async function* query(
   Terminal
 > {
   const consumedCommandUuids: string[] = []
-  const terminal = yield* queryLoop(params, consumedCommandUuids)
-  // Only reached if queryLoop returned normally. Skipped on throw (error
-  // propagates through yield*) and on .return() (Return completion closes
-  // both generators). This gives the same asymmetric started-without-completed
-  // signal as print.ts's drainCommandQueue when the turn fails.
-  for (const uuid of consumedCommandUuids) {
-    notifyCommandLifecycle(uuid, 'completed')
+  const diagExtra = {
+    querySource: params.querySource,
+    agentId: params.toolUseContext.agentId ?? null,
+    messageCount: params.messages.length,
   }
-  return terminal
+  logMemoryDiagnostics('query-start', diagExtra)
+  maybeLogMemoryHighWatermark('query-start', diagExtra)
+  try {
+    const terminal = yield* queryLoop(params, consumedCommandUuids)
+    // Only reached if queryLoop returned normally. Skipped on throw (error
+    // propagates through yield*) and on .return() (Return completion closes
+    // both generators). This gives the same asymmetric started-without-completed
+    // signal as print.ts's drainCommandQueue when the turn fails.
+    for (const uuid of consumedCommandUuids) {
+      notifyCommandLifecycle(uuid, 'completed')
+    }
+    return terminal
+  } finally {
+    logMemoryDiagnostics('query-end', {
+      ...diagExtra,
+      consumedCommandCount: consumedCommandUuids.length,
+    })
+    maybeLogMemoryHighWatermark('query-end', diagExtra)
+  }
 }
 
 async function* queryLoop(

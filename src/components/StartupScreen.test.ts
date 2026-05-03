@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { VERBOO_ROUTER_URL } from '../constants/oauth.js'
+import { saveGlobalConfig } from '../utils/config.js'
 
 const ENV_KEYS = [
   'CLAUDE_CODE_USE_OPENAI',
@@ -24,8 +25,10 @@ const originalEnv: Record<string, string | undefined> = {}
 
 async function importStartupScreenWithModels(
   models: Array<{ id: string }> = [{ id: 'early-adopters/qwen3.6-27b' }],
+  settingsModel?: string,
 ) {
   mock.restore()
+  saveGlobalConfig(current => ({ ...current, model: settingsModel }))
   mock.module('../constants/oauth.js', () => ({
     VERBOO_ROUTER_URL,
     isVerbooMode: () => true,
@@ -39,6 +42,7 @@ async function importStartupScreenWithModels(
 
 beforeEach(() => {
   mock.restore()
+  saveGlobalConfig(current => ({ ...current, model: undefined }))
   for (const key of ENV_KEYS) {
     originalEnv[key] = process.env[key]
     delete process.env[key]
@@ -47,6 +51,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mock.restore()
+  saveGlobalConfig(current => ({ ...current, model: undefined }))
   for (const key of ENV_KEYS) {
     if (originalEnv[key] === undefined) {
       delete process.env[key]
@@ -104,6 +109,34 @@ describe('detectProvider — Verboo isolation', () => {
   test('allows non-Claude Verboo model override for banner display', async () => {
     const { detectProvider } = await importStartupScreenWithModels()
     const result = detectProvider('early-adopters/qwen3.6-27b')
+
+    expect(result.name).toBe('Verboo')
+    expect(result.model).toBe('early-adopters/qwen3.6-27b')
+  })
+
+  test('uses persisted Verboo model when no CLI override is provided', async () => {
+    const { detectProvider } = await importStartupScreenWithModels(
+      [
+        { id: 'early-adopters/qwen3.6-27b' },
+        { id: 'early-adopters/qwen3.5-397b' },
+      ],
+      'early-adopters/qwen3.5-397b',
+    )
+    const result = detectProvider()
+
+    expect(result.name).toBe('Verboo')
+    expect(result.model).toBe('early-adopters/qwen3.5-397b')
+  })
+
+  test('falls back to router default when persisted Verboo model is unavailable', async () => {
+    const { detectProvider } = await importStartupScreenWithModels(
+      [
+        { id: 'early-adopters/qwen3.6-27b' },
+        { id: 'early-adopters/qwen3.5-397b' },
+      ],
+      'early-adopters/removed-model',
+    )
+    const result = detectProvider()
 
     expect(result.name).toBe('Verboo')
     expect(result.model).toBe('early-adopters/qwen3.6-27b')

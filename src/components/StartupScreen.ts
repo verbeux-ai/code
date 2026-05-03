@@ -8,8 +8,9 @@
 
 import { VERBOO_ROUTER_URL, isVerbooMode } from '../constants/oauth.js'
 import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
+import { getCachedVerbooModels } from '../services/api/verbooModels.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
-import { getDefaultVerbooModel, isClaudeModelLike, parseUserSpecifiedModel } from '../utils/model/model.js'
+import { getDefaultVerbooModel, getUserSpecifiedModelSetting, isClaudeModelLike, parseUserSpecifiedModel } from '../utils/model/model.js'
 import { containsExactZaiGlmModelId, isZaiBaseUrl } from '../utils/zaiProvider.js'
 
 declare const MACRO: { VERSION: string; DISPLAY_VERSION?: string }
@@ -78,16 +79,42 @@ const LOGO_VERBOO_CODE = [
 
 // ─── Provider detection ───────────────────────────────────────────────────────
 
+function resolveVerbooStartupModel(modelOverride?: string): string {
+  const cachedModels = getCachedVerbooModels()
+  const resolveIfAvailable = (model: unknown): string | undefined => {
+    if (typeof model !== 'string') return undefined
+    const trimmed = model.trim()
+    if (!trimmed || isClaudeModelLike(trimmed)) return undefined
+
+    const resolved = parseUserSpecifiedModel(trimmed)
+    if (isClaudeModelLike(resolved)) return undefined
+
+    if (cachedModels !== null) {
+      return cachedModels.some(m => m.id === resolved && !isClaudeModelLike(m.id))
+        ? resolved
+        : undefined
+    }
+
+    return resolved
+  }
+
+  return (
+    resolveIfAvailable(modelOverride) ??
+    resolveIfAvailable(getUserSpecifiedModelSetting()) ??
+    getDefaultVerbooModel()
+  )
+}
+
 export function detectProvider(modelOverride?: string): { name: string; model: string; baseUrl: string; isLocal: boolean } {
   if (isVerbooMode()) {
-    const safeOverride =
-      modelOverride && !isClaudeModelLike(modelOverride)
-        ? modelOverride
-        : getDefaultVerbooModel()
-    const resolvedModel = parseUserSpecifiedModel(safeOverride)
     const baseUrl = VERBOO_ROUTER_URL
     const isLocal = isLocalProviderUrl(baseUrl)
-    return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
+    return {
+      name: 'Verboo',
+      model: resolveVerbooStartupModel(modelOverride),
+      baseUrl,
+      isLocal,
+    }
   }
 
   const useGemini = process.env.CLAUDE_CODE_USE_GEMINI === '1' || process.env.CLAUDE_CODE_USE_GEMINI === 'true'

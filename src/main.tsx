@@ -160,6 +160,7 @@ import { errorMessage, getErrnoCode, isENOENT, TeleportOperationError, toError }
 import { getFsImplementation, safeResolvePath } from 'src/utils/fsOperations.js';
 import { gracefulShutdown, gracefulShutdownSync } from 'src/utils/gracefulShutdown.js';
 import { setAllHookEventsEnabled } from 'src/utils/hooks/hookEvents.js';
+import { logMemoryDiagnostics, maybeLogMemoryHighWatermark } from 'src/utils/memoryDiagnostics.js';
 import { refreshModelCapabilities } from 'src/utils/model/modelCapabilities.js';
 import { peekForStdinData, writeToStderr } from 'src/utils/process.js';
 import { setCwd } from 'src/utils/Shell.js';
@@ -2484,6 +2485,17 @@ async function run(): Promise<CommanderCommand> {
       version: MACRO.VERSION,
       is_native_binary: isInBundledMode()
     });
+    logMemoryDiagnostics('start', {
+      version: MACRO.DISPLAY_VERSION ?? MACRO.VERSION,
+      debug,
+      debugToStderr,
+      print: print ?? false,
+      outputFormat: outputFormat ?? 'text',
+      inputFormat: inputFormat ?? 'text'
+    }, {
+      includeVerboseDetails: true
+    });
+    maybeLogMemoryHighWatermark('start');
     registerCleanup(async () => {
       logForDiagnosticsNoPII('info', 'exited');
     });

@@ -3,7 +3,7 @@ import type { Command } from '../../commands.js'
 const buddy = {
   type: 'local-jsx',
   name: 'buddy',
-  description: 'Hatch, pet, and manage your OpenClaude companion',
+  description: 'Hatch, pet, and manage your Verboo Code companion',
   immediate: true,
   argumentHint: '[status|mute|unmute|help]',
   load: () => import('./buddy.js'),

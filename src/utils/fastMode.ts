@@ -1,5 +1,9 @@
 import axios from 'axios'
-import { getOauthConfig, OAUTH_BETA_HEADER } from 'src/constants/oauth.js'
+import {
+  getOauthConfig,
+  isVerbooMode,
+  OAUTH_BETA_HEADER,
+} from 'src/constants/oauth.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
 import {
   getIsNonInteractiveSession,
@@ -36,6 +40,9 @@ import {
 import { createSignal } from './signal.js'
 
 export function isFastModeEnabled(): boolean {
+  if (isVerbooMode()) {
+    return false
+  }
   if (getAPIProvider() !== 'firstParty') {
     return false
   }

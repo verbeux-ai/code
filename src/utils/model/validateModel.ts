@@ -15,6 +15,7 @@ import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNim
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
 import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
+import { isClaudeModelLike } from './model.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -34,6 +35,12 @@ export async function validateModel(
 
   // For Verboo, only allow models returned by the /models endpoint
   if (isVerbooMode()) {
+    if (isClaudeModelLike(normalizedModel)) {
+      return {
+        valid: false,
+        error: `Modelo '${normalizedModel}' não pode ser usado no Verboo Code.`,
+      }
+    }
     const verbooModels = getCachedVerbooModels()
     if (verbooModels && verbooModels.length > 0) {
       const found = verbooModels.some(m => m.id === normalizedModel)
@@ -50,9 +57,10 @@ export async function validateModel(
         error: `Modelo '${normalizedModel}' não disponível. Disponíveis: ${shown}${suffix}`,
       }
     }
-    // Cache vazio: aceita temporariamente para não bloquear startup
-    validModelCache.set(normalizedModel, true)
-    return { valid: true }
+    return {
+      valid: false,
+      error: 'Nenhum modelo Verboo disponível na sua conta. Compre acesso em https://code.verboo.ai e execute `verboo /login` novamente.',
+    }
   }
 
   // For Ollama provider, validate against cached model list instead of API call

@@ -10,7 +10,11 @@ import {
   refreshGcpCredentialsIfNeeded,
 } from 'src/utils/auth.js'
 import { getUserAgent } from 'src/utils/http.js'
-import { getSmallFastModel } from 'src/utils/model/model.js'
+import {
+  getDefaultVerbooModel,
+  getSmallFastModel,
+  isClaudeModelLike,
+} from 'src/utils/model/model.js'
 import {
   getAPIProvider,
   isFirstPartyAnthropicBaseUrl,
@@ -171,13 +175,24 @@ export async function getAnthropicClient({
         '[Verboo] ERRO: token de acesso não encontrado. Execute `verboo /login`.\n',
       )
     }
+    const requestedModel = model?.trim()
+    const safeVerbooModel =
+      requestedModel && !isClaudeModelLike(requestedModel)
+        ? requestedModel.replace(/\[1m\]$/i, '').trim()
+        : getDefaultVerbooModel()
+    if (requestedModel && requestedModel !== safeVerbooModel) {
+      logForDebugging(
+        `[Verboo] Ignoring Claude/unsupported model "${requestedModel}" and using "${safeVerbooModel}"`,
+        { level: 'warn' },
+      )
+    }
     const { createOpenAIShimClient } = await import('./openaiShim.js')
     return createOpenAIShimClient({
       defaultHeaders,
       maxRetries,
       timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
       providerOverride: {
-        model: model ?? '',
+        model: safeVerbooModel,
         baseURL: VERBOO_ROUTER_URL,
         apiKey: accessToken ?? '',
       },

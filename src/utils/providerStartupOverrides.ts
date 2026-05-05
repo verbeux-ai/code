@@ -19,6 +19,7 @@ export const STARTUP_PROVIDER_OVERRIDE_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_MODEL',
   'ANTHROPIC_API_KEY',
+  'CLAUDE_MODEL',
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
   'GEMINI_BASE_URL',
@@ -37,6 +38,10 @@ export const STARTUP_PROVIDER_OVERRIDE_ENV_KEYS = [
   'MINIMAX_MODEL',
   'NVIDIA_API_KEY',
   'NVIDIA_NIM',
+  'BANKR_BASE_URL',
+  'BANKR_MODEL',
+  'BNKR_API_KEY',
+  'XAI_API_KEY',
 ] as const
 
 type GlobalConfigWithEnv = {
@@ -84,4 +89,12 @@ export function clearStartupProviderOverrides(options?: {
   }
 
   return error?.message ?? globalConfigError
+}
+
+export function clearStartupProviderEnvFromProcessEnv(
+  processEnv: NodeJS.ProcessEnv = process.env,
+): void {
+  for (const key of STARTUP_PROVIDER_OVERRIDE_ENV_KEYS) {
+    delete processEnv[key]
+  }
 }

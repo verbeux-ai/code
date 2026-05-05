@@ -17,6 +17,7 @@ import { assembleToolPool } from '../../tools.js';
 import { asAgentId } from '../../types/ids.js';
 import { runWithAgentContext } from '../../utils/agentContext.js';
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js';
+import { createChildAbortController } from '../../utils/abortController.js';
 import { getCwd, runWithCwdOverride } from '../../utils/cwd.js';
 import { logForDebugging } from '../../utils/debug.js';
 import { isEnvTruthy } from '../../utils/envUtils.js';
@@ -828,6 +829,7 @@ export const AgentTool = buildTool({
           type: 'background';
         }> | undefined;
         let cancelAutoBackground: (() => void) | undefined;
+        let foregroundAbortController: AbortController | undefined;
         if (!isBackgroundTasksDisabled) {
           const registration = registerAgentForeground({
             agentId: syncAgentId,
@@ -843,6 +845,7 @@ export const AgentTool = buildTool({
             type: 'background' as const
           }));
           cancelAutoBackground = registration.cancelAutoBackground;
+          foregroundAbortController = createChildAbortController(registration.abortController);
         }
 
         // Track if we've shown the background hint UI
@@ -860,7 +863,10 @@ export const AgentTool = buildTool({
           ...runAgentParams,
           override: {
             ...runAgentParams.override,
-            agentId: syncAgentId
+            agentId: syncAgentId,
+            ...(foregroundAbortController && {
+              abortController: foregroundAbortController
+            })
           },
           onCacheSafeParams: summaryTaskId && getSdkAgentProgressSummariesEnabled() ? (params: CacheSafeParams) => {
             const {
@@ -917,6 +923,7 @@ export const AgentTool = buildTool({
                 // Stop foreground summarization; the backgrounded closure
                 // below owns its own independent stop function.
                 stopForegroundSummarization?.();
+                foregroundAbortController?.abort('backgrounded');
 
                 // Workload: inherited via ALS at `void` invocation time,
                 // same as the async-from-start path above.

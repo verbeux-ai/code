@@ -160,6 +160,7 @@ import { errorMessage, getErrnoCode, isENOENT, TeleportOperationError, toError }
 import { getFsImplementation, safeResolvePath } from 'src/utils/fsOperations.js';
 import { gracefulShutdown, gracefulShutdownSync } from 'src/utils/gracefulShutdown.js';
 import { setAllHookEventsEnabled } from 'src/utils/hooks/hookEvents.js';
+import { logMemoryDiagnostics, maybeLogMemoryHighWatermark } from 'src/utils/memoryDiagnostics.js';
 import { refreshModelCapabilities } from 'src/utils/model/modelCapabilities.js';
 import { peekForStdinData, writeToStderr } from 'src/utils/process.js';
 import { setCwd } from 'src/utils/Shell.js';
@@ -197,7 +198,7 @@ import { filterAllowedSdkBetas } from './utils/betas.js';
 import { isInBundledMode, isRunningWithBun } from './utils/bundledMode.js';
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js';
 import { filterExistingPaths, getKnownPathsForRepo } from './utils/githubRepoPathMapping.js';
-import { clearPluginCache, loadAllPluginsCacheOnly } from './utils/plugins/pluginLoader.js';
+import { areExternalPluginsDisabledForVerboo, clearPluginCache, loadAllPluginsCacheOnly } from './utils/plugins/pluginLoader.js';
 import { migrateChangelogFromConfig } from './utils/releaseNotes.js';
 import { SandboxManager } from './utils/sandbox/sandbox-adapter.js';
 import { fetchSession, prepareApiRequest } from './utils/teleport/api.js';
@@ -2484,6 +2485,17 @@ async function run(): Promise<CommanderCommand> {
       version: MACRO.VERSION,
       is_native_binary: isInBundledMode()
     });
+    logMemoryDiagnostics('start', {
+      version: MACRO.DISPLAY_VERSION ?? MACRO.VERSION,
+      debug,
+      debugToStderr,
+      print: print ?? false,
+      outputFormat: outputFormat ?? 'text',
+      inputFormat: inputFormat ?? 'text'
+    }, {
+      includeVerboseDetails: true
+    });
+    maybeLogMemoryHighWatermark('start');
     registerCleanup(async () => {
       logForDiagnosticsNoPII('info', 'exited');
     });
@@ -2545,7 +2557,7 @@ async function run(): Promise<CommanderCommand> {
     // are install/upgrade bookkeeping that scripted calls don't need —
     // the next interactive session will reconcile. The await here was
     // blocking -p on a marketplace round-trip.
-    if (isBareMode()) {
+    if (isBareMode() || areExternalPluginsDisabledForVerboo()) {
       // skip — no-op
     } else if (isNonInteractiveSession) {
       // In headless mode, await to ensure plugin sync completes before CLI exits

@@ -52,7 +52,7 @@ bun run profile:recommend -- --goal coding --benchmark
 ### 3.2 Confirm profile file
 
 ```powershell
-Get-Content .\.openclaude-profile.json
+Get-Content .\.verboo-profile.json
 ```
 
 ### 3.3 Validate environment
@@ -260,7 +260,7 @@ bun run profile:init -- --provider ollama --goal coding
 
 - Run `doctor:runtime` before debugging provider issues.
 - Prefer `dev:profile` over manual env edits.
-- Keep `.openclaude-profile.json` local (already gitignored).
+- Keep `.verboo-profile.json` local (already gitignored).
 - Use `doctor:report` before asking for help so you have a reproducible snapshot.
 
 ## 10. Quick Recovery Checklist

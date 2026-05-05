@@ -1,7 +1,7 @@
 import { z } from 'zod/v4'
 import type { TaskStateBase } from '../../Task.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
-import { stopTask } from '../../tasks/stopTask.js'
+import { StopTaskError, stopTask } from '../../tasks/stopTask.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { DESCRIPTION, TASK_STOP_TOOL_NAME } from './prompt.js'
@@ -73,17 +73,15 @@ export const TaskStopTool = buildTool({
 
     if (!task) {
       return {
-        result: false,
-        message: `No task found with ID: ${id}`,
-        errorCode: 1,
+        result: true,
+        message: `Task ${id} was not found. It may have already finished or been removed.`,
       }
     }
 
     if (task.status !== 'running') {
       return {
-        result: false,
-        message: `Task ${id} is not running (status: ${task.status})`,
-        errorCode: 3,
+        result: true,
+        message: `Task ${id} is already not running (status: ${task.status})`,
       }
     }
 
@@ -114,10 +112,36 @@ export const TaskStopTool = buildTool({
       throw new Error('Missing required parameter: task_id')
     }
 
-    const result = await stopTask(id, {
-      getAppState,
-      setAppState,
-    })
+    let result
+    try {
+      result = await stopTask(id, {
+        getAppState,
+        setAppState,
+      })
+    } catch (error) {
+      if (error instanceof StopTaskError && error.code === 'not_found') {
+        return {
+          data: {
+            message: `Task ${id} was not found. It may have already finished or been removed.`,
+            task_id: id,
+            task_type: 'unknown',
+            command: undefined,
+          },
+        }
+      }
+      if (error instanceof StopTaskError && error.code === 'not_running') {
+        const task = getAppState().tasks?.[id] as TaskStateBase | undefined
+        return {
+          data: {
+            message: `Task ${id} is already not running${task ? ` (status: ${task.status})` : ''}.`,
+            task_id: id,
+            task_type: task?.type ?? 'unknown',
+            command: task?.description,
+          },
+        }
+      }
+      throw error
+    }
 
     return {
       data: {

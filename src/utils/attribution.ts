@@ -1,6 +1,7 @@
 import { feature } from 'bun:bundle'
 import { stat } from 'fs/promises'
 import { getClientType } from '../bootstrap/state.js'
+import { isVerbooMode } from '../constants/oauth.js'
 import { getRemoteSessionUrl, isRemoteSessionLocal } from '../constants/product.js'
 import { isEnvTruthy } from './envUtils.js'
 import { TERMINAL_OUTPUT_TAGS } from '../constants/xml.js'
@@ -21,7 +22,6 @@ import {
 import { logForDebugging } from './debug.js'
 import { parseJSONL } from './json.js'
 import { logError } from './log.js'
-import { getAPIProvider } from './model/providers.js'
 import {
   getCanonicalName,
   getMainLoopModel,
@@ -37,6 +37,56 @@ import { isUndercover } from './undercover.js'
 export type AttributionTexts = {
   commit: string
   pr: string
+}
+
+type AttributionSettings = ReturnType<typeof getInitialSettings>
+
+export const VERBOO_COMMIT_CO_AUTHOR =
+  'Co-Authored-By: Verboo Code <noreply@code.verboo.ai>'
+
+export function getDefaultCommitAttribution(): string {
+  const coAuthoredByDisabled = isEnvTruthy(
+    process.env.VERBOO_DISABLE_CO_AUTHORED_BY ??
+      process.env.OPENCLAUDE_DISABLE_CO_AUTHORED_BY,
+  )
+  if (coAuthoredByDisabled) {
+    return ''
+  }
+
+  if (isVerbooMode()) {
+    return VERBOO_COMMIT_CO_AUTHOR
+  }
+
+  // @[MODEL LAUNCH]: Update the hardcoded fallback model name below (guards against codename leaks).
+  // For internal repos, use the real model name. For external repos,
+  // fall back to "Claude Opus 4.6" for unrecognized models to avoid leaking codenames.
+  const model = getMainLoopModel()
+  const isKnownPublicModel = getPublicModelDisplayName(model) !== null
+  const modelName =
+    isInternalModelRepoCached() || isKnownPublicModel
+      ? getPublicModelName(model)
+      : 'Claude Opus 4.6'
+  return `Co-Authored-By: ${modelName} <noreply@verboo.ai>`
+}
+
+export function applyAttributionSettings(
+  settings: Pick<AttributionSettings, 'attribution' | 'includeCoAuthoredBy'>,
+  defaults: AttributionTexts,
+): AttributionTexts {
+  // New attribution setting takes precedence over deprecated includeCoAuthoredBy
+  if (settings.attribution) {
+    return {
+      commit: settings.attribution.commit ?? defaults.commit,
+      pr: settings.attribution.pr ?? defaults.pr,
+    }
+  }
+
+  // Backward compatibility: deprecated includeCoAuthoredBy setting
+  if (settings.includeCoAuthoredBy === false) {
+    return { commit: '', pr: '' }
+  }
+
+  return defaults
 }
 
 /**
@@ -65,42 +115,10 @@ export function getAttributionTexts(): AttributionTexts {
     return { commit: '', pr: '' }
   }
 
-  // @[MODEL LAUNCH]: Update the hardcoded fallback model name below (guards against codename leaks).
-  // For internal repos, use the real model name. For external repos,
-  // fall back to "Claude Opus 4.6" for unrecognized models to avoid leaking codenames.
-  const model = getMainLoopModel()
-  const isKnownPublicModel = getPublicModelDisplayName(model) !== null
-  const modelName =
-    isInternalModelRepoCached() || isKnownPublicModel
-      ? getPublicModelName(model)
-      : 'Claude Opus 4.6'
-  // VERBOO-BRAND: attribution + dual-read env var
-  const defaultAttribution =
-    '🤖 Generated with Verboo Code'
-  const coAuthorDomain =
-    getAPIProvider() === 'firstParty' ? 'anthropic.com' : 'verboo.ai'
-  const defaultCommit = isEnvTruthy(
-    process.env.VERBOO_DISABLE_CO_AUTHORED_BY ?? process.env.OPENCLAUDE_DISABLE_CO_AUTHORED_BY,
-  )
-    ? ''
-    : `Co-Authored-By: ${modelName} <noreply@${coAuthorDomain}>`
-
-  const settings = getInitialSettings()
-
-  // New attribution setting takes precedence over deprecated includeCoAuthoredBy
-  if (settings.attribution) {
-    return {
-      commit: settings.attribution.commit ?? defaultCommit,
-      pr: settings.attribution.pr ?? defaultAttribution,
-    }
-  }
-
-  // Backward compatibility: deprecated includeCoAuthoredBy setting
-  if (settings.includeCoAuthoredBy === false) {
-    return { commit: '', pr: '' }
-  }
-
-  return { commit: defaultCommit, pr: defaultAttribution }
+  return applyAttributionSettings(getInitialSettings(), {
+    commit: getDefaultCommitAttribution(),
+    pr: '🤖 Generated with Verboo Code',
+  })
 }
 
 /**

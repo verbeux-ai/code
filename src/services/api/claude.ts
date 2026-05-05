@@ -20,6 +20,7 @@ import type {
 import type { TextBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
 import type { Stream } from '@anthropic-ai/sdk/streaming.mjs'
 import { randomUUID } from 'crypto'
+import { streamingMetricsRef } from '../../hooks/useTokenRate.js'
 import {
   getAPIProvider,
   isFirstPartyAnthropicBaseUrl,
@@ -2149,6 +2150,18 @@ async function* queryModel(
                     throw new Error('Content block is not a text block')
                   }
                   contentBlock.text += delta.text
+                  // Atualiza métricas de streaming em tempo real
+                  const totalLength = contentBlocks.reduce((sum, block) => {
+                    if (block.type === 'text') return sum + (block.text?.length || 0)
+                    if (block.type === 'connector_text') return sum + (block.connector_text?.length || 0)
+                    return sum
+                  }, 0)
+                  streamingMetricsRef.current = {
+                    ...streamingMetricsRef.current,
+                    responseLength: totalLength,
+                    lastTokenTime: Date.now(),
+                    isStreaming: true
+                  }
                   break
                 case 'signature_delta':
                   if (

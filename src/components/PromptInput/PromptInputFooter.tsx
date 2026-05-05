@@ -24,6 +24,7 @@ import { getRuntimeMainLoopModel } from '../../utils/model/model.js';
 import type { PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage } from '../../utils/tokens.js';
 import { isUndercover } from '../../utils/undercover.js';
+import { useTokenRateDetailed } from '../../hooks/useTokenRate.js';
 import { CoordinatorTaskPanel, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
 import { getLastAssistantMessageId, StatusLine, statusLineShouldDisplay } from '../StatusLine.js';
 import { Notifications } from './Notifications.js';
@@ -33,7 +34,7 @@ import { PromptInputHelpMenu } from './PromptInputHelpMenu.js';
 
 const BAR_WIDTH = 20;
 
-function ContextWindowDisplay({ messages, permissionMode }: {
+export function ContextWindowDisplay({ messages, permissionMode }: {
   messages: Message[];
   permissionMode: PermissionMode;
 }): React.ReactNode {
@@ -42,22 +43,38 @@ function ContextWindowDisplay({ messages, permissionMode }: {
   const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: exceeds200k });
   const usage = getCurrentUsage(messages);
   const windowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
+  const { avgRate10s, isGenerating } = useTokenRateDetailed(messages);
+
+  const emptyBar = '░'.repeat(BAR_WIDTH);
+  const windowK = formatNumber(windowSize);
+
+  // Durante streaming, mostra a taxa de tokens/s
+  const rateText = isGenerating ? `${Math.round(avgRate10s)} tok/s` : '0 tok/s';
+  const rateColor = isGenerating ? 'success' : undefined;
+
   if (!usage) {
-    const emptyBar = '░'.repeat(BAR_WIDTH);
-    const windowK = formatNumber(windowSize);
-    return <Text dimColor>ctx [{emptyBar}] 0/{windowK}  0%</Text>;
+    return (
+      <Box flexDirection="row" gap={2}>
+        <Text dimColor>ctx [{emptyBar}] 0/{windowK}  0%</Text>
+        <Text dimColor color={rateColor}>{rateText}</Text>
+      </Box>
+    );
   }
+
   const { used } = calculateContextPercentages(usage, windowSize);
   const pct = Math.round(used);
   const filled = Math.round((pct / 100) * BAR_WIDTH);
   const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
   const color = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : undefined;
   const inputK = formatNumber(usage.input_tokens);
-  const windowK = formatNumber(windowSize);
+
   return (
-    <Text dimColor color={color}>
-      ctx [{bar}] {inputK}/{windowK}  {pct}%
-    </Text>
+    <Box flexDirection="row" gap={2}>
+      <Text dimColor color={color}>
+        ctx [{bar}] {inputK}/{windowK}  {pct}%
+      </Text>
+      <Text dimColor color={rateColor}>{rateText}</Text>
+    </Box>
   );
 }
 
@@ -177,7 +194,6 @@ function PromptInputFooter({
       <Box flexDirection={isNarrow ? 'column' : 'row'} justifyContent={isNarrow ? 'flex-start' : 'space-between'} paddingX={2} gap={isNarrow ? 0 : 1}>
         <Box flexDirection="column" flexShrink={isNarrow ? 0 : 1}>
           {mode === 'prompt' && !isShort && !exitMessage.show && !isPasting && statusLineShouldDisplay(settings) && <StatusLine messagesRef={messagesRef} lastAssistantMessageId={lastAssistantMessageId} vimMode={vimMode} />}
-          {mode === 'prompt' && !exitMessage.show && !isPasting && <ContextWindowDisplay messages={messages} permissionMode={toolPermissionContext.mode} />}
           <PromptInputFooterLeftSide exitMessage={exitMessage} vimMode={vimMode} mode={mode} toolPermissionContext={toolPermissionContext} suppressHint={suppressHint} isLoading={isLoading} tasksSelected={pillSelected} teamsSelected={teamsSelected} teammateFooterIndex={teammateFooterIndex} tmuxSelected={tmuxSelected} isPasting={isPasting} isSearching={isSearching} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={onOpenTasksDialog} />
         </Box>
         <Box flexShrink={1} gap={1}>

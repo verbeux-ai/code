@@ -36,6 +36,7 @@ import { jinaProvider } from './jina.js'
 import { bingProvider } from './bing.js'
 import { mojeekProvider } from './mojeek.js'
 import { linkupProvider } from './linkup.js'
+import { verbooRouterProvider } from './verbooRouter.js'
 
 export { type SearchInput, type SearchProvider, type ProviderOutput, type SearchHit } from './types.js'
 export { applyDomainFilters, safeHostname, hostMatchesDomain } from './types.js'
@@ -44,13 +45,15 @@ export { extractHits } from './custom.js'
 // ---------------------------------------------------------------------------
 // All registered providers — order matters for auto mode
 // ---------------------------------------------------------------------------
-// Priority: firecrawl → tavily → exa → you → jina → bing → mojeek → linkup → ddg
+// Priority: verboo-router → firecrawl → tavily → exa → you → jina → bing → mojeek → linkup → ddg
+// verboo-router is first: when authenticated via Verboo OAuth, it proxies Tavily server-side.
 // DDG is last because it's free but rate-limited.
 // NOTE: customProvider is intentionally excluded from the auto chain.
 //       It is only available when WEB_SEARCH_PROVIDER=custom is explicitly set.
 //       This prevents the generic outbound provider from silently becoming the default backend.
 
 const ALL_PROVIDERS: SearchProvider[] = [
+  verbooRouterProvider,
   firecrawlProvider,
   tavilyProvider,
   exaProvider,
@@ -73,6 +76,7 @@ export function getAvailableProviders(): SearchProvider[] {
 export type ProviderMode =
   | 'auto'
   | 'custom'
+  | 'verboo-router'
   | 'firecrawl'
   | 'ddg'
   | 'tavily'
@@ -86,6 +90,7 @@ export type ProviderMode =
 
 const PROVIDER_BY_NAME: Record<string, SearchProvider> = {
   custom: customProvider,
+  'verboo-router': verbooRouterProvider,
   firecrawl: firecrawlProvider,
   ddg: duckduckgoProvider,
   tavily: tavilyProvider,

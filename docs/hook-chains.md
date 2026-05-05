@@ -1,7 +1,7 @@
 # Hook Chains (Self-Healing Agent Mesh MVP)
 
 Hook Chains provide an event-driven recovery layer for important workflow failures.
-When a matching hook event occurs, OpenClaude evaluates declarative rules and can dispatch remediation actions such as:
+When a matching hook event occurs, Verboo Code evaluates declarative rules and can dispatch remediation actions such as:
 
 - `spawn_fallback_agent`
 - `notify_team`

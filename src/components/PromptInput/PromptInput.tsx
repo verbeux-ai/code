@@ -113,7 +113,7 @@ import { TeamsDialog } from '../teams/TeamsDialog.js';
 import VimTextInput from '../VimTextInput.js';
 import { getModeFromInput, getValueFromInput } from './inputModes.js';
 import { FOOTER_TEMPORARY_STATUS_TIMEOUT, Notifications } from './Notifications.js';
-import PromptInputFooter from './PromptInputFooter.js';
+import PromptInputFooter, { ContextWindowDisplay } from './PromptInputFooter.js';
 import type { SuggestionItem } from './PromptInputFooterSuggestions.js';
 import { PromptInputModeIndicator } from './PromptInputModeIndicator.js';
 import { PromptInputQueuedCommands } from './PromptInputQueuedCommands.js';
@@ -2285,6 +2285,11 @@ function PromptInput({
           <Text dimColor>Waiting for permission…</Text>
         </Box>}
       <PromptInputStashNotice hasStash={stashedPrompt !== undefined} />
+      {mode === 'prompt' && !exitMessage.show && !isPasting && (
+        <Box marginTop={1} marginLeft={2}>
+          <ContextWindowDisplay messages={messages} permissionMode={effectiveToolPermissionContext.mode} />
+        </Box>
+      )}
       {swarmBanner ? <>
           <Text color={swarmBanner.bgColor}>
             {swarmBanner.text ? <>

@@ -1,4 +1,4 @@
-# OpenClaude for Non-Technical Users
+# Verboo Code for Non-Technical Users
 
 This guide is for people who want the easiest setup path.
 
@@ -6,9 +6,9 @@ You do not need to build from source. You do not need Bun. You do not need to un
 
 If you can copy and paste commands into a terminal, you can set this up.
 
-## What OpenClaude Does
+## What Verboo Code Does
 
-OpenClaude lets you use an AI coding assistant with different model providers such as:
+Verboo Code lets you use an AI coding assistant with different model providers such as:
 
 - OpenAI
 - DeepSeek
@@ -28,7 +28,7 @@ You need:
 
 ## Fastest Path
 
-1. Install OpenClaude with npm
+1. Install Verboo Code with npm
 2. Set 3 environment variables
 3. Run `openclaude`
 

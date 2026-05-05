@@ -7,6 +7,11 @@ import {
   getProviderValidationError,
   validateProviderEnvForStartupOrExit,
 } from '../utils/providerValidation.js'
+import { clearStartupProviderEnvFromProcessEnv } from '../utils/providerStartupOverrides.js'
+
+// Keep this entrypoint free of oauth/model imports during bootstrap. Pulling
+// constants/oauth here creates a bundle-time cycle before main.tsx initializes.
+const IS_VERBOO_CLI = true
 
 // OpenClaude: polyfill globalThis.File for Node < 20.
 // undici v7 references `File` at module evaluation time (webidl type
@@ -87,7 +92,7 @@ async function main(): Promise<void> {
 
   // --provider: set provider env vars early so saved-profile resolution,
   // validation, and the startup banner all see the intended provider/model.
-  if (args.includes('--provider')) {
+  if (!IS_VERBOO_CLI && args.includes('--provider')) {
     const { applyProviderFlagFromArgs } = await import('../utils/providerFlag.js');
     const result = applyProviderFlagFromArgs(args);
     if (result?.error) {
@@ -109,17 +114,23 @@ async function main(): Promise<void> {
     applySafeConfigEnvironmentVariables()
   }
 
-  const startupEnv = await buildStartupEnvFromProfile({
-    processEnv: process.env,
-  })
-  if (startupEnv !== process.env) {
-    const startupProfileError = await getProviderValidationError(startupEnv)
-    if (startupProfileError) {
-      console.error(
-        `Warning: ignoring saved provider profile. ${startupProfileError}`,
-      )
-    } else {
-      applyProfileEnvToProcessEnv(process.env, startupEnv)
+  if (IS_VERBOO_CLI) {
+    clearStartupProviderEnvFromProcessEnv()
+  }
+
+  if (!IS_VERBOO_CLI) {
+    const startupEnv = await buildStartupEnvFromProfile({
+      processEnv: process.env,
+    })
+    if (startupEnv !== process.env) {
+      const startupProfileError = await getProviderValidationError(startupEnv)
+      if (startupProfileError) {
+        console.error(
+          `Warning: ignoring saved provider profile. ${startupProfileError}`,
+        )
+      } else {
+        applyProfileEnvToProcessEnv(process.env, startupEnv)
+      }
     }
   }
 
@@ -129,19 +140,13 @@ async function main(): Promise<void> {
       hydrateGithubModelsTokenFromSecureStorage,
       refreshGithubModelsTokenIfNeeded,
     } = await import('../utils/githubModelsCredentials.js')
-    await refreshGithubModelsTokenIfNeeded()
-    hydrateGithubModelsTokenFromSecureStorage()
+    if (!IS_VERBOO_CLI) {
+      await refreshGithubModelsTokenIfNeeded()
+      hydrateGithubModelsTokenFromSecureStorage()
+    }
   }
 
   await validateProviderEnvForStartupOrExit()
-
-  // Parse --model early so the startup screen can display the override
-  const { eagerParseCliFlag } = await import('../utils/cliArgs.js')
-  const earlyModelFlag = eagerParseCliFlag('--model')
-
-  // VERBOO-BRAND: compact rounded startup screen (fantasma + Verboo Code)
-  const { printStartupScreen } = await import('../components/StartupScreen.js')
-  printStartupScreen(earlyModelFlag)
 
   // For all other paths, load the startup profiler
   const {
@@ -422,6 +427,17 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
+  if (!skipsAuth) {
+    // Parse --model after auth/model loading so Verboo's banner uses /models,
+    // never a local fallback.
+    const { eagerParseCliFlag } = await import('../utils/cliArgs.js')
+    const earlyModelFlag = eagerParseCliFlag('--model')
+
+    // VERBOO-BRAND: compact rounded startup screen (fantasma + Verboo Code)
+    const { printStartupScreen } = await import('../components/StartupScreen.js')
+    printStartupScreen(earlyModelFlag)
+  }
+
   const {
     main: cliMain
   } = await import('../main.js');

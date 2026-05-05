@@ -48,6 +48,10 @@ import {
   tokenStatsToStatsigMetrics,
 } from '../../utils/contextAnalysis.js'
 import { logForDebugging } from '../../utils/debug.js'
+import {
+  logMemoryDiagnostics,
+  maybeLogMemoryHighWatermark,
+} from '../../utils/memoryDiagnostics.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
 import { cacheToObject } from '../../utils/fileStateCache.js'
 import {
@@ -396,6 +400,14 @@ export async function compactConversation(
   isAutoCompact: boolean = false,
   recompactionInfo?: RecompactionInfo,
 ): Promise<CompactionResult> {
+  const memoryDiagExtra = {
+    kind: 'full',
+    messageCount: messages.length,
+    isAutoCompact,
+    querySource: context.options.querySource ?? null,
+  }
+  logMemoryDiagnostics('compact-start', memoryDiagExtra)
+  maybeLogMemoryHighWatermark('compact-start', memoryDiagExtra)
   try {
     if (messages.length === 0) {
       throw new Error(ERROR_MESSAGE_NOT_ENOUGH_MESSAGES)
@@ -757,6 +769,8 @@ export async function compactConversation(
     }
     throw error
   } finally {
+    logMemoryDiagnostics('compact-end', memoryDiagExtra)
+    maybeLogMemoryHighWatermark('compact-end', memoryDiagExtra)
     context.setStreamMode?.('requesting')
     context.setResponseLength?.(() => 0)
     context.onCompactProgress?.({ type: 'compact_end' })
@@ -779,6 +793,15 @@ export async function partialCompactConversation(
   userFeedback?: string,
   direction: PartialCompactDirection = 'from',
 ): Promise<CompactionResult> {
+  const memoryDiagExtra = {
+    kind: 'partial',
+    direction,
+    messageCount: allMessages.length,
+    pivotIndex,
+    querySource: context.options.querySource ?? null,
+  }
+  logMemoryDiagnostics('compact-start', memoryDiagExtra)
+  maybeLogMemoryHighWatermark('compact-start', memoryDiagExtra)
   try {
     const messagesToSummarize =
       direction === 'up_to'
@@ -1100,6 +1123,8 @@ export async function partialCompactConversation(
     addErrorNotificationIfNeeded(error, context)
     throw error
   } finally {
+    logMemoryDiagnostics('compact-end', memoryDiagExtra)
+    maybeLogMemoryHighWatermark('compact-end', memoryDiagExtra)
     context.setStreamMode?.('requesting')
     context.setResponseLength?.(() => 0)
     context.onCompactProgress?.({ type: 'compact_end' })

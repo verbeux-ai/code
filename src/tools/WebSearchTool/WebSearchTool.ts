@@ -3,6 +3,7 @@ import type {
   BetaWebSearchTool20250305,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { getAPIProvider } from 'src/utils/model/providers.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import type { PermissionResult } from 'src/utils/permissions/PermissionResult.js'
 
 import { z } from 'zod/v4'
@@ -499,6 +500,9 @@ function shouldUseAdapterProvider(): boolean {
   if (isCodexResponsesWebSearchEnabled()) return false
   const provider = getAPIProvider()
   if (provider === 'firstParty' || provider === 'vertex' || provider === 'foundry') {
+    // Em modo Verboo, firstParty roteia para vLLM via router — sem suporte a web_search nativo.
+    // Usa adapter providers (verbooRouterProvider) se disponíveis.
+    if (isVerbooMode()) return getAvailableProviders().length > 0
     return false
   }
   // No native path available — fall back to adapter

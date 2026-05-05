@@ -47,6 +47,7 @@ import {
 import memoize from 'lodash-es/memoize.js'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
 import { getInlinePlugins } from '../../bootstrap/state.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import {
   BUILTIN_MARKETPLACE_NAME,
   getBuiltinPlugins,
@@ -3133,6 +3134,12 @@ function selectMarketplacePlugin(
  *   - errors: Array of loading errors with source information
  */
 export const loadAllPlugins = memoize(async (): Promise<PluginLoadResult> => {
+  if (areExternalPluginsDisabledForVerboo()) {
+    const result = getEmptyPluginLoadResultForVerboo()
+    loadAllPluginsCacheOnly.cache?.set(undefined, Promise.resolve(result))
+    return result
+  }
+
   const result = await assemblePluginLoadResult(() =>
     loadPluginsFromMarketplaces({ cacheOnly: false }),
   )
@@ -3175,6 +3182,10 @@ export const loadAllPlugins = memoize(async (): Promise<PluginLoadResult> => {
  */
 export const loadAllPluginsCacheOnly = memoize(
   async (): Promise<PluginLoadResult> => {
+    if (areExternalPluginsDisabledForVerboo()) {
+      return getEmptyPluginLoadResultForVerboo()
+    }
+
     if (isEnvTruthy(process.env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL)) {
       return loadAllPlugins()
     }
@@ -3331,6 +3342,18 @@ export function cachePluginSettings(plugins: LoadedPlugin[]): void {
       `Cached plugin settings with keys: ${Object.keys(settings).join(', ')}`,
     )
   }
+}
+
+export function areExternalPluginsDisabledForVerboo(): boolean {
+  return isVerbooMode() && !isEnvTruthy(process.env.VERBOO_ENABLE_PLUGINS)
+}
+
+function getEmptyPluginLoadResultForVerboo(): PluginLoadResult {
+  cachePluginSettings([])
+  logForDebugging(
+    'Verboo mode: external plugins disabled (set VERBOO_ENABLE_PLUGINS=1 to opt in)',
+  )
+  return { enabled: [], disabled: [], errors: [] }
 }
 
 /**

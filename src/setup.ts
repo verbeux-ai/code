@@ -317,7 +317,10 @@ export async function setup(
       isEnvTruthy(process.env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL)) ||
     // --bare: loadPluginHooks → loadAllPlugins is filesystem work that's
     // wasted when executeHooks early-returns under --bare anyway.
-    isBareMode()
+    isBareMode() ||
+    (
+      await import('./utils/plugins/pluginLoader.js')
+    ).areExternalPluginsDisabledForVerboo()
   if (!skipPluginPrefetch) {
     void getCommands(getProjectRoot())
   }

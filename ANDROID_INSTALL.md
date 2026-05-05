@@ -1,6 +1,6 @@
-# OpenClaude on Android (Termux)
+# Verboo Code on Android (Termux)
 
-A complete guide to running OpenClaude on Android using Termux + proot Ubuntu.
+A complete guide to running Verboo Code on Android using Termux + proot Ubuntu.
 
 ---
 
@@ -39,7 +39,7 @@ Verify Node.js:
 node --version  # should be v20+
 ```
 
-### Step 3 — Clone OpenClaude
+### Step 3 — Clone Verboo Code
 
 ```bash
 git clone https://github.com/Gitlawb/openclaude.git
@@ -65,7 +65,7 @@ source ~/.bashrc
 bun --version  # should show 1.3.11+
 ```
 
-### Step 6 — Build OpenClaude
+### Step 6 — Build Verboo Code
 
 ```bash
 cd /data/data/com.termux/files/home/openclaude
@@ -91,7 +91,7 @@ source ~/.bashrc
 
 Replace `your_openrouter_key_here` with your actual key from [openrouter.ai/keys](https://openrouter.ai/keys).
 
-### Step 8 — Run OpenClaude
+### Step 8 — Run Verboo Code
 
 ```bash
 node dist/cli.mjs
@@ -159,4 +159,4 @@ OpenRouter free models have no TPM restrictions — only 20 req/min and 200 req/
 
 - **Don't swipe Termux away** from recent apps mid-session — use the home button to minimize instead.
 - The Ubuntu environment persists between Termux sessions; your build and config are saved.
-- Run `bun run build` again only if you pull updates to the OpenClaude repo.
+- Run `bun run build` again only if you pull updates to the Verboo Code repo.

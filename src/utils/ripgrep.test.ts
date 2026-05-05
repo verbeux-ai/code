@@ -43,6 +43,45 @@ test('ripgrepCommand keeps builtin mode when bundled binary exists', () => {
   })
 })
 
+test('ripgrepCommand uses npm ripgrep fallback when bundled binary is missing', () => {
+  const npmPath = path.normalize('node_modules/@vscode/ripgrep/bin/rg')
+  const config = resolveRipgrepConfig({
+    userWantsSystemRipgrep: false,
+    bundledMode: false,
+    builtinCommand: MOCK_BUILTIN_PATH,
+    builtinExists: false,
+    npmCommand: npmPath,
+    npmExists: true,
+    systemExecutablePath: 'rg',
+    processExecPath: '/fake/bun',
+  })
+
+  expect(config).toMatchObject({
+    mode: 'builtin',
+    command: npmPath,
+    args: [],
+  })
+})
+
+test('ripgrepCommand reports missing system rg when no fallback exists', () => {
+  const config = resolveRipgrepConfig({
+    userWantsSystemRipgrep: false,
+    bundledMode: false,
+    builtinCommand: MOCK_BUILTIN_PATH,
+    builtinExists: false,
+    npmCommand: path.normalize('node_modules/@vscode/ripgrep/bin/rg'),
+    npmExists: false,
+    systemExecutablePath: 'rg',
+    processExecPath: '/fake/bun',
+  })
+
+  expect(config).toMatchObject({
+    mode: 'system',
+    command: 'rg',
+    args: [],
+  })
+})
+
 test('wrapRipgrepUnavailableError explains missing packaged fallback', () => {
   const error = wrapRipgrepUnavailableError(
     { code: 'ENOENT', message: 'spawn rg ENOENT' },

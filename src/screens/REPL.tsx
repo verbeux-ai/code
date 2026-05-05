@@ -143,7 +143,7 @@ import { gracefulShutdownSync, isShuttingDown } from '../utils/gracefulShutdown.
 import { handlePromptSubmit, type PromptInputHelpers } from '../utils/handlePromptSubmit.js';
 import { useQueueProcessor } from '../hooks/useQueueProcessor.js';
 import { useMailboxBridge } from '../hooks/useMailboxBridge.js';
-import { queryCheckpoint, logQueryProfileReport } from '../utils/queryProfiler.js';
+import { queryCheckpoint, logQueryProfileReport, startQueryProfile } from '../utils/queryProfiler.js';
 import type { Message as MessageType, UserMessage, ProgressMessage, HookResultMessage, PartialCompactDirection } from '../types/message.js';
 import { query } from '../query.js';
 import { mergeClients, useMergedClients } from '../hooks/useMergedClients.js';
@@ -169,6 +169,7 @@ import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js';
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js';
 import { resumeAgentBackground } from '../tools/AgentTool/resumeAgent.js';
 import { useMainLoopModel } from '../hooks/useMainLoopModel.js';
+import { streamingMetricsRef } from '../hooks/useTokenRate.js';
 import { useAppState, useSetAppState, useAppStateStore } from '../state/AppState.js';
 import type { ContentBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs';
 import type { ProcessUserInputContext } from '../utils/processUserInput/processUserInput.js';
@@ -1483,6 +1484,13 @@ export function REPL({
         const lastEntry = entries.at(-1)!;
         lastEntry.lastTokenTime = Date.now();
         lastEntry.endResponseLength = responseLengthRef.current;
+        streamingMetricsRef.current = {
+          responseLength: responseLengthRef.current,
+          baselineLength: lastEntry.responseLengthBaseline,
+          firstTokenTime: lastEntry.firstTokenTime,
+          lastTokenTime: lastEntry.lastTokenTime,
+          isStreaming: true
+        };
       }
     }
   }, []);
@@ -1612,6 +1620,8 @@ export function REPL({
     setSpinnerShimmerColor(null);
     pickNewSpinnerTip();
     endInteractionSpan();
+    // Finaliza streaming metrics
+    streamingMetricsRef.current.isStreaming = false;
     // Speculative bash classifier checks are only valid for the current
     // turn's commands — clear after each turn to avoid accumulating
     // Promise chains for unconsumed checks (denied/aborted paths).
@@ -2526,6 +2536,14 @@ export function REPL({
           responseLengthBaseline: baseline,
           endResponseLength: baseline
         });
+        // Inicia streaming metrics
+        streamingMetricsRef.current = {
+          responseLength: baseline,
+          baselineLength: baseline,
+          firstTokenTime: now,
+          lastTokenTime: now,
+          isStreaming: true
+        };
       } : undefined,
       setStreamMode,
       onCompactProgress: event => {
@@ -2799,12 +2817,14 @@ export function REPL({
         effortValue: effort
       });
     }
+    if (abortController.signal.aborted) return;
     queryCheckpoint('query_context_loading_start');
     const [, , defaultSystemPrompt, baseUserContext, systemContext] = await Promise.all([
       // IMPORTANT: do this after setMessages() above, to avoid UI jank
       checkAndDisableBypassPermissionsIfNeeded(toolPermissionContext, setAppState),
       // Gated on TRANSCRIPT_CLASSIFIER so GrowthBook kill switch runs wherever auto mode is built in
       feature('TRANSCRIPT_CLASSIFIER') ? checkAndDisableAutoModeIfNeeded(toolPermissionContext, setAppState, store.getState().fastMode) : undefined, getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients), getUserContext(), getSystemContext()]);
+    if (abortController.signal.aborted) return;
     const userContext = {
       ...baseUserContext,
       ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
@@ -2821,6 +2841,7 @@ export function REPL({
       appendSystemPrompt
     });
     toolUseContext.renderedSystemPrompt = systemPrompt;
+    if (abortController.signal.aborted) return;
     queryCheckpoint('query_query_start');
     resetTurnHookDuration();
     resetTurnToolDuration();
@@ -2922,6 +2943,7 @@ export function REPL({
     try {
       // isLoading is derived from queryGuard — tryStart() above already
       // transitioned dispatching→running, so no setter call needed here.
+      startQueryProfile();
       resetTimingRefs();
       // Start-of-turn cache tracker reset. The end-of-turn path at the
       // bottom of this function already resets, but mirror the call here
@@ -2948,11 +2970,13 @@ export function REPL({
       const latestMessages = messagesRef.current;
       if (input) {
         await mrOnBeforeQuery(input, latestMessages, newMessages.length);
+        if (abortController.signal.aborted) return;
       }
 
       // Pass full conversation history to callback
       if (onBeforeQueryCallback && input) {
         const shouldProceed = await onBeforeQueryCallback(input, latestMessages);
+        if (abortController.signal.aborted) return;
         if (!shouldProceed) {
           return;
         }

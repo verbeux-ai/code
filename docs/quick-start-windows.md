@@ -1,4 +1,4 @@
-# OpenClaude Quick Start for Windows
+# Verboo Code Quick Start for Windows
 
 This guide uses Windows PowerShell.
 
@@ -15,10 +15,10 @@ node --version
 npm --version
 ```
 
-## 2. Install OpenClaude
+## 2. Install Verboo Code
 
 ```powershell
-npm install -g @gitlawb/openclaude
+npm install -g @gitlawb/verboo
 ```
 
 ## 3. Pick One Provider
@@ -32,7 +32,7 @@ $env:CLAUDE_CODE_USE_OPENAI="1"
 $env:OPENAI_API_KEY="sk-your-key-here"
 $env:OPENAI_MODEL="gpt-4o"
 
-openclaude
+verboo
 ```
 
 ### Option B: DeepSeek
@@ -43,7 +43,7 @@ $env:OPENAI_API_KEY="sk-your-key-here"
 $env:OPENAI_BASE_URL="https://api.deepseek.com/v1"
 $env:OPENAI_MODEL="deepseek-v4-flash"
 
-openclaude
+verboo
 ```
 
 Use `deepseek-v4-pro` when you want the stronger model. `deepseek-chat` and `deepseek-reasoner` still work as DeepSeek's legacy API aliases.
@@ -63,7 +63,7 @@ $env:CLAUDE_CODE_USE_OPENAI="1"
 $env:OPENAI_BASE_URL="http://localhost:11434/v1"
 $env:OPENAI_MODEL="llama3.1:8b"
 
-openclaude
+verboo
 ```
 
 No API key is needed for Ollama local models.
@@ -88,19 +88,19 @@ $env:OPENAI_BASE_URL="http://localhost:1234/v1"
 $env:OPENAI_MODEL="your-model-name"
 # $env:OPENAI_API_KEY="lmstudio"  # optional: some users need a dummy key
 
-openclaude
+verboo
 ```
 
 Replace `your-model-name` with the model name shown in LM Studio.
 
 No API key is needed for LM Studio local models (but uncomment the `OPENAI_API_KEY` line if you hit auth errors).
 
-## 4. If `openclaude` Is Not Found
+## 4. If `verboo` Is Not Found
 
 Close PowerShell, open a new one, and try again:
 
 ```powershell
-openclaude
+verboo
 ```
 
 ## 5. If Your Provider Fails
@@ -126,16 +126,16 @@ Check the basics:
 - make sure a model is loaded in LM Studio
 - make sure the model name matches what you set in `OPENAI_MODEL`
 
-## 6. Updating OpenClaude
+## 6. Updating Verboo Code
 
 ```powershell
-npm install -g @gitlawb/openclaude@latest
+npm install -g @gitlawb/verboo@latest
 ```
 
-## 7. Uninstalling OpenClaude
+## 7. Uninstalling Verboo Code
 
 ```powershell
-npm uninstall -g @gitlawb/openclaude
+npm uninstall -g @gitlawb/verboo
 ```
 
 ## Need Advanced Setup?

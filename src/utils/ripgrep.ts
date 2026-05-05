@@ -40,6 +40,8 @@ type ResolveRipgrepConfigArgs = {
   bundledMode: boolean
   builtinCommand: string
   builtinExists: boolean
+  npmCommand?: string
+  npmExists?: boolean
   systemExecutablePath: string
   processExecPath?: string
 }
@@ -49,6 +51,8 @@ export function resolveRipgrepConfig({
   bundledMode,
   builtinCommand,
   builtinExists,
+  npmCommand,
+  npmExists = false,
   systemExecutablePath,
   processExecPath = process.execPath,
 }: ResolveRipgrepConfigArgs): RipgrepConfig {
@@ -70,11 +74,15 @@ export function resolveRipgrepConfig({
     return { mode: 'builtin', command: builtinCommand, args: [] }
   }
 
+  if (npmExists && npmCommand) {
+    return { mode: 'builtin', command: npmCommand, args: [] }
+  }
+
   if (systemExecutablePath !== 'rg') {
     return { mode: 'system', command: 'rg', args: [] }
   }
 
-  return { mode: 'builtin', command: builtinCommand, args: [] }
+  return { mode: 'system', command: 'rg', args: [] }
 }
 
 const getRipgrepConfig = memoize((): RipgrepConfig => {
@@ -88,6 +96,11 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
       ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')
       : path.resolve(rgRoot, `${process.arch}-${process.platform}`, 'rg')
   const builtinExists = existsSync(builtinCommand)
+  const npmCommand =
+    process.platform === 'win32'
+      ? path.resolve(__dirname, '..', 'node_modules', '@vscode', 'ripgrep', 'bin', 'rg.exe')
+      : path.resolve(__dirname, '..', 'node_modules', '@vscode', 'ripgrep', 'bin', 'rg')
+  const npmExists = existsSync(npmCommand)
   const { cmd: systemExecutablePath } = findExecutable('rg', [])
 
   return resolveRipgrepConfig({
@@ -95,6 +108,8 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
     bundledMode,
     builtinCommand,
     builtinExists,
+    npmCommand,
+    npmExists,
     systemExecutablePath,
   })
 })

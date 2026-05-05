@@ -25,7 +25,10 @@ import { loadPluginLspServers } from '../utils/plugins/lspPluginIntegration.js'
 import { loadPluginMcpServers } from '../utils/plugins/mcpPluginIntegration.js'
 import { detectAndUninstallDelistedPlugins } from '../utils/plugins/pluginBlocklist.js'
 import { getFlaggedPlugins } from '../utils/plugins/pluginFlagging.js'
-import { loadAllPlugins } from '../utils/plugins/pluginLoader.js'
+import {
+  areExternalPluginsDisabledForVerboo,
+  loadAllPlugins,
+} from '../utils/plugins/pluginLoader.js'
 
 /**
  * Hook to manage plugin state and synchronize with AppState.
@@ -60,6 +63,35 @@ export function useManagePlugins({
   // mcp.pluginReconnectKey (MCP effects fire on their own mount).
   const initialPluginLoad = useCallback(async () => {
     try {
+      if (areExternalPluginsDisabledForVerboo()) {
+        setPluginCommandsState([])
+        setAppState(prevState => ({
+          ...prevState,
+          plugins: {
+            ...prevState.plugins,
+            enabled: [],
+            disabled: [],
+            commands: [],
+            errors: prevState.plugins.errors.filter(
+              e => e.source === 'lsp-manager',
+            ),
+          },
+        }))
+        return {
+          enabled_count: 0,
+          disabled_count: 0,
+          inline_count: 0,
+          marketplace_count: 0,
+          error_count: 0,
+          skill_count: 0,
+          agent_count: 0,
+          hook_count: 0,
+          mcp_count: 0,
+          lsp_count: 0,
+          ant_enabled_names: undefined,
+        }
+      }
+
       // Load all plugins - capture errors array
       const { enabled, disabled, errors } = await loadAllPlugins()
 

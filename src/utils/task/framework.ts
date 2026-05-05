@@ -16,6 +16,11 @@ import {
 import type { TaskState } from '../../tasks/types.js'
 import { enqueuePendingNotification } from '../messageQueueManager.js'
 import { enqueueSdkEvent } from '../sdkEventQueue.js'
+import {
+  getSingleTaskMemoryDiagnostics,
+  logMemoryDiagnostics,
+  maybeLogMemoryHighWatermark,
+} from '../memoryDiagnostics.js'
 import { getTaskOutputDelta, getTaskOutputPath } from './diskOutput.js'
 
 // Standard polling interval for all tasks
@@ -50,6 +55,7 @@ export function updateTaskState<T extends TaskState>(
   setAppState: SetAppState,
   updater: (task: T) => T,
 ): void {
+  let taskEndDiagnostics: Record<string, unknown> | undefined
   setAppState(prev => {
     const task = prev.tasks?.[taskId] as T | undefined
     if (!task) {
@@ -61,6 +67,12 @@ export function updateTaskState<T extends TaskState>(
       // spread so s.tasks subscribers don't re-render on unchanged state.
       return prev
     }
+    if (
+      task.status !== updated.status &&
+      isTerminalTaskStatus(updated.status)
+    ) {
+      taskEndDiagnostics = getSingleTaskMemoryDiagnostics(updated, prev)
+    }
     return {
       ...prev,
       tasks: {
@@ -69,6 +81,12 @@ export function updateTaskState<T extends TaskState>(
       },
     }
   })
+  if (taskEndDiagnostics) {
+    logMemoryDiagnostics('task-end', taskEndDiagnostics, {
+      includeVerboseDetails: true,
+    })
+    maybeLogMemoryHighWatermark('task-end', taskEndDiagnostics)
+  }
 }
 
 /**
@@ -100,6 +118,12 @@ export function registerTask(task: TaskState, setAppState: SetAppState): void {
 
   // Replacement (resume) — not a new start. Skip to avoid double-emit.
   if (isReplacement) return
+
+  const taskStartDiagnostics = getSingleTaskMemoryDiagnostics(task)
+  logMemoryDiagnostics('task-start', taskStartDiagnostics, {
+    includeVerboseDetails: true,
+  })
+  maybeLogMemoryHighWatermark('task-start', taskStartDiagnostics)
 
   enqueueSdkEvent({
     type: 'system',

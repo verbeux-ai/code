@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, test } from 'bun:test'
 
 import {
   applyAttributionSettings,
@@ -10,7 +10,14 @@ import {
 
 const originalEnv = { ...process.env }
 
+beforeEach(() => {
+  mock.module('../constants/oauth.js', () => ({
+    isVerbooMode: () => true,
+  }))
+})
+
 afterEach(() => {
+  mock.restore()
   process.env = { ...originalEnv }
 })
 

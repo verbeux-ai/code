@@ -79,6 +79,13 @@ function installCommonMocks(options?: {
     CLAUDE_AI_OAUTH_SCOPES: ['user:profile', 'user:inference'],
     ALL_OAUTH_SCOPES: ['org:create_api_key', 'user:profile', 'user:inference'],
     MCP_CLIENT_METADATA_URL: 'https://claude.ai/oauth/claude-code-client-metadata',
+    // VERBOO-BRAND: exports Verboo necessários para evitar vazamento de mock
+    VERBOO_API_BASE_URL: 'https://code.verboo.ai',
+    VERBOO_FRONT_BASE_URL: 'https://code.verboo.ai',
+    VERBOO_ROUTER_URL: 'https://code.verboo.ai/router/v1',
+    VERBOO_OAUTH_SCOPES: ['user:profile', 'user:inference'],
+    isVerbooMode: () => false,
+    getActiveScopes: () => ['org:create_api_key', 'user:profile', 'user:inference'],
     getOauthConfig: () => ({
       BASE_API_URL: 'https://api.anthropic.com',
       CONSOLE_AUTHORIZE_URL: 'https://platform.claude.com/oauth/authorize',

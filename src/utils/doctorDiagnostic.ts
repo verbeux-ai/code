@@ -51,7 +51,7 @@ function getCliBinaryName(): string {
   if (MACRO.PACKAGE_URL === '@verboo/code') {
     return 'verboo'
   }
-  return 'openclaude'
+  return 'verboo'
 }
 
 function getNativeDataDirName(): string {

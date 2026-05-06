@@ -17,7 +17,7 @@ function makeJwt(payload: Record<string, unknown>): string {
 }
 
 test('runtime credential resolution honors explicit auth.json over stored secure-storage tokens', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'openclaude-codex-explicit-auth-'))
+  const tempDir = mkdtempSync(join(tmpdir(), 'verboo-codex-explicit-auth-'))
   const authPath = join(tempDir, 'auth.json')
 
   writeFileSync(
@@ -53,7 +53,7 @@ test('runtime credential resolution honors explicit auth.json over stored secure
 })
 
 test('runtime credential resolution preserves an explicit auth.json path even when it is missing', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'openclaude-codex-missing-auth-'))
+  const tempDir = mkdtempSync(join(tmpdir(), 'verboo-codex-missing-auth-'))
   const authPath = join(tempDir, 'missing-auth.json')
 
   try {

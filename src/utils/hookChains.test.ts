@@ -9,7 +9,7 @@ const tempDirs: string[] = []
 const originalHookChainsEnabled = process.env.CLAUDE_CODE_ENABLE_HOOK_CHAINS
 
 async function makeConfigFile(config: unknown): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'openclaude-hook-chains-'))
+  const dir = await mkdtemp(join(tmpdir(), 'verboo-hook-chains-'))
   tempDirs.push(dir)
   const filePath = join(dir, 'hook-chains.json')
   await writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8')

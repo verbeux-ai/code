@@ -1,11 +1,15 @@
 node_modules/
 dist/
 *.tsbuildinfo
+web/dist/
+web/*.tsbuildinfo
 .env
 .env.*
 !.env.example
 .openclaude-profile.json
 .verboo-profile.json
+
+.openclaude/
 reports/
 GEMINI.md
 CLAUDE.md
@@ -13,3 +17,4 @@ package-lock.json
 /.claude
 coverage/
 agent.log
+plan/

@@ -31,7 +31,7 @@ MVP runtime trigger wiring:
 
 Default config path:
 
-- `.openclaude/hook-chains.json`
+- `.verboo/hook-chains.json`
 
 Override path:
 

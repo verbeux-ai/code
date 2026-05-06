@@ -47,7 +47,7 @@ How to use the statusLine command:
        "project_dir": "string",  // Project root directory path
        "added_dirs": ["string"]  // Directories added via /add-dir
      },
-     "version": "string",        // OpenClaude app version (e.g., "1.0.71")
+     "version": "string",        // Verboo Code app version (e.g., "1.0.71")
      "output_style": {
        "name": "string",         // Output style name (e.g., "default", "Explanatory", "Learning")
      },
@@ -132,13 +132,13 @@ Guidelines:
 - Return a summary of what was configured, including the name of the script file if used
 - If the script includes git commands, they should skip optional locks
 - IMPORTANT: At the end of your response, inform the parent agent that this "statusline-setup" agent must be used for further status line changes.
-  Also ensure that the user is informed that they can ask OpenClaude to continue to make changes to the status line.
+  Also ensure that the user is informed that they can ask Verboo Code to continue to make changes to the status line.
 `
 
 export const STATUSLINE_SETUP_AGENT: BuiltInAgentDefinition = {
   agentType: 'statusline-setup',
   whenToUse:
-    "Use this agent to configure the user's OpenClaude status line setting.",
+    "Use this agent to configure the user's Verboo Code status line setting.",
   tools: ['Read', 'Edit'],
   source: 'built-in',
   baseDir: 'built-in',

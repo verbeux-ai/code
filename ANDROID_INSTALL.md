@@ -14,7 +14,7 @@ A complete guide to running Verboo Code on Android using Termux + proot Ubuntu.
 
 ## Why This Setup?
 
-OpenClaude requires [Bun](https://bun.sh) to build, and Bun does not support Android natively. The workaround is running a real Ubuntu environment inside Termux via `proot-distro`, where Bun's Linux binary works correctly.
+Verboo Code requires [Bun](https://bun.sh) to build, and Bun does not support Android natively. The workaround is running a real Ubuntu environment inside Termux via `proot-distro`, where Bun's Linux binary works correctly.
 
 ---
 
@@ -42,8 +42,8 @@ node --version  # should be v20+
 ### Step 3 — Clone Verboo Code
 
 ```bash
-git clone https://github.com/Gitlawb/openclaude.git
-cd openclaude
+git clone https://github.com/verbeux-ai/code.git
+cd verboo
 npm install
 npm link
 ```
@@ -68,13 +68,13 @@ bun --version  # should show 1.3.11+
 ### Step 6 — Build Verboo Code
 
 ```bash
-cd /data/data/com.termux/files/home/openclaude
+cd /data/data/com.termux/files/home/verboo
 bun run build
 ```
 
 You should see:
 ```
-✓ Built openclaude v0.1.6 → dist/cli.mjs
+✓ Built verboo v0.1.6 → dist/cli.mjs
 ```
 
 ### Step 7 — Save env vars permanently
@@ -107,7 +107,7 @@ Every time you reopen Termux after killing it, run:
 
 ```bash
 proot-distro login ubuntu
-cd /data/data/com.termux/files/home/openclaude
+cd /data/data/com.termux/files/home/verboo
 node dist/cli.mjs
 ```
 
@@ -146,7 +146,7 @@ node dist/cli.mjs
 
 ## Why Not Groq or Cerebras?
 
-Both were tested and fail due to OpenClaude's large system prompt (~50K tokens):
+Both were tested and fail due to Verboo Code's large system prompt (~50K tokens):
 
 - **Groq free tier**: TPM limits too low (6K–12K tokens/min)
 - **Cerebras free tier**: TPM limits exceeded, even on `llama3.1-8b`

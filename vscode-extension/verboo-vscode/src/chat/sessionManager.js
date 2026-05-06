@@ -5,7 +5,7 @@
  * Session files live under:
  *   ~/.claude/projects/<sanitized-cwd>/<sessionId>.jsonl
  *
- * Falls back to ~/.openclaude/projects/ for legacy openclaude alias installs.
+ * Falls back to ~/.verboo/projects/ for legacy verboo alias installs.
  */
 
 const fs = require('fs');
@@ -36,7 +36,7 @@ function resolveConfigDir() {
   if (envDir) return envDir;
   const home = os.homedir();
   const verbooDir = path.join(home, '.claude');
-  const legacyDir = path.join(home, '.openclaude');
+  const legacyDir = path.join(home, '.verboo');
   if (!fs.existsSync(verbooDir) && fs.existsSync(legacyDir)) {
     return legacyDir;
   }

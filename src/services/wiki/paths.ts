@@ -1,11 +1,11 @@
 import { join } from 'path'
 import type { WikiPaths } from './types.js'
 
-export const OPENCLAUDE_DIRNAME = '.verboo'
+export const VERBOO_DIRNAME = '.verboo'
 export const WIKI_DIRNAME = 'wiki'
 
 export function getWikiPaths(cwd: string): WikiPaths {
-  const root = join(cwd, OPENCLAUDE_DIRNAME, WIKI_DIRNAME)
+  const root = join(cwd, VERBOO_DIRNAME, WIKI_DIRNAME)
 
   return {
     root,

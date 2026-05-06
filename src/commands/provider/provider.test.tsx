@@ -25,6 +25,14 @@ const ORIGINAL_CODEX_API_KEY = process.env.CODEX_API_KEY
 const ORIGINAL_CHATGPT_ACCOUNT_ID = process.env.CHATGPT_ACCOUNT_ID
 const ORIGINAL_CODEX_ACCOUNT_ID = process.env.CODEX_ACCOUNT_ID
 
+async function importFreshProviderProfileModule(
+  suffix: string,
+): Promise<typeof import('../../utils/providerProfile.js')> {
+  return import(`../../utils/providerProfile.js?${suffix}`) as Promise<
+    typeof import('../../utils/providerProfile.js')
+  >
+}
+
 function extractLastFrame(output: string): string {
   let lastFrame: string | null = null
   let cursor = 0
@@ -299,10 +307,10 @@ test('buildProfileSaveMessage maps provider fields without echoing secrets', () 
       OPENAI_MODEL: 'gpt-4o',
       OPENAI_BASE_URL: 'https://api.openai.com/v1',
     },
-    'D:/codings/Opensource/openclaude/.openclaude-profile.json',
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
   )
 
-  expect(message).toContain('Saved OpenAI-compatible profile.')
+  expect(message).toContain('Saved OpenAI profile.')
   expect(message).toContain('Model: gpt-4o')
   expect(message).toContain('Endpoint: https://api.openai.com/v1')
   expect(message).toContain('Credentials: configured')
@@ -316,12 +324,30 @@ test('buildProfileSaveMessage labels local openai-compatible profiles consistent
       OPENAI_MODEL: 'gpt-5.4',
       OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1',
     },
-    'D:/codings/Opensource/openclaude/.openclaude-profile.json',
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
   )
 
   expect(message).toContain('Saved Local OpenAI-compatible profile.')
   expect(message).toContain('Model: gpt-5.4')
   expect(message).toContain('Endpoint: http://127.0.0.1:8080/v1')
+})
+
+test('buildProfileSaveMessage labels descriptor-backed gateway profiles consistently', () => {
+  const message = buildProfileSaveMessage(
+    'openai',
+    {
+      OPENAI_API_KEY: 'sk-secret-12345678',
+      OPENAI_MODEL: 'openai/gpt-5-mini',
+      OPENAI_BASE_URL: 'https://openrouter.ai/api/v1',
+    },
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
+  )
+
+  expect(message).toContain('Saved OpenRouter profile.')
+  expect(message).toContain('Model: openai/gpt-5-mini')
+  expect(message).toContain('Endpoint: https://openrouter.ai/api/v1')
+  expect(message).toContain('Credentials: configured')
+  expect(message).not.toContain('sk-secret-12345678')
 })
 
 test('buildProfileSaveMessage describes Gemini access token / ADC mode clearly', () => {
@@ -332,7 +358,7 @@ test('buildProfileSaveMessage describes Gemini access token / ADC mode clearly',
       GEMINI_MODEL: 'gemini-2.5-flash',
       GEMINI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     },
-    'D:/codings/Opensource/openclaude/.openclaude-profile.json',
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
   )
 
   expect(message).toContain('Saved Google Gemini profile.')
@@ -349,15 +375,15 @@ test('buildProfileSaveMessage reflects immediate Codex activation for existing c
       OPENAI_BASE_URL: 'https://chatgpt.com/backend-api/codex',
       CHATGPT_ACCOUNT_ID: 'acct_codex',
     },
-    'D:/codings/Opensource/openclaude/.openclaude-profile.json',
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
     {
       activatedInSession: true,
     },
   )
 
   expect(message).toContain('Saved Codex profile.')
-  expect(message).toContain('OpenClaude switched to it for this session.')
-  expect(message).not.toContain('Restart OpenClaude to use it.')
+  expect(message).toContain('Verboo Code switched to it for this session.')
+  expect(message).not.toContain('Restart Verboo Code to use it.')
 })
 
 test('buildProfileSaveMessage reflects immediate Codex OAuth activation when the session switched successfully', () => {
@@ -369,15 +395,15 @@ test('buildProfileSaveMessage reflects immediate Codex OAuth activation when the
       CHATGPT_ACCOUNT_ID: 'acct_codex',
       CODEX_CREDENTIAL_SOURCE: 'oauth',
     },
-    'D:/codings/Opensource/openclaude/.openclaude-profile.json',
+    'D:/codings/Opensource/verboo/.verboo-profile.json',
     {
       activatedInSession: true,
     },
   )
 
   expect(message).toContain('Saved Codex profile.')
-  expect(message).toContain('OpenClaude switched to it for this session.')
-  expect(message).not.toContain('Restart OpenClaude to use it.')
+  expect(message).toContain('Verboo Code switched to it for this session.')
+  expect(message).not.toContain('Restart Verboo Code to use it.')
 })
 
 test('buildCodexOAuthProfileEnv uses the fresh OAuth account id without persisting an API key', () => {
@@ -410,9 +436,8 @@ test('buildCodexProfileEnv derives oauth source from secure storage when no expl
     }),
   }))
 
-  // @ts-expect-error cache-busting query string for Bun module mocks
-  const { buildCodexProfileEnv } = await import(
-    '../../utils/providerProfile.js?secure-storage-codex-source'
+  const { buildCodexProfileEnv } = await importFreshProviderProfileModule(
+    'secure-storage-codex-source',
   )
 
   const env = buildCodexProfileEnv({
@@ -429,10 +454,10 @@ test('buildCodexProfileEnv derives oauth source from secure storage when no expl
 })
 
 test('explicitly declared env takes precedence over applySavedProfileToCurrentSession', async () => {
-  // @ts-expect-error cache-busting query string for Bun module mocks
-  const { applySavedProfileToCurrentSession } = await import(
-    '../../utils/providerProfile.js?apply-saved-profile-codex'
-  )
+  const { applySavedProfileToCurrentSession } =
+    await importFreshProviderProfileModule(
+      'apply-saved-profile-codex',
+    )
   const processEnv: NodeJS.ProcessEnv = {
     CLAUDE_CODE_USE_OPENAI: '1',
     OPENAI_MODEL: 'gpt-4o',
@@ -468,11 +493,11 @@ test('explicitly declared env takes precedence over applySavedProfileToCurrentSe
   expect(processEnv.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID).toBeUndefined()
 })
 
-test('explicitly declared env takes precedence over applySavedProfileToCurrentSession', async () => {
-  // @ts-expect-error cache-busting query string for Bun module mocks
-  const { applySavedProfileToCurrentSession } = await import(
-    '../../utils/providerProfile.js?apply-saved-profile-codex-oauth'
-  )
+test('explicitly declared env takes precedence over applySavedProfileToCurrentSession for oauth codex profiles', async () => {
+  const { applySavedProfileToCurrentSession } =
+    await importFreshProviderProfileModule(
+      'apply-saved-profile-codex-oauth',
+    )
   const processEnv: NodeJS.ProcessEnv = {
     CLAUDE_CODE_USE_OPENAI: '1',
     OPENAI_MODEL: 'gpt-4o',
@@ -533,6 +558,21 @@ test('buildCurrentProviderSummary labels generic local openai-compatible provide
   expect(summary.endpointLabel).toBe('http://127.0.0.1:8080/v1')
 })
 
+test('buildCurrentProviderSummary recognizes descriptor-backed openai-compatible routes', () => {
+  const summary = buildCurrentProviderSummary({
+    processEnv: {
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_MODEL: 'openai/gpt-5-mini',
+      OPENAI_BASE_URL: 'https://openrouter.ai/api/v1',
+    },
+    persisted: null,
+  })
+
+  expect(summary.providerLabel).toBe('OpenRouter')
+  expect(summary.modelLabel).toBe('openai/gpt-5-mini')
+  expect(summary.endpointLabel).toBe('https://openrouter.ai/api/v1')
+})
+
 test('buildCurrentProviderSummary does not relabel local gpt-5.4 providers as Codex when custom base URL is set', () => {
   const summary = buildCurrentProviderSummary({
     processEnv: {
@@ -546,6 +586,39 @@ test('buildCurrentProviderSummary does not relabel local gpt-5.4 providers as Co
   expect(summary.providerLabel).toBe('Local OpenAI-compatible')
   expect(summary.modelLabel).toBe('gpt-5.4')
   expect(summary.endpointLabel).toBe('http://127.0.0.1:8080/v1')
+})
+
+test('buildCurrentProviderSummary recognizes Gemini mode', () => {
+  const summary = buildCurrentProviderSummary({
+    processEnv: {
+      CLAUDE_CODE_USE_GEMINI: '1',
+      GEMINI_MODEL: 'gemini-2.5-pro',
+      GEMINI_BASE_URL:
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+    },
+    persisted: null,
+  })
+
+  expect(summary.providerLabel).toBe('Google Gemini')
+  expect(summary.modelLabel).toBe('gemini-2.5-pro')
+  expect(summary.endpointLabel).toBe(
+    'https://generativelanguage.googleapis.com/v1beta/openai',
+  )
+})
+
+test('buildCurrentProviderSummary recognizes Mistral mode', () => {
+  const summary = buildCurrentProviderSummary({
+    processEnv: {
+      CLAUDE_CODE_USE_MISTRAL: '1',
+      MISTRAL_MODEL: 'mistral-medium-latest',
+      MISTRAL_BASE_URL: 'https://api.mistral.ai/v1',
+    },
+    persisted: null,
+  })
+
+  expect(summary.providerLabel).toBe('Mistral AI')
+  expect(summary.modelLabel).toBe('mistral-medium-latest')
+  expect(summary.endpointLabel).toBe('https://api.mistral.ai/v1')
 })
 
 test('buildCurrentProviderSummary recognizes GitHub Models mode', () => {
@@ -574,7 +647,7 @@ test('getProviderWizardDefaults ignores poisoned current provider values', () =>
 
   expect(defaults.openAIModel).toBe('gpt-4o')
   expect(defaults.openAIBaseUrl).toBe('https://api.openai.com/v1')
-  expect(defaults.geminiModel).toBe('gemini-2.0-flash')
+  expect(defaults.geminiModel).toBe('gemini-3-flash-preview')
 })
 
 test('ProviderWizard hides Codex OAuth while running in bare mode', async () => {

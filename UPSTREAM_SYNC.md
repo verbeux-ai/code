@@ -1,13 +1,13 @@
 # Upstream Sync Playbook
 
-Verboo Code é um fork do `openclaude` (https://github.com/Gitlawb/openclaude),
+Verboo Code é um fork do `verboo` (https://github.com/verbeux-ai/code),
 que por sua vez originou-se do Claude Code. Este documento descreve como
 sincronizar updates do upstream sem perder nossas mudanças de identidade.
 
 ## Setup (uma vez)
 
 ```bash
-# Renomear o origin atual (que aponta para Gitlawb/openclaude) para upstream
+# Renomear o origin atual (que aponta para Gitlawb/verboo) para upstream
 git remote rename origin upstream
 
 # Adicionar o origin Verboo (substitua pela URL do seu repo)
@@ -42,9 +42,9 @@ em volta. Use `git grep "VERBOO-BRAND"` para localizar todos os pontos editados.
 - `src/utils/logoV2Utils.ts` — `'Welcome to Verboo Code'`.
 
 #### CLI / packaging
-- `package.json` — `name`, `bin` (`verboo` + `openclaude` alias), `description`,
+- `package.json` — `name`, `bin` (`verboo` + `verboo` alias), `description`,
   `repository.url`, `keywords`.
-- `bin/verboo` (novo, canônico) e `bin/openclaude` (alias deprecated).
+- `bin/verboo` (novo, canônico) e `bin/verboo` (alias deprecated).
 - `.env.example` — bloco `VERBOO_*` canônico, `OPENCLAUDE_*` como aliases deprecated.
 - `README.md`, `PLAYBOOK.md` — rebrand textual completo.
 
@@ -113,7 +113,7 @@ qualidade de tool-calling.
 ## Validar após resolver conflitos
 
 ```bash
-bun run rebrand:check    # falha se literais "OpenClaude"/cor laranja voltaram
+bun run rebrand:check    # falha se literais "Verboo Code"/cor laranja voltaram
 bun run typecheck
 bun run build
 bun test
@@ -138,13 +138,13 @@ parâmetro — Verboo Code só fala com endpoints próprios:
   `src/constants/oauth.ts`, `src/utils/http.ts` (`VERBOO_WEB_URL` const),
   `src/utils/preflightChecks.tsx`, `src/tools/BriefTool/upload.ts`.
 
-Ao sincronizar com upstream openclaude, qualquer reintrodução de fallback
+Ao sincronizar com upstream verboo, qualquer reintrodução de fallback
 para `ANTHROPIC_BASE_URL`, `VERBOO_API_URL`, `VERBOO_WEB_URL`, parâmetro
 `ccrBaseUrl`, ou `getOauthConfig().BASE_API_URL` nos call sites acima deve
 ser revertida — a regra é uma URL única hardcoded por call site.
 - Telemetria first-party Anthropic (1P/Datadog/GrowthBook) já está gated
   off via `isAnalyticsDisabled() === true` em `src/services/analytics/config.ts`
-  — herdado do upstream openclaude. Não precisa novo gate.
+  — herdado do upstream verboo. Não precisa novo gate.
 - `WebFetchTool/utils.ts:checkDomainBlocklist` adicionou gate adicional para
   pular o request a `api.anthropic.com/api/web/domain_info` quando
   `VERBOO_API_URL` está setado (ou `ANTHROPIC_BASE_URL` aponta fora de
@@ -153,7 +153,7 @@ ser revertida — a regra é uma URL única hardcoded por call site.
 ## Allowlist de strings
 
 `scripts/rebrand-check.ts` mantém uma allowlist de arquivos onde literais
-"OpenClaude" são intencionalmente preservados (testes, features off, prompts
+"Verboo Code" são intencionalmente preservados (testes, features off, prompts
 de tool, /provider deprecated). Quando upstream adiciona um arquivo novo
 com strings da marca antiga, decida:
 1. Se é user-visible → atualizar para "Verboo Code".

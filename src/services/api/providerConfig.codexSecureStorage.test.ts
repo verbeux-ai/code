@@ -16,7 +16,7 @@ describe('resolveCodexApiCredentials with secure storage', () => {
     mock.restore()
   })
 
-  test('loads Codex credentials from OpenClaude secure storage', async () => {
+  test('loads Codex credentials from Verboo Code secure storage', async () => {
     mock.module('../../utils/codexCredentials.js', () => ({
       isCodexRefreshFailureCoolingDown: () => false,
       readCodexCredentials: () => ({
@@ -90,7 +90,7 @@ describe('resolveCodexApiCredentials with secure storage', () => {
       readCodexCredentials: () => undefined,
     }))
 
-    const tempDir = mkdtempSync(join(tmpdir(), 'openclaude-codex-auth-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'verboo-codex-auth-'))
     const authPath = join(tempDir, 'auth.json')
 
     writeFileSync(
@@ -144,7 +144,7 @@ describe('resolveCodexApiCredentials with secure storage', () => {
   })
 
   test('falls back to the default auth.json when stored Codex refresh is cooling down', async () => {
-    const tempHomeDir = mkdtempSync(join(tmpdir(), 'openclaude-codex-home-'))
+    const tempHomeDir = mkdtempSync(join(tmpdir(), 'verboo-codex-home-'))
     const authJson = JSON.stringify({
       openai_api_key: makeJwt({
         'https://api.openai.com/auth': {
@@ -186,7 +186,7 @@ describe('resolveCodexApiCredentials with secure storage', () => {
   })
 
   test('preserves the stored account id when auth.json fallback lacks one', async () => {
-    const tempHomeDir = mkdtempSync(join(tmpdir(), 'openclaude-codex-home-'))
+    const tempHomeDir = mkdtempSync(join(tmpdir(), 'verboo-codex-home-'))
     const authJson = JSON.stringify({
       openai_api_key: 'auth-json-access-token',
     })

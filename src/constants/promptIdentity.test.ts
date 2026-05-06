@@ -6,8 +6,8 @@ import { afterEach, expect, test } from 'bun:test'
   VERSION: '99.0.0',
   DISPLAY_VERSION: '0.0.0-test',
   BUILD_TIME: new Date().toISOString(),
-  ISSUES_EXPLAINER: 'report the issue at https://github.com/anthropics/claude-code/issues',
-  PACKAGE_URL: '@gitlawb/openclaude',
+  ISSUES_EXPLAINER: 'report the issue at https://github.com/verbeux-ai/code/issues',
+  PACKAGE_URL: '@verboo/code',
   NATIVE_PACKAGE_URL: undefined,
 }
 

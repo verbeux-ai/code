@@ -43,7 +43,7 @@ describe('Verboo settings path surfaces', () => {
   })
 })
 
-describe('OpenClaude validation tips', () => {
+describe('Verboo Code validation tips', () => {
   test('permissions.defaultMode invalid value keeps suggestion but no Claude docs link', () => {
     const tip = getValidationTip({
       path: 'permissions.defaultMode',

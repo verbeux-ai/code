@@ -375,7 +375,7 @@ const externalTips: Tip[] = [
   {
     id: 'continue',
     content: async () =>
-      'Run openclaude --continue or openclaude --resume to resume a conversation',
+      'Run verboo --continue or verboo --resume to resume a conversation',
     cooldownSessions: 10,
     isRelevant: async () => true,
   },
@@ -457,13 +457,6 @@ const externalTips: Tip[] = [
     id: 'web-app',
     content: async () =>
       'Run tasks in the cloud while you keep coding locally · /web',
-    cooldownSessions: 15,
-    isRelevant: async () => true,
-  },
-  {
-    id: 'mobile-app',
-    content: async () =>
-      '/mobile to continue from your phone',
     cooldownSessions: 15,
     isRelevant: async () => true,
   },
@@ -617,7 +610,7 @@ const externalTips: Tip[] = [
   },
   {
     id: 'feedback-command',
-    content: async () => 'Use /feedback to help us improve!',
+    content: async () => 'Report bugs or feature requests in the issue tracker to help us improve.',
     cooldownSessions: 15,
     async isRelevant() {
       const config = getGlobalConfig()

@@ -123,7 +123,7 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
   const useMistral = process.env.CLAUDE_CODE_USE_MISTRAL === '1' || process.env.CLAUDE_CODE_USE_MISTRAL === 'true'
 
   if (useGemini) {
-    const model = modelOverride || process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+    const model = modelOverride || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
     const baseUrl = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai'
     return { name: 'Google Gemini', model, baseUrl, isLocal: false }
   }
@@ -149,6 +149,7 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     })
     const baseUrl = resolvedRequest.baseUrl
     const isLocal = isLocalProviderUrl(baseUrl)
+    const routeId = resolveRouteIdFromBaseUrl(baseUrl)
     let name = 'OpenAI'
     // Explicit dedicated-provider env flags win.
     if (process.env.NVIDIA_NIM) name = 'NVIDIA NIM'
@@ -168,10 +169,10 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     else if (/nvidia/i.test(baseUrl)) name = 'NVIDIA NIM'
     else if (/minimax/i.test(baseUrl)) name = 'MiniMax'
     else if (/api\.kimi\.com/i.test(baseUrl)) name = 'Moonshot AI - Kimi Code'
+    else if (routeId && routeId !== 'openai' && routeId !== 'custom')
+      name = getRouteLabel(routeId) ?? name
     else if (/moonshot/i.test(baseUrl)) name = 'Moonshot AI - API'
     else if (/deepseek/i.test(baseUrl)) name = 'DeepSeek'
-    else if (/x\.ai/i.test(baseUrl)) name = 'xAI'
-    else if (isZaiBaseUrl(baseUrl)) name = 'Z.AI - GLM'
     else if (/mistral/i.test(baseUrl)) name = 'Mistral'
     // rawModel fallback — fires only when base URL is generic/custom.
     else if (/nvidia/i.test(rawModel)) name = 'NVIDIA NIM'
@@ -181,8 +182,6 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     else if (/\bkimi-k/i.test(rawModel) || /moonshot/i.test(rawModel))
       name = 'Moonshot AI - API'
     else if (/deepseek/i.test(rawModel)) name = 'DeepSeek'
-    else if (/grok/i.test(rawModel)) name = 'xAI'
-    else if (containsExactZaiGlmModelId(rawModel)) name = 'Z.AI - GLM'
     else if (/mistral/i.test(rawModel)) name = 'Mistral'
     else if (/llama/i.test(rawModel)) name = 'Meta Llama'
     else if (/bankr/i.test(baseUrl)) name = 'Bankr'

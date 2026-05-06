@@ -6,7 +6,7 @@ Verboo Code is a fast-moving open-source coding-agent CLI with support for multi
 
 ## Before You Start
 
-- Search existing [issues](https://github.com/Gitlawb/openclaude/issues) and [discussions](https://github.com/Gitlawb/openclaude/discussions) before opening a new thread.
+- Search existing [issues](https://github.com/verbeux-ai/code/issues) and [discussions](https://github.com/verbeux-ai/code/discussions) before opening a new thread.
 - Use issues for confirmed bugs and actionable feature work.
 - Use discussions for setup help, ideas, and general community conversation.
 - For larger changes, open an issue first so the scope is clear before implementation.
@@ -104,6 +104,8 @@ Verboo Code supports multiple provider paths. If you change provider logic:
 - avoid breaking third-party providers while fixing first-party behavior
 - test the exact provider/model path you changed when possible
 - call out any limitations or follow-up work in the PR description
+- if you are adding or changing descriptor-era integrations, start with `docs/integrations/overview.md`
+- use the focused how-to guides under `docs/integrations/how-to/` for new vendors, gateways, models, anthropic proxies, and `/usage` support
 
 ## Community
 

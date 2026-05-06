@@ -6,12 +6,12 @@ Object.assign(globalThis, {
   MACRO: {
     VERSION: '0.1.7',
     DISPLAY_VERSION: '0.1.7',
-    PACKAGE_URL: '@gitlawb/openclaude',
+    PACKAGE_URL: '@verboo/code',
   }
 })
 
 async function main() {
-  console.log('Starting OpenClaude gRPC Server...')
+  console.log('Starting Verboo Code gRPC Server...')
   await init()
 
   // Mirror CLI bootstrap: hydrate secure tokens and resolve provider profile

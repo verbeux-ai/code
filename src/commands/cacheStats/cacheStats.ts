@@ -12,7 +12,7 @@ import {
 import type { LocalCommandCall } from '../../types/command.js'
 
 // Cap the per-request breakdown to keep output readable. Users wanting
-// the full history can rely on OPENCLAUDE_LOG_TOKEN_USAGE=verbose for
+// the full history can rely on VERBOO_LOG_TOKEN_USAGE=verbose for
 // structured per-request stderr output.
 const MAX_RECENT_ROWS = 20
 

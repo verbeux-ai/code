@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { VERBOO_ROUTER_URL } from '../constants/oauth.js'
+import { detectProvider } from './StartupScreen.js'
+import { saveGlobalConfig } from '../utils/config.js'
 import {
   resetSettingsCache,
   setSessionSettingsCache,
 } from '../utils/settings/settingsCache.js'
 
 const ENV_KEYS = [
+  'CI',
   'CLAUDE_CODE_USE_OPENAI',
   'CLAUDE_CODE_USE_GEMINI',
   'CLAUDE_CODE_USE_GITHUB',
@@ -22,9 +25,17 @@ const ENV_KEYS = [
   'CLAUDE_MODEL',
   'NVIDIA_NIM',
   'MINIMAX_API_KEY',
+  'XAI_API_KEY',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_BASE_URL',
 ]
 
 const originalEnv: Record<string, string | undefined> = {}
+const originalMacro = (globalThis as Record<string, unknown>).MACRO
+const originalIsTTY = process.stdout.isTTY
+const originalWrite = process.stdout.write
 
 async function importStartupScreenWithModels(
   models: Array<{ id: string }> = [{ id: 'early-adopters/qwen3.6-27b' }],
@@ -55,11 +66,26 @@ beforeEach(() => {
     originalEnv[key] = process.env[key]
     delete process.env[key]
   }
+  setSessionSettingsCache({ settings: {}, errors: [] })
+  saveGlobalConfig(current => ({
+    ...current,
+    model: undefined,
+  }))
 })
 
 afterEach(() => {
   mock.restore()
   resetSettingsCache()
+  saveGlobalConfig(current => ({
+    ...current,
+    model: undefined,
+  }))
+  ;(globalThis as Record<string, unknown>).MACRO = originalMacro
+  Object.defineProperty(process.stdout, 'isTTY', {
+    configurable: true,
+    value: originalIsTTY,
+  })
+  process.stdout.write = originalWrite
   for (const key of ENV_KEYS) {
     if (originalEnv[key] === undefined) {
       delete process.env[key]
@@ -72,6 +98,7 @@ afterEach(() => {
 describe('detectProvider — Verboo isolation', () => {
   test('uses Verboo router by default', async () => {
     const { detectProvider } = await importStartupScreenWithModels()
+
     const result = detectProvider()
 
     expect(result.name).toBe('Verboo')

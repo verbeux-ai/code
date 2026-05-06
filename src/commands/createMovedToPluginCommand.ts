@@ -48,7 +48,7 @@ export function createMovedToPluginCommand({
             text: `This command has been moved to a plugin. Tell the user:
 
 1. To install the plugin, run:
-   openclaude plugin install ${pluginName}@claude-code-marketplace
+   verboo plugin install ${pluginName}@claude-code-marketplace
 
 2. After installation, use /${pluginName}:${pluginCommand} to run this command
 

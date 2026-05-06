@@ -11,6 +11,7 @@ import {
   getLocalOpenAICompatibleProviderLabel,
   probeOllamaGenerationReadiness,
 } from '../src/utils/providerDiscovery.js'
+import { DEFAULT_GEMINI_MODEL } from '../src/utils/providerProfile.js'
 import { redactUrlForDisplay } from '../src/utils/urlRedaction.js'
 
 type CheckResult = {
@@ -148,7 +149,7 @@ function checkGeminiEnv(): CheckResult[] {
   results.push(pass('Provider mode', 'Google Gemini provider enabled.'))
 
   if (!model) {
-    results.push(pass('GEMINI_MODEL', 'Not set. Default gemini-2.0-flash will be used.'))
+    results.push(pass('GEMINI_MODEL', `Not set. Default ${DEFAULT_GEMINI_MODEL} will be used.`))
   } else {
     results.push(pass('GEMINI_MODEL', model))
   }
@@ -351,7 +352,7 @@ async function checkBaseUrlReachability(): Promise<CheckResult> {
         headers['chatgpt-account-id'] = credentials.accountId
       }
       headers['Content-Type'] = 'application/json'
-      headers.originator = 'openclaude'
+      headers.originator = 'verboo'
       method = 'POST'
       body = JSON.stringify({
         model: request.resolvedModel,
@@ -556,7 +557,7 @@ function serializeSafeEnvSummary(): Record<string, string | boolean> {
   if (isTruthy(process.env.CLAUDE_CODE_USE_GEMINI)) {
     return {
       CLAUDE_CODE_USE_GEMINI: true,
-      GEMINI_MODEL: process.env.GEMINI_MODEL ?? '(unset, default: gemini-2.0-flash)',
+      GEMINI_MODEL: process.env.GEMINI_MODEL ?? `(unset, default: ${DEFAULT_GEMINI_MODEL})`,
       GEMINI_BASE_URL: process.env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta/openai',
       GEMINI_API_KEY_SET: Boolean(process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY),
     }

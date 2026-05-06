@@ -55,7 +55,7 @@ test('getGlobalClaudeFile: uses Verboo config home .config.json', async () => {
 
 test('getGlobalClaudeFile: ignores legacy config files', async () => {
   writeFileSync(join(tempDir, '.claude.json'), '{}')
-  writeFileSync(join(tempDir, '.openclaude.json'), '{}')
+  writeFileSync(join(tempDir, '.verboo.json'), '{}')
   const { getGlobalClaudeFile } = await importFreshEnvModule()
   expect(getGlobalClaudeFile()).toBe(join(tempDir, '.config.json'))
 })

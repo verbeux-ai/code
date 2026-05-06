@@ -36,7 +36,7 @@ describe('Verboo paths', () => {
   })
 
   test('ignores CLAUDE_CONFIG_DIR and uses VERBOO_CONFIG_DIR only', async () => {
-    process.env.CLAUDE_CONFIG_DIR = '/tmp/custom-openclaude'
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/custom-verboo'
     process.env.VERBOO_CONFIG_DIR = '/tmp/custom-verboo'
     const { getClaudeConfigHomeDir, resolveClaudeConfigHomeDir } =
       await importFreshEnvUtils()
@@ -80,7 +80,7 @@ describe('Verboo paths', () => {
     ).toBe(true)
     expect(
       isManagedLocalInstallationPath(
-        `${join(homedir(), '.openclaude', 'local')}/node_modules/.bin/openclaude`,
+        `${join(homedir(), '.verboo', 'local')}/node_modules/.bin/verboo`,
       ),
     ).toBe(false)
   })

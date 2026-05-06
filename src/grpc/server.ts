@@ -9,7 +9,7 @@ import { getDefaultAppState } from '../state/AppStateStore.js'
 import { AppState } from '../state/AppState.js'
 import { FileStateCache, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache.js'
 
-const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
+const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/verboo.proto')
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -20,7 +20,7 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 })
 
 const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
-const openclaudeProto = protoDescriptor.openclaude.v1
+const verbooProto = protoDescriptor.verboo.v1
 
 const MAX_SESSIONS = 1000
 // Drop sessions inactive for 1h. A multi-tenant gRPC server with clients
@@ -60,7 +60,7 @@ export class GrpcServer {
 
   constructor() {
     this.server = new grpc.Server()
-    this.server.addService(openclaudeProto.AgentService.service, {
+    this.server.addService(verbooProto.AgentService.service, {
       Chat: this.handleChat.bind(this),
     })
   }

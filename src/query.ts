@@ -83,6 +83,7 @@ import { headlessProfilerCheckpoint } from './utils/headlessProfiler.js'
 import {
   getDefaultMainLoopModelSetting,
   getRuntimeMainLoopModel,
+  parseUserSpecifiedModel,
   renderModelName,
 } from './utils/model/model.js'
 import {
@@ -643,7 +644,7 @@ async function* queryLoop(
       getDefaultMainLoopModelSetting()
     let currentModel = getRuntimeMainLoopModel({
       permissionMode,
-      mainLoopModel: appStateMainLoopModel,
+      mainLoopModel: parseUserSpecifiedModel(appStateMainLoopModel),
       exceeds200kTokens:
         permissionMode === 'plan' &&
         doesMostRecentAssistantMessageExceed200k(messagesForQuery),

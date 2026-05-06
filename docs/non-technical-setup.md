@@ -30,7 +30,7 @@ You need:
 
 1. Install Verboo Code with npm
 2. Set 3 environment variables
-3. Run `openclaude`
+3. Run `verboo`
 
 ## Choose Your Operating System
 
@@ -62,7 +62,7 @@ Choose this if:
 
 ## What Success Looks Like
 
-After you run `openclaude`, the CLI should start and wait for your prompt.
+After you run `verboo`, the CLI should start and wait for your prompt.
 
 At that point, you can ask it to:
 
@@ -73,7 +73,7 @@ At that point, you can ask it to:
 
 ## Common Problems
 
-### `openclaude` command not found
+### `verboo` command not found
 
 Cause:
 
@@ -83,7 +83,7 @@ Fix:
 
 1. Close the terminal
 2. Open a new terminal
-3. Run `openclaude` again
+3. Run `verboo` again
 
 ### Invalid API key
 
@@ -95,7 +95,7 @@ Fix:
 
 1. Get a fresh key from your provider
 2. Paste it again carefully
-3. Re-run `openclaude`
+3. Re-run `verboo`
 
 ### Ollama not working
 
@@ -114,3 +114,4 @@ Fix:
 If you want source builds, advanced provider profiles, diagnostics, or Bun-based workflows, use:
 
 - [Advanced Setup](advanced-setup.md)
+  This is also where to find Codex, Gemini, Mistral, LiteLLM, and profile-launcher setup.

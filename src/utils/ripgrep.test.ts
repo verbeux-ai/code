@@ -5,16 +5,15 @@ import { resolveRipgrepConfig, wrapRipgrepUnavailableError } from './ripgrep.js'
 
 const MOCK_BUILTIN_PATH = path.normalize(
   process.platform === 'win32'
-    ? `vendor/ripgrep/${process.arch}-win32/rg.exe`
-    : `vendor/ripgrep/${process.arch}-${process.platform}/rg`,
+    ? `node_modules/@vscode/ripgrep/bin/rg.exe`
+    : `node_modules/@vscode/ripgrep/bin/rg`,
 )
 
-test('ripgrepCommand falls back to system rg when builtin binary is missing', () => {
+test('falls back to system rg when @vscode/ripgrep cannot be resolved', () => {
   const config = resolveRipgrepConfig({
     userWantsSystemRipgrep: false,
     bundledMode: false,
-    builtinCommand: MOCK_BUILTIN_PATH,
-    builtinExists: false,
+    builtinCommand: null,
     systemExecutablePath: '/usr/bin/rg',
     processExecPath: '/fake/bun',
   })
@@ -26,12 +25,11 @@ test('ripgrepCommand falls back to system rg when builtin binary is missing', ()
   })
 })
 
-test('ripgrepCommand keeps builtin mode when bundled binary exists', () => {
+test('uses builtin @vscode/ripgrep path when the package resolves', () => {
   const config = resolveRipgrepConfig({
     userWantsSystemRipgrep: false,
     bundledMode: false,
     builtinCommand: MOCK_BUILTIN_PATH,
-    builtinExists: true,
     systemExecutablePath: '/usr/bin/rg',
     processExecPath: '/fake/bun',
   })
@@ -63,11 +61,27 @@ test('ripgrepCommand uses npm ripgrep fallback when bundled binary is missing', 
   })
 })
 
+test('honors USE_BUILTIN_RIPGREP=0 by selecting system rg even when builtin is available', () => {
+  const config = resolveRipgrepConfig({
+    userWantsSystemRipgrep: true,
+    bundledMode: false,
+    builtinCommand: MOCK_BUILTIN_PATH,
+    systemExecutablePath: '/usr/bin/rg',
+    processExecPath: '/fake/bun',
+  })
+
+  expect(config).toMatchObject({
+    mode: 'system',
+    command: 'rg',
+    args: [],
+  })
+})
+
 test('ripgrepCommand reports missing system rg when no fallback exists', () => {
   const config = resolveRipgrepConfig({
     userWantsSystemRipgrep: false,
     bundledMode: false,
-    builtinCommand: MOCK_BUILTIN_PATH,
+    builtinCommand: null,
     builtinExists: false,
     npmCommand: path.normalize('node_modules/@vscode/ripgrep/bin/rg'),
     npmExists: false,
@@ -82,10 +96,43 @@ test('ripgrepCommand reports missing system rg when no fallback exists', () => {
   })
 })
 
+test('keeps embedded mode for Bun-compiled standalone executables', () => {
+  const config = resolveRipgrepConfig({
+    userWantsSystemRipgrep: false,
+    bundledMode: true,
+    builtinCommand: null,
+    systemExecutablePath: '/usr/bin/rg',
+    processExecPath: '/opt/verboo/bin/verboo',
+  })
+
+  expect(config).toMatchObject({
+    mode: 'embedded',
+    command: '/opt/verboo/bin/verboo',
+    args: ['--no-config'],
+    argv0: 'rg',
+  })
+})
+
+test('falls through to system rg as a last resort even when not on PATH', () => {
+  const config = resolveRipgrepConfig({
+    userWantsSystemRipgrep: false,
+    bundledMode: false,
+    builtinCommand: null,
+    systemExecutablePath: 'rg',
+    processExecPath: '/fake/bun',
+  })
+
+  expect(config).toMatchObject({
+    mode: 'system',
+    command: 'rg',
+    args: [],
+  })
+})
+
 test('wrapRipgrepUnavailableError explains missing packaged fallback', () => {
   const error = wrapRipgrepUnavailableError(
     { code: 'ENOENT', message: 'spawn rg ENOENT' },
-    { mode: 'builtin', command: 'C:\\fake\\vendor\\ripgrep\\rg.exe', args: [] },
+    { mode: 'builtin', command: 'C:\\fake\\node_modules\\@vscode\\ripgrep\\bin\\rg.exe', args: [] },
     'win32',
   )
 

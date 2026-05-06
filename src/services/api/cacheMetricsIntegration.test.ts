@@ -40,7 +40,7 @@ type Scenario = {
   expectedFreshInput: number
 }
 
-// End-to-end scenarios for every provider shape the OpenClaude shim layer
+// End-to-end scenarios for every provider shape the Verboo Code shim layer
 // might see. `expectedTotal` is what a user should see as "input this
 // request", `expectedHitRate` is what `/cache-stats` should display.
 const scenarios: Scenario[] = [
@@ -182,7 +182,7 @@ describe('no-cache providers — pipeline honestly reports unsupported', () => {
 
 describe('display path end-to-end — private-IP, custom-port, self-hosted endpoints', () => {
   // These tests exercise the FULL pipeline that runs when a user
-  // configures OpenClaude against a self-hosted OpenAI-compatible
+  // configures Verboo Code against a self-hosted OpenAI-compatible
   // server (vLLM, LM Studio, LocalAI, text-generation-webui, etc.):
   //
   //   OPENAI_BASE_URL → resolveCacheProvider → real provider usage →

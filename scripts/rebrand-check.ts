@@ -3,7 +3,7 @@
  * VERBOO-BRAND: rebrand regression check.
  *
  * Roda após `git merge upstream/main` e em CI para garantir que literais
- * antigos do upstream openclaude/Claude Code não voltaram em pontos onde
+ * antigos do upstream verboo/Claude Code não voltaram em pontos onde
  * a marca Verboo deve prevalecer.
  *
  * Exit 0 = clean, exit 1 = regressões encontradas.
@@ -13,7 +13,7 @@
  * Allowlist é intencional — refletindo as decisões em UPSTREAM_SYNC.md:
  *  - identifiers Anthropic (bundle IDs, telemetria) preservados
  *  - prompts de tool com "Claude Code" preservados
- *  - bin/openclaude alias deprecated mantido
+ *  - bin/verboo alias deprecated mantido
  *  - OPENCLAUDE_* env var aliases mantidos
  */
 
@@ -67,12 +67,12 @@ const COMMON_ALLOWLIST = [
   'src/components/ProviderManager.tsx',
   'src/utils/providerProfiles.ts',
   'src/utils/providerValidation.ts',
-  // Tool prompts intentionally preserve openclaude/Claude Code wording:
+  // Tool prompts intentionally preserve verboo/Claude Code wording:
   'src/tools/',
   // Telemetry already gated off via isAnalyticsDisabled():
   'src/services/analytics/',
-  // Internal install/launch utilities for openclaude alias:
-  'openclaudeInstallSurfaces',
+  // Internal install/launch utilities for verboo alias:
+  'verbooInstallSurfaces',
   'provider-launch.ts',
   'provider-bootstrap.ts',
   'start-grpc.ts',
@@ -107,10 +107,10 @@ const COMMON_ALLOWLIST = [
   'src/commands/share.tsx',
   'src/commands/upgrade/',
   'src/commands/feedback.tsx',
-  'src/utils/openclaudeFingerprint.ts',
-  'src/utils/openclaudeUpdate.ts',
-  'src/utils/openclaudeProcessManager.ts',
-  'src/utils/openclaudeInstall.ts',
+  'src/utils/verbooFingerprint.ts',
+  'src/utils/verbooUpdate.ts',
+  'src/utils/verbooProcessManager.ts',
+  'src/utils/verbooInstall.ts',
   'src/utils/configMigration.ts',
   'src/utils/auth/',
   'src/utils/uninstaller/',
@@ -120,11 +120,11 @@ const COMMON_ALLOWLIST = [
 
 const RULES: Rule[] = [
   {
-    name: 'OpenClaude product literal',
-    pattern: /\b(OpenClaude|Open Claude|OPEN CLAUDE)\b/,
+    name: 'Verboo Code product literal',
+    pattern: /\b(Verboo Code|Open Claude|OPEN CLAUDE)\b/,
     allowlist: [
       ...COMMON_ALLOWLIST,
-      // CLI brand fallback gated por VERBOO_CLI_BRAND=openclaude (alias deprecated):
+      // CLI brand fallback gated por VERBOO_CLI_BRAND=verboo (alias deprecated):
       'src/main.tsx',
     ],
   },

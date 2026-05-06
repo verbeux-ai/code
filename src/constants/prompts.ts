@@ -117,6 +117,13 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY =
 // @[MODEL LAUNCH]: Update the latest frontier model.
 const FRONTIER_MODEL_NAME = 'Claude Opus 4.7'
 
+// @[MODEL LAUNCH]: Update the model family IDs below to the latest in each tier.
+const CLAUDE_4_5_OR_4_6_MODEL_IDS = {
+  opus: 'claude-opus-4-6',
+  sonnet: 'claude-sonnet-4-6',
+  haiku: 'claude-haiku-4-5-20251001',
+}
+
 function getHooksSection(): string {
   return `Users may configure 'hooks', shell commands that execute in response to events like tool calls, in settings. Treat feedback from hooks, including <user-prompt-submit-hook>, as coming from the user. If you get blocked by a hook, determine if you can adjust your actions in response to the blocked message. If not, ask the user to check their hooks configuration.`
 }

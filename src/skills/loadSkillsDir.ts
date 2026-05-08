@@ -31,6 +31,7 @@ import {
 } from '../utils/effort.js'
 import {
   getClaudeConfigHomeDir,
+  getLegacyClaudeConfigHomeDir,
   isBareMode,
   isEnvTruthy,
 } from '../utils/envUtils.js'
@@ -53,6 +54,7 @@ import {
   loadMarkdownFilesForSubdir,
   type MarkdownFile,
   parseSlashCommandToolsFromFrontmatter,
+  PROJECT_CONFIG_DIR_NAMES,
 } from '../utils/markdownConfigLoader.js'
 import { parseUserSpecifiedModel } from '../utils/model/model.js'
 import { executeShellCommandsInPrompt } from '../utils/promptShellExecution.js'
@@ -723,11 +725,15 @@ async function loadSkillsFromCommandsDir(
 export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
     const userSkillsDir = join(getClaudeConfigHomeDir(), 'skills')
+    const legacyClaudeHome = getLegacyClaudeConfigHomeDir()
+    const legacyUserSkillsDir = legacyClaudeHome
+      ? join(legacyClaudeHome, 'skills')
+      : null
     const managedSkillsDir = join(getManagedFilePath(), '.verboo', 'skills')
     const projectSkillsDirs = getProjectDirsUpToHome('skills', cwd)
 
     logForDebugging(
-      `Loading skills from: managed=${managedSkillsDir}, user=${userSkillsDir}, project=[${projectSkillsDirs.join(', ')}]`,
+      `Loading skills from: managed=${managedSkillsDir}, user=${userSkillsDir}, legacyUser=${legacyUserSkillsDir ?? 'disabled'}, project=[${projectSkillsDirs.join(', ')}]`,
     )
 
     // Load from additional directories (--add-dir)
@@ -748,10 +754,12 @@ export const getSkillDirCommands = memoize(
         return []
       }
       const additionalSkillsNested = await Promise.all(
-        additionalDirs.map(dir =>
-          loadSkillsFromSkillsDir(
-            join(dir, '.verboo', 'skills'),
-            'projectSettings',
+        additionalDirs.flatMap(dir =>
+          PROJECT_CONFIG_DIR_NAMES.map(configDirName =>
+            loadSkillsFromSkillsDir(
+              join(dir, configDirName, 'skills'),
+              'projectSettings',
+            ),
           ),
         ),
       )
@@ -764,6 +772,7 @@ export const getSkillDirCommands = memoize(
     const [
       managedSkills,
       userSkills,
+      legacyUserSkills,
       projectSkillsNested,
       additionalSkillsNested,
       legacyCommands,
@@ -774,6 +783,15 @@ export const getSkillDirCommands = memoize(
       isSettingSourceEnabled('userSettings') && !skillsLocked
         ? loadSkillsFromSkillsDir(userSkillsDir, 'userSettings')
         : Promise.resolve([]),
+      // Compat read-only com ~/.claude/skills (Claude Code ecossystem).
+      // Dedupe por realpath abaixo cobre o caso de symlink/sobreposição;
+      // userSettings vem antes para ganhar em conflito.
+      legacyUserSkillsDir &&
+      isSettingSourceEnabled('userSettings') &&
+      !skillsLocked &&
+      legacyUserSkillsDir !== userSkillsDir
+        ? loadSkillsFromSkillsDir(legacyUserSkillsDir, 'userSettings')
+        : Promise.resolve([]),
       projectSettingsEnabled
         ? Promise.all(
             projectSkillsDirs.map(dir =>
@@ -783,10 +801,12 @@ export const getSkillDirCommands = memoize(
         : Promise.resolve([]),
       projectSettingsEnabled
         ? Promise.all(
-            additionalDirs.map(dir =>
-              loadSkillsFromSkillsDir(
-                join(dir, '.verboo', 'skills'),
-                'projectSettings',
+            additionalDirs.flatMap(dir =>
+              PROJECT_CONFIG_DIR_NAMES.map(configDirName =>
+                loadSkillsFromSkillsDir(
+                  join(dir, configDirName, 'skills'),
+                  'projectSettings',
+                ),
               ),
             ),
           )
@@ -802,6 +822,7 @@ export const getSkillDirCommands = memoize(
     const allSkillsWithPaths = [
       ...managedSkills,
       ...userSkills,
+      ...legacyUserSkills,
       ...projectSkillsNested.flat(),
       ...additionalSkillsNested.flat(),
       ...legacyCommands,
@@ -881,7 +902,7 @@ export const getSkillDirCommands = memoize(
     }
 
     logForDebugging(
-      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
+      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, legacyUser: ${legacyUserSkills.length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
     )
 
     return unconditionalSkills
@@ -959,30 +980,34 @@ export async function discoverSkillDirsForPaths(
     // CWD-level skills are already loaded at startup, so we only discover nested ones
     // Use prefix+separator check to avoid matching /project-backup when cwd is /project
     while (currentDir.startsWith(resolvedCwd + pathSep)) {
-      const skillDir = join(currentDir, '.verboo', 'skills')
+      // Verifica ambos .verboo/skills e .claude/skills (ecossistema Claude Code).
+      // Dedupe por realpath em getSkillDirCommands trata sobreposições.
+      for (const configDirName of PROJECT_CONFIG_DIR_NAMES) {
+        const skillDir = join(currentDir, configDirName, 'skills')
 
-      // Skip if we've already checked this path (hit or miss) — avoids
-      // repeating the same failed stat on every Read/Write/Edit call when
-      // the directory doesn't exist (the common case).
-      if (!dynamicSkillDirs.has(skillDir)) {
-        dynamicSkillDirs.add(skillDir)
-        try {
-          await fs.stat(skillDir)
-          // Skills dir exists. Before loading, check if the containing dir
-          // is gitignored — blocks e.g. node_modules/pkg/.claude/skills from
-          // loading silently. `git check-ignore` handles nested .gitignore,
-          // .git/info/exclude, and global gitignore. Fails open outside a
-          // git repo (exit 128 → false); the invocation-time trust dialog
-          // is the actual security boundary.
-          if (await isPathGitignored(currentDir, resolvedCwd)) {
-            logForDebugging(
-              `[skills] Skipped gitignored skills dir: ${skillDir}`,
-            )
-            continue
+        // Skip if we've already checked this path (hit or miss) — avoids
+        // repeating the same failed stat on every Read/Write/Edit call when
+        // the directory doesn't exist (the common case).
+        if (!dynamicSkillDirs.has(skillDir)) {
+          dynamicSkillDirs.add(skillDir)
+          try {
+            await fs.stat(skillDir)
+            // Skills dir exists. Before loading, check if the containing dir
+            // is gitignored — blocks e.g. node_modules/pkg/.claude/skills from
+            // loading silently. `git check-ignore` handles nested .gitignore,
+            // .git/info/exclude, and global gitignore. Fails open outside a
+            // git repo (exit 128 → false); the invocation-time trust dialog
+            // is the actual security boundary.
+            if (await isPathGitignored(currentDir, resolvedCwd)) {
+              logForDebugging(
+                `[skills] Skipped gitignored skills dir: ${skillDir}`,
+              )
+              continue
+            }
+            newDirs.push(skillDir)
+          } catch {
+            // Directory doesn't exist — already recorded above, continue
           }
-          newDirs.push(skillDir)
-        } catch {
-          // Directory doesn't exist — already recorded above, continue
         }
       }
 

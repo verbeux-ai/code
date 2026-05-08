@@ -37,6 +37,15 @@ export function getTeamsDir(): string {
   return join(getClaudeConfigHomeDir(), 'teams')
 }
 
+// Read-only: ~/.claude é lido para compat com o ecossistema Claude Code
+// (skills, plugins, agents instalados via `claude`). Verboo nunca escreve aqui.
+// Retorna null quando VERBOO_CONFIG_DIR é setado (override explícito = isolamento
+// total; também evita que tests com tmp config_dir leiam ~/.claude do sistema).
+export function getLegacyClaudeConfigHomeDir(): string | null {
+  if (process.env.VERBOO_CONFIG_DIR) return null
+  return join(homedir(), '.claude').normalize('NFC')
+}
+
 /**
  * Check if NODE_OPTIONS contains a specific flag.
  * Splits on whitespace and checks for exact match to avoid false positives.

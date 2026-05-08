@@ -9,8 +9,9 @@
  * The base directory can be overridden via CLAUDE_CODE_PLUGIN_CACHE_DIR.
  */
 
-import { mkdirSync } from 'fs'
+import { mkdirSync, statSync } from 'fs'
 import { readdir, rm, stat } from 'fs/promises'
+import { homedir } from 'os'
 import { delimiter, join } from 'path'
 import { getUseCoworkPlugins } from '../../bootstrap/state.js'
 import { logForDebugging } from '../debug.js'
@@ -85,8 +86,24 @@ export function getPluginsDirectory(): string {
 export function getPluginSeedDirs(): string[] {
   // Same tilde-expansion rationale as getPluginsDirectory (gh-30794).
   const raw = process.env.CLAUDE_CODE_PLUGIN_SEED_DIR
-  if (!raw) return []
-  return raw.split(delimiter).filter(Boolean).map(expandTilde)
+  if (raw) {
+    return raw.split(delimiter).filter(Boolean).map(expandTilde)
+  }
+
+  // Default: ~/.claude/plugins como seed read-only para herdar plugins e
+  // marketplaces instalados via Claude Code. Verboo lê (cache, marketplaces),
+  // mas escreve apenas em getPluginsDirectory() (~/.verboo/plugins).
+  // Skipa quando: VERBOO_CONFIG_DIR override (isolamento explícito), legacy
+  // == primary (loop), ou legacy não existe.
+  if (process.env.VERBOO_CONFIG_DIR) return []
+  const legacy = join(homedir(), '.claude', 'plugins')
+  if (legacy === getPluginsDirectory()) return []
+  try {
+    statSync(legacy)
+    return [legacy]
+  } catch {
+    return []
+  }
 }
 
 function sanitizePluginId(pluginId: string): string {

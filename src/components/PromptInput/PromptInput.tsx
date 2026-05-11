@@ -2307,15 +2307,19 @@ function PromptInput({
           </Box>
           <Text color={swarmBanner.bgColor}>{'─'.repeat(columns)}</Text>
         </> : <Box flexDirection="column" width="100%">
-          <Text color="rgb(45,45,45)">{'▄'.repeat(columns)}</Text>
-          <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-start" backgroundColor="rgb(45,45,45)">
+          {/* VERBOO-BRAND: input frame uses the active theme's userMessageBackground
+              (cinza claro em light, cinza médio em dark) — the upstream "rgb(45,45,45)"
+              was hardcoded for dark mode and produced an unreadable black band over
+              the prompt in light themes. */}
+          <Text color="userMessageBackground">{'▄'.repeat(columns)}</Text>
+          <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-start" backgroundColor="userMessageBackground">
             <PromptInputModeIndicator mode={mode} isLoading={isLoading} viewingAgentName={viewingAgentName} viewingAgentColor={viewingAgentColor} />
             {showFastIcon && <Text color={getBorderColor()}>{' '}{getFastIconString(true, fastModeCooldown)}{' '}{showFastIconHint && <Text dimColor>/fast</Text>}</Text>}
             <Box flexGrow={1} flexShrink={1} onClick={handleInputClick}>
               {textInputElement}
             </Box>
           </Box>
-          <Text color="rgb(45,45,45)">{'▀'.repeat(columns)}</Text>
+          <Text color="userMessageBackground">{'▀'.repeat(columns)}</Text>
         </Box>}
       <PromptInputFooter apiKeyStatus={apiKeyStatus} debug={debug} exitMessage={exitMessage} vimMode={isVimModeEnabled() ? vimMode : undefined} mode={mode} autoUpdaterResult={autoUpdaterResult} isAutoUpdating={isAutoUpdating} verbose={verbose} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={setIsAutoUpdating} suggestions={suggestions} selectedSuggestion={selectedSuggestion} maxColumnWidth={maxColumnWidth} toolPermissionContext={effectiveToolPermissionContext} helpOpen={helpOpen} suppressHint={input.length > 0} isLoading={isLoading} tasksSelected={tasksSelected} teamsSelected={teamsSelected} bridgeSelected={bridgeSelected} tmuxSelected={tmuxSelected} teammateFooterIndex={teammateFooterIndex} ideSelection={ideSelection} mcpClients={mcpClients} isPasting={isPasting} isInputWrapped={isInputWrapped} messages={messages} isSearching={isSearchingHistory} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={isFullscreenEnvEnabled() ? handleOpenTasksDialog : undefined} />
       {isFullscreenEnvEnabled() ? null : autoModeOptInDialog}

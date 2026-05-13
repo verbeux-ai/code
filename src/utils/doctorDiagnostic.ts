@@ -455,30 +455,11 @@ async function detectConfigurationIssues(
     }
   }
 
-  // Check for configuration mismatches
-  // Skip these checks if DISABLE_INSTALLATION_CHECKS is set (e.g., in HFI)
-  if (!isEnvTruthy(process.env.DISABLE_INSTALLATION_CHECKS)) {
-    if (type === 'npm-local' && config.installMethod !== 'local') {
-      warnings.push({
-        issue: `Running from local installation but config install method is '${config.installMethod}'`,
-        fix: `Consider using native installation: ${getCliBinaryName()} install`,
-      })
-    }
-
-    if (type === 'native' && config.installMethod !== 'native') {
-      warnings.push({
-        issue: `Running native installation but config install method is '${config.installMethod}'`,
-        fix: `Run ${getCliBinaryName()} install to update configuration`,
-      })
-    }
-  }
-
-  if (type === 'npm-global' && (await localInstallationExists())) {
-    warnings.push({
-      issue: 'Local installation exists but not being used',
-      fix: `Consider using native installation: ${getCliBinaryName()} install`,
-    })
-  }
+  // VERBOO-BRAND: warnings de mismatch de installation method e sugestões
+  // para o instalador nativo foram removidas — @verboo/code é distribuído
+  // apenas via npm, e o instalador nativo upstream baixa de um bucket GCS
+  // que não tem nossos binários (gera 404). Mantemos só checks de alias
+  // de shell logo abaixo.
 
   const existingAlias = await findClaudeAlias()
   const validAlias = await findValidClaudeAlias()

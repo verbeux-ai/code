@@ -99,6 +99,24 @@ function Install({
       try {
         logForDebugging(`Install: Starting installation process (force=${force}, target=${target})`);
 
+        // VERBOO-BRAND: o instalador nativo upstream baixa binários do bucket
+        // GCS da Anthropic (storage.googleapis.com/claude-code-dist-...) que
+        // NÃO tem binários de @verboo/code. Qualquer chamada a `verboo install`
+        // gera 404. Bloqueamos com mensagem orientando o usuário ao npm.
+        setState({
+          type: 'error',
+          message:
+            `Native installation is not available for @verboo/code.\n\n` +
+            `Verboo Code is distributed via npm. To install or update, run:\n` +
+            `  npm install -g @verboo/code@latest\n` +
+            `or\n` +
+            `  bun install -g @verboo/code@latest\n\n` +
+            `If you already have it installed, simply run \`verboo update\` ` +
+            `or wait for the auto-updater (checks every 30 minutes).`,
+        });
+        return;
+
+        // eslint-disable-next-line no-unreachable
         // Install native build first
         const channelOrVersion = target || getInitialSettings()?.autoUpdatesChannel || 'latest';
         setState({

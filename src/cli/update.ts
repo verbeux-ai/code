@@ -189,16 +189,16 @@ export async function update() {
     await gracefulShutdown(0)
   }
 
-  // Check for config/reality mismatch (skip for package-manager installs)
+  // VERBOO-BRAND: aviso de "Config expects X installation / switching to Y"
+  // removido — confundia usuários porque sugere uma migração que não existe
+  // na nossa distribuição. Atualizamos o config silenciosamente para refletir
+  // a realidade do runtime.
   if (
     config.installMethod &&
     diagnostic.configInstallMethod !== 'not set' &&
     diagnostic.installationType !== 'package-manager'
   ) {
     const runningType = diagnostic.installationType
-    const configExpects = diagnostic.configInstallMethod
-
-    // Map installation types for comparison
     const typeMapping: Record<string, string> = {
       'npm-local': 'local',
       'npm-global': 'global',
@@ -206,30 +206,17 @@ export async function update() {
       development: 'development',
       unknown: 'unknown',
     }
-
     const normalizedRunningType = typeMapping[runningType] || runningType
-
     if (
-      normalizedRunningType !== configExpects &&
-      configExpects !== 'unknown'
+      normalizedRunningType !== diagnostic.configInstallMethod &&
+      diagnostic.configInstallMethod !== 'unknown'
     ) {
-      writeToStdout('\n')
-      writeToStdout(chalk.yellow('Warning: Configuration mismatch') + '\n')
-      writeToStdout(`Config expects: ${configExpects} installation\n`)
-      writeToStdout(`Currently running: ${runningType}\n`)
-      writeToStdout(
-        chalk.yellow(
-          `Updating the ${runningType} installation you are currently using`,
-        ) + '\n',
-      )
-
-      // Update config to match reality
       saveGlobalConfig(current => ({
         ...current,
         installMethod: normalizedRunningType as InstallMethod,
       }))
-      writeToStdout(
-        `Config updated to reflect current installation method: ${normalizedRunningType}\n`,
+      logForDebugging(
+        `update: Silently corrected installMethod ${diagnostic.configInstallMethod} → ${normalizedRunningType}`,
       )
     }
   }

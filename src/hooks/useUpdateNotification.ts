@@ -15,20 +15,31 @@ export function shouldShowUpdateNotification(
 
 export function useUpdateNotification(
   updatedVersion: string | null | undefined,
-  initialVersion: string = MACRO.VERSION,
+  initialVersion: string = MACRO.DISPLAY_VERSION,
 ): string | null {
+  // Bug fix: o padrão original era "setState during render + derivar retorno
+  // da comparação" — React descarta o JSX da primeira passada e re-renderiza
+  // com o novo state. Na 2ª passada lastNotifiedSemver === updatedSemver,
+  // retornava null, e o commit ficava com null. Resultado: a notificação
+  // de update nunca aparecia.
+  // Fix: armazenar o valor da notificação em state separado para que persista
+  // através do re-render. Também troca default de MACRO.VERSION (= '99.0.0'
+  // hardcoded em verboo p/ bypassar version gate) para MACRO.DISPLAY_VERSION
+  // (versão real em execução).
   const [lastNotifiedSemver, setLastNotifiedSemver] = useState<string | null>(
     () => getSemverPart(initialVersion),
   )
+  const [pendingNotification, setPendingNotification] = useState<string | null>(
+    null,
+  )
 
-  if (!updatedVersion) {
-    return null
+  if (updatedVersion) {
+    const updatedSemver = getSemverPart(updatedVersion)
+    if (updatedSemver !== lastNotifiedSemver) {
+      setLastNotifiedSemver(updatedSemver)
+      setPendingNotification(updatedSemver)
+    }
   }
 
-  const updatedSemver = getSemverPart(updatedVersion)
-  if (updatedSemver !== lastNotifiedSemver) {
-    setLastNotifiedSemver(updatedSemver)
-    return updatedSemver
-  }
-  return null
+  return pendingNotification
 }

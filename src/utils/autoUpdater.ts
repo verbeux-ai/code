@@ -336,7 +336,7 @@ export async function getLatestVersion(
     { abortSignal: AbortSignal.timeout(5000), cwd: homedir() },
   )
   if (result.code !== 0) {
-    logForDebugging(`npm view failed with code ${result.code}`)
+    logForDebugging(`npm view failed with code ${result.code} for tag '${npmTag}'`)
     if (result.stderr) {
       logForDebugging(`npm stderr: ${result.stderr.trim()}`)
     } else {
@@ -344,6 +344,22 @@ export async function getLatestVersion(
     }
     if (result.stdout) {
       logForDebugging(`npm stdout: ${result.stdout.trim()}`)
+    }
+    // Fallback: se a tag 'stable' não existe no registry (caso atual de
+    // @verboo/code — só publicamos 'latest'), tentar 'latest' para não
+    // deixar o usuário preso sem updates por configuração órfã.
+    if (npmTag === 'stable') {
+      logForDebugging(
+        `Tag 'stable' indisponível; caindo para 'latest' como fallback`,
+      )
+      const fallback = await execFileNoThrowWithCwd(
+        'npm',
+        ['view', `${MACRO.PACKAGE_URL}@latest`, 'version', '--prefer-online'],
+        { abortSignal: AbortSignal.timeout(5000), cwd: homedir() },
+      )
+      if (fallback.code === 0) {
+        return fallback.stdout.trim()
+      }
     }
     return null
   }

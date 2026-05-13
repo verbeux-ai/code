@@ -145,6 +145,12 @@ result = await Bun.build({
     // VERBOO-BRAND: package URL injected at build time
     'MACRO.PACKAGE_URL': JSON.stringify('@verboo/code'),
     'MACRO.NATIVE_PACKAGE_URL': 'undefined',
+    // Bun default substitui `process.env.NODE_ENV` por `"development"` em
+    // bundles. Isso ativava `getCurrentInstallationType() === 'development'`
+    // em todos os installs npm, BLOQUEANDO completamente o auto-updater para
+    // todo mundo. Hardcoded como 'production' aqui — testes/dev rodam do
+    // source, sem passar pelo bundler.
+    'process.env.NODE_ENV': JSON.stringify('production'),
   },
   plugins: [
     noTelemetryPlugin,
@@ -498,6 +504,9 @@ sdkResult = await Bun.build({
       JSON.stringify('https://github.com/verbeux-ai/code/issues'),
     'MACRO.PACKAGE_URL': JSON.stringify('@verboo/code'),
     'MACRO.NATIVE_PACKAGE_URL': 'undefined',
+    // Mesma razão do bundle CLI: forçar 'production' para evitar que o
+    // default 'development' do Bun bloqueie checks como o auto-updater.
+    'process.env.NODE_ENV': JSON.stringify('production'),
   },
   // External: everything TUI-related + native modules
   external: SDK_EXTERNALS,

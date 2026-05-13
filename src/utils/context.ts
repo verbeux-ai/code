@@ -182,10 +182,10 @@ export function calculateContextPercentages(
     return { used: null, remaining: null }
   }
 
-  const totalInputTokens =
-    currentUsage.input_tokens +
-    currentUsage.cache_creation_input_tokens +
-    currentUsage.cache_read_input_tokens
+  // Apenas input_tokens — bate com o número exibido na barra
+  // (PromptInputFooter mostra `formatNumber(usage.input_tokens)`).
+  // cache_creation/cache_read não entram na próxima request como tokens novos.
+  const totalInputTokens = currentUsage.input_tokens
 
   const usedPercentage = Math.round(
     (totalInputTokens / contextWindowSize) * 100,

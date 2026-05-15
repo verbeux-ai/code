@@ -43,6 +43,7 @@ export const STARTUP_PROVIDER_OVERRIDE_ENV_KEYS = [
   'BANKR_MODEL',
   'BNKR_API_KEY',
   'XAI_API_KEY',
+  'VENICE_API_KEY',
 ] as const
 
 type GlobalConfigWithEnv = {

@@ -1,21 +1,20 @@
 /**
  * No-Telemetry Build Plugin for Verboo Code
  *
- * Replaces all analytics, telemetry, and phone-home modules with no-op stubs
- * at compile time. Zero runtime cost, zero network calls to Anthropic.
+ * Replaces phone-home, internal-only, and deleted-Anthropics-internal modules
+ * with no-op stubs at compile time. Zero runtime cost, zero network calls.
+ *
+ * Analytics and telemetry modules have been replaced at the source level and
+ * no longer need build-time stubs. This plugin now only covers:
+ *
+ *   - Auto-updater (phones home to GCS + npm)
+ *   - Plugin fetch telemetry
+ *   - Transcript / feedback sharing
+ *   - Internal employee logging
+ *   - Deleted Anthropic-internal modules (dump prompts, undercover, protobuf stubs)
  *
  * This file is NOT tracked upstream — merge conflicts are impossible.
  * Only build.ts needs a one-line import + one-line array entry.
- *
- * Kills:
- *   - GrowthBook remote feature flags (api.anthropic.com)
- *   - Datadog event intake
- *   - 1P event logging (api.anthropic.com/api/event_logging/batch)
- *   - BigQuery metrics exporter (api.anthropic.com/api/claude_code/metrics)
- *   - Perfetto / OpenTelemetry session tracing
- *   - Auto-updater (storage.googleapis.com, npm registry)
- *   - Plugin fetch telemetry
- *   - Transcript / feedback sharing
  */
 
 import type { BunPlugin } from 'bun'
@@ -339,6 +338,23 @@ export function getCurrentSpan() { return null; }
 export async function executeInSpan(spanName, fn) { return fn(noopSpan); }
 export function startHookSpan() { return noopSpan; }
 export function endHookSpan() {}
+`,
+
+	// ─── Auto-updater (phones home to GCS + npm) ──────────────────
+
+	'utils/autoUpdater': `
+export async function assertMinVersion() {}
+export async function getMaxVersion() { return undefined; }
+export async function getMaxVersionMessage() { return undefined; }
+export function shouldSkipVersion() { return true; }
+export function getLockFilePath() { return '/tmp/verboo-update.lock'; }
+export async function checkGlobalInstallPermissions() { return { hasPermissions: false, npmPrefix: null }; }
+export async function getLatestVersion() { return null; }
+export async function getNpmDistTags() { return { latest: null, stable: null }; }
+export async function getLatestVersionFromGcs() { return null; }
+export async function getGcsDistTags() { return { latest: null, stable: null }; }
+export async function getVersionHistory() { return []; }
+export async function installGlobalPackage() { return 'success'; }
 `,
 
 	// ─── Plugin fetch telemetry (not the marketplace itself) ───────

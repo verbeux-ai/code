@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 import * as fsPromises from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
+import { acquireEnvMutex, releaseEnvMutex } from '../entrypoints/sdk/shared.js'
 
 const originalEnv = { ...process.env }
 const originalArgv = [...process.argv]
@@ -18,14 +19,23 @@ async function importFreshLocalInstaller() {
   return import(`./localInstaller.ts?ts=${Date.now()}-${Math.random()}`)
 }
 
+async function importFreshPlans() {
+  return import(`./plans.ts?ts=${Date.now()}-${Math.random()}`)
+}
+
 afterEach(() => {
-  process.env = { ...originalEnv }
-  process.argv = [...originalArgv]
-  mock.restore()
+  try {
+    process.env = { ...originalEnv }
+    process.argv = [...originalArgv]
+    mock.restore()
+  } finally {
+    releaseEnvMutex()
+  }
 })
 
 describe('Verboo paths', () => {
   test('defaults user config home to ~/.verboo', async () => {
+    await acquireEnvMutex()
     delete process.env.VERBOO_CONFIG_DIR
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
@@ -36,7 +46,8 @@ describe('Verboo paths', () => {
   })
 
   test('ignores CLAUDE_CONFIG_DIR and uses VERBOO_CONFIG_DIR only', async () => {
-    process.env.CLAUDE_CONFIG_DIR = '/tmp/custom-verboo'
+    await acquireEnvMutex()
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/should-be-ignored'
     process.env.VERBOO_CONFIG_DIR = '/tmp/custom-verboo'
     const { getClaudeConfigHomeDir, resolveClaudeConfigHomeDir } =
       await importFreshEnvUtils()
@@ -49,7 +60,18 @@ describe('Verboo paths', () => {
     ).toBe('/tmp/custom-verboo')
   })
 
+  test('default plans directory uses ~/.verboo/plans', async () => {
+    await acquireEnvMutex()
+    delete process.env.VERBOO_CONFIG_DIR
+    const { getDefaultPlansDirectory } = await importFreshPlans()
+
+    expect(getDefaultPlansDirectory({ homeDir: homedir() })).toBe(
+      join(homedir(), '.verboo', 'plans'),
+    )
+  })
+
   test('project and local settings paths use .verboo', async () => {
+    await acquireEnvMutex()
     const { getRelativeSettingsFilePathForSource } = await importFreshSettings()
 
     expect(getRelativeSettingsFilePathForSource('projectSettings')).toBe(
@@ -61,6 +83,7 @@ describe('Verboo paths', () => {
   })
 
   test('local installer uses verboo wrapper path', async () => {
+    await acquireEnvMutex()
     process.env.VERBOO_CONFIG_DIR = join(homedir(), '.verboo')
     const { getLocalClaudePath } = await importFreshLocalInstaller()
 
@@ -70,6 +93,7 @@ describe('Verboo paths', () => {
   })
 
   test('local installation detection matches .verboo path only', async () => {
+    await acquireEnvMutex()
     const { isManagedLocalInstallationPath } =
       await importFreshLocalInstaller()
 
@@ -78,14 +102,10 @@ describe('Verboo paths', () => {
         `${join(homedir(), '.verboo', 'local')}/node_modules/.bin/verboo`,
       ),
     ).toBe(true)
-    expect(
-      isManagedLocalInstallationPath(
-        `${join(homedir(), '.verboo', 'local')}/node_modules/.bin/verboo`,
-      ),
-    ).toBe(false)
   })
 
   test('candidate local install dirs include only Verboo path', async () => {
+    await acquireEnvMutex()
     const { getCandidateLocalInstallDirs } = await importFreshLocalInstaller()
 
     expect(
@@ -97,6 +117,7 @@ describe('Verboo paths', () => {
   })
 
   test('local installs are detected when they expose the verboo binary', async () => {
+    await acquireEnvMutex()
     mock.module('fs/promises', () => ({
       ...fsPromises,
       access: async (path: string) => {

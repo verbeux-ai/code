@@ -1,9 +1,36 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { homedir } from 'os'
 import { join } from 'path'
+import {
+  acquireSharedMutationLock,
+  releaseSharedMutationLock,
+} from '../test/sharedMutationLock.js'
 
+import { isInGlobalClaudeFolder } from '../components/permissions/FilePermissionDialog/permissionOptions.tsx'
 import { optionForPermissionSaveDestination } from '../components/permissions/rules/AddPermissionRules.tsx'
-import { isClaudeSettingsPath } from './permissions/filesystem.ts'
+import {
+  getClaudeSkillScope,
+  isClaudeSettingsPath,
+} from './permissions/filesystem.ts'
 import { getValidationTip } from './settings/validationTips.ts'
+
+const originalConfigDir = process.env.VERBOO_CONFIG_DIR
+
+beforeEach(async () => {
+  await acquireSharedMutationLock('openclaudeUiSurfaces.test.ts')
+})
+
+afterEach(() => {
+  try {
+    if (originalConfigDir === undefined) {
+      delete process.env.VERBOO_CONFIG_DIR
+    } else {
+      process.env.VERBOO_CONFIG_DIR = originalConfigDir
+    }
+  } finally {
+    releaseSharedMutationLock()
+  }
+})
 
 describe('Verboo settings path surfaces', () => {
   test('isClaudeSettingsPath recognizes project .verboo settings files', () => {
@@ -40,6 +67,61 @@ describe('Verboo settings path surfaces', () => {
       description: 'Saved in .verboo/settings.local.json',
       value: 'localSettings',
     })
+  })
+
+  test('permission dialog treats ~/.verboo as the global Claude folder', () => {
+    process.env.VERBOO_CONFIG_DIR = join(homedir(), '.verboo')
+
+    expect(
+      isInGlobalClaudeFolder(
+        join(homedir(), '.verboo', 'settings.json'),
+      ),
+    ).toBe(true)
+    expect(
+      isInGlobalClaudeFolder(join(homedir(), '.claude', 'settings.json')),
+    ).toBe(true)
+  })
+
+  test('permission dialog does not treat arbitrary VERBOO_CONFIG_DIR as the global Claude folder', () => {
+    process.env.VERBOO_CONFIG_DIR = join(homedir(), 'custom-verboo')
+
+    expect(
+      isInGlobalClaudeFolder(
+        join(homedir(), 'custom-verboo', 'settings.json'),
+      ),
+    ).toBe(false)
+  })
+
+  test('global skill scope recognizes ~/.verboo and legacy ~/.claude skills', () => {
+    process.env.VERBOO_CONFIG_DIR = join(homedir(), '.verboo')
+
+    expect(
+      getClaudeSkillScope(
+        join(homedir(), '.verboo', 'skills', 'demo', 'SKILL.md'),
+      ),
+    ).toEqual({
+      skillName: 'demo',
+      pattern: '~/.verboo/skills/demo/**',
+    })
+
+    expect(
+      getClaudeSkillScope(
+        join(homedir(), '.claude', 'skills', 'legacy', 'SKILL.md'),
+      ),
+    ).toEqual({
+      skillName: 'legacy',
+      pattern: '~/.claude/skills/legacy/**',
+    })
+  })
+
+  test('global skill scope does not emit fixed rules for arbitrary VERBOO_CONFIG_DIR skills', () => {
+    process.env.VERBOO_CONFIG_DIR = join(homedir(), 'custom-verboo')
+
+    expect(
+      getClaudeSkillScope(
+        join(homedir(), 'custom-verboo', 'skills', 'demo', 'SKILL.md'),
+      ),
+    ).toBe(null)
   })
 })
 

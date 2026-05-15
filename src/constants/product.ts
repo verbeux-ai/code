@@ -1,3 +1,4 @@
+export const PRODUCT_DISPLAY_NAME = 'Verboo Code'
 export const PRODUCT_URL = 'https://claude.com/claude-code'
 
 // Claude Code Remote session URLs

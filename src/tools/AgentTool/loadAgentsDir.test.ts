@@ -7,9 +7,13 @@ import {
   getAgentDefinitionsWithOverrides,
 } from './loadAgentsDir.js'
 import { loadMarkdownFilesForSubdir } from '../../utils/markdownConfigLoader.js'
+import {
+  acquireSharedMutationLock,
+  releaseSharedMutationLock,
+} from '../../test/sharedMutationLock.js'
 
 const originalEnv = {
-  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+  VERBOO_CONFIG_DIR: process.env.VERBOO_CONFIG_DIR,
   CLAUDE_CODE_SIMPLE: process.env.CLAUDE_CODE_SIMPLE,
   CLAUDE_CODE_USE_NATIVE_FILE_SEARCH:
     process.env.CLAUDE_CODE_USE_NATIVE_FILE_SEARCH,
@@ -18,8 +22,9 @@ const originalEnv = {
 let tempDir: string
 
 beforeEach(async () => {
+  await acquireSharedMutationLock('loadAgentsDir.test.ts')
   tempDir = await mkdtemp(join(tmpdir(), 'verboo-agents-test-'))
-  process.env.CLAUDE_CONFIG_DIR = join(tempDir, '.verboo')
+  process.env.VERBOO_CONFIG_DIR = join(tempDir, '.verboo')
   process.env.CLAUDE_CODE_USE_NATIVE_FILE_SEARCH = '1'
   delete process.env.CLAUDE_CODE_SIMPLE
   clearAgentDefinitionsCache()
@@ -27,12 +32,16 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true })
-  restoreEnv('CLAUDE_CONFIG_DIR')
-  restoreEnv('CLAUDE_CODE_SIMPLE')
-  restoreEnv('CLAUDE_CODE_USE_NATIVE_FILE_SEARCH')
-  clearAgentDefinitionsCache()
-  loadMarkdownFilesForSubdir.cache.clear?.()
+  try {
+    await rm(tempDir, { recursive: true, force: true })
+    restoreEnv('VERBOO_CONFIG_DIR')
+    restoreEnv('CLAUDE_CODE_SIMPLE')
+    restoreEnv('CLAUDE_CODE_USE_NATIVE_FILE_SEARCH')
+    clearAgentDefinitionsCache()
+    loadMarkdownFilesForSubdir.cache.clear?.()
+  } finally {
+    releaseSharedMutationLock()
+  }
 })
 
 function restoreEnv(key: keyof typeof originalEnv): void {
@@ -65,7 +74,7 @@ ${prompt}
 describe('agent definition loading', () => {
   test('loads user agents from the Verboo config dir in simple mode', async () => {
     await writeAgent(
-      join(process.env.CLAUDE_CONFIG_DIR!, 'agents', 'user-agent.md'),
+      join(process.env.VERBOO_CONFIG_DIR!, 'agents', 'user-agent.md'),
       'user-agent',
     )
 

@@ -6,16 +6,17 @@ import { logForDebugging } from '../utils/debug.js'
 import { isEnvDefinedFalsy } from '../utils/envUtils.js'
 import { getAPIProvider } from '../utils/model/providers.js'
 import { getWorkload } from '../utils/workloadContext.js'
+import { PRODUCT_DISPLAY_NAME } from './product.js'
 
 // VERBOO-BRAND: identidade do agente. Sobrescreve a string upstream para
 // "Verboo Code". Tests em src/constants/promptIdentity.test.ts atualizados
 // para refletir a nova identidade.
 const DEFAULT_PREFIX =
-  `You are Verboo Code, a coding agent and CLI.`
+  `You are ${PRODUCT_DISPLAY_NAME}, a coding agent and CLI.`
 const AGENT_SDK_CLAUDE_CODE_PRESET_PREFIX =
-  `You are Verboo Code, a coding agent and CLI running within the Claude Agent SDK.`
+  `You are ${PRODUCT_DISPLAY_NAME}, a coding agent and CLI running within the Claude Agent SDK.`
 const AGENT_SDK_PREFIX =
-  `You are Verboo Code, built on the Claude Agent SDK.`
+  `You are ${PRODUCT_DISPLAY_NAME}, built on the Claude Agent SDK.`
 
 const CLI_SYSPROMPT_PREFIX_VALUES = [
   DEFAULT_PREFIX,

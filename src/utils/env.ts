@@ -2,6 +2,7 @@ import memoize from 'lodash-es/memoize.js'
 import { join } from 'path'
 import { fileSuffixForOauthConfig } from '../constants/oauth.js'
 import { isRunningWithBun } from './bundledMode.js'
+import { createCombinedAbortSignal } from './combinedAbortSignal.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { findExecutable } from './findExecutable.js'
 import { which } from './which.js'
@@ -13,7 +14,6 @@ type Platform = 'win32' | 'darwin' | 'linux'
 // arquivos globais antigos/de outros CLIs. Sessões de resume continuam no
 // diretório compartilhado de projetos via sessionStorage.ts.
 export const getGlobalClaudeFile = memoize((): string => {
-  const oauthSuffix = fileSuffixForOauthConfig()
   const fileName = oauthSuffix ? `.config${oauthSuffix}.json` : '.config.json'
   return join(getClaudeConfigHomeDir(), fileName)
 })
@@ -21,10 +21,17 @@ export const getGlobalClaudeFile = memoize((): string => {
 const hasInternetAccess = memoize(async (): Promise<boolean> => {
   try {
     const { default: axiosClient } = await import('axios')
-    await axiosClient.head('http://1.1.1.1', {
-      signal: AbortSignal.timeout(1000),
+    const { signal, cleanup } = createCombinedAbortSignal(undefined, {
+      timeoutMs: 1000,
     })
-    return true
+    try {
+      await axiosClient.head('http://1.1.1.1', {
+        signal,
+      })
+      return true
+    } finally {
+      cleanup()
+    }
   } catch {
     return false
   }

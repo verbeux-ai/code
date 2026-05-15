@@ -4,9 +4,8 @@ import { join } from 'path'
 
 // VERBOO-BRAND: paths SEMPRE isolados em ~/.verboo. Não há fallback para
 // configs de outros CLIs — são instalações distintas que podem coexistir
-// sem conflito na mesma máquina. Sessões (getProjectsDir, em sessionStorage.ts)
-// ficam intencionalmente no diretório compartilhado de projetos para interop
-// com /resume — tratado em outro lugar.
+// sem conflito na mesma máquina. Sessões (getProjectsDir) ficam intencionalmente
+// no diretório compartilhado de projetos para interop com /resume.
 //
 // Precedência de override:
 //   VERBOO_CONFIG_DIR (canônico)
@@ -24,17 +23,40 @@ export function resolveClaudeConfigHomeDir(options?: {
   return join(homeDir, '.verboo').normalize('NFC')
 }
 
+let claudeConfigHomeDirOverride: string | undefined
+
+export function setClaudeConfigHomeDirForTesting(
+  configDir: string | undefined,
+): void {
+  claudeConfigHomeDirOverride = configDir?.normalize('NFC')
+}
+
 // Memoized: 150+ callers, many on hot paths. Keyed off VERBOO_CONFIG_DIR so
 // tests that change the env var get a fresh value without explicit cache.clear.
 export const getClaudeConfigHomeDir = memoize(
-  (): string => resolveClaudeConfigHomeDir({
-    configDirEnv: process.env.VERBOO_CONFIG_DIR,
-  }),
-  () => process.env.VERBOO_CONFIG_DIR ?? '',
+  (): string => {
+    if (claudeConfigHomeDirOverride) {
+      return claudeConfigHomeDirOverride
+    }
+    return resolveClaudeConfigHomeDir({
+      configDirEnv: process.env.VERBOO_CONFIG_DIR,
+    })
+  },
+  () => `${claudeConfigHomeDirOverride ?? ''}\0${process.env.VERBOO_CONFIG_DIR ?? ''}`,
 )
 
 export function getTeamsDir(): string {
   return join(getClaudeConfigHomeDir(), 'teams')
+}
+
+// Diretório de sessions/projects: mantido em ~/.claude/projects por default
+// para interop com Claude Code (/resume cross-CLI). Override via
+// VERBOO_PROJECTS_DIR quando quiser isolamento.
+export function getProjectsDir(): string {
+  if (process.env.VERBOO_PROJECTS_DIR) {
+    return process.env.VERBOO_PROJECTS_DIR
+  }
+  return join(homedir(), '.claude', 'projects')
 }
 
 // Read-only: ~/.claude é lido para compat com o ecossistema Claude Code

@@ -7,7 +7,7 @@ import {
   resolveActiveUsageId,
 } from 'src/commands/usage/index.js';
 import { formatCost } from 'src/cost-tracker.js';
-import { getSubscriptionType } from 'src/utils/auth.js';
+import { getSubscriptionType, hasProfileScope, isClaudeAISubscriber } from 'src/utils/auth.js';
 import { getActiveProviderProfile } from 'src/utils/providerProfiles.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { Box, Text } from '../../ink.js';
@@ -23,7 +23,7 @@ import { ProgressBar } from '../design-system/ProgressBar.js';
 import { isEligibleForOverageCreditGrant, OverageCreditUpsell } from '../LogoV2/OverageCreditUpsell.js';
 import { CodexUsage } from './CodexUsage.js';
 import { MiniMaxUsage } from './MiniMaxUsage.js';
-import { UnsupportedUsage } from './UnsupportedUsage.js';
+import { VerbooUsage } from './VerbooUsage.js';
 type LimitBarProps = {
   title: string;
   limit: RateLimit;
@@ -273,22 +273,7 @@ function AnthropicUsage(): React.ReactNode {
     </Box>;
 }
 export function Usage(): React.ReactNode {
-  const provider = getAPIProvider();
-  const activeProfile = getActiveProviderProfile();
-  const usageDescriptor = getUsageDescriptor(resolveActiveUsageId(process.env, {
-    activeProfileProvider: activeProfile?.provider,
-    providerCategory: provider,
-  }));
-  if (provider === 'codex') {
-    return <CodexUsage />;
-  }
-  if (usageDescriptor.resolvedId === 'minimax' && usageDescriptor.supported) {
-    return <MiniMaxUsage />;
-  }
-  if (usageDescriptor.resolvedId === 'anthropic' && usageDescriptor.supported) {
-    return <AnthropicUsage />;
-  }
-  return <UnsupportedUsage providerLabel={usageDescriptor.activeLabel} />;
+  return <VerbooUsage />;
 }
 type ExtraUsageSectionProps = {
   extraUsage: ExtraUsage;

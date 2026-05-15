@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.1](https://github.com/verbeux-ai/code/compare/v0.8.0...v0.8.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **autoupdater:** notificação visível e fallback stable→latest ([5e8e601](https://github.com/verbeux-ai/code/commit/5e8e601ab38e618a1d428d1d519df93ef58ad42f))
+* **build:** forçar process.env.NODE_ENV='production' no bundle ([1a42185](https://github.com/verbeux-ai/code/commit/1a42185ee62b0faac412dddb74db1a674aaddbc9))
+* **install:** remover mensagens enganosas sobre native installer ([e787a2b](https://github.com/verbeux-ai/code/commit/e787a2b14261734eafda3825ecc581a2ffc39860))
+* **memory:** habilitar tool result budget para evitar uso excessivo em sessões longas ([2f5a657](https://github.com/verbeux-ai/code/commit/2f5a6578a48a192a370e8a5fd8c6cebd2ba0554f))
+* migrate .claude directory references to .verboo ([dd86cfd](https://github.com/verbeux-ai/code/commit/dd86cfdaa49ada63f46e3868adceb8c904043ec4))
+* **plugins:** habilitar plugins externos por default (opt-out via VERBOO_DISABLE_PLUGINS) ([1f1d19d](https://github.com/verbeux-ai/code/commit/1f1d19d588680b244b2b16ef6d47ea45a4891646))
+* **query:** habilitar continuation nudge para respostas pt-br ([1cdecab](https://github.com/verbeux-ai/code/commit/1cdecabd2d544f72a32a5047473632e70913dec5))
+* **query:** regressão crítica — restaurar continuationSignals com cobertura en+pt-br ([8567f2e](https://github.com/verbeux-ai/code/commit/8567f2ece817fbdbcb5646f9efeab2b81f4b9703))
+* **release:** alinhar manifest 0.11.0 → 0.8.11 (vazado do merge upstream) ([dc94973](https://github.com/verbeux-ai/code/commit/dc94973faf1f8936e883a3d2e118ef9dbb6f1a7e))
+* **skills,plugins:** dual-read assets de ~/.claude para compat com Claude Code ([9fdc5c2](https://github.com/verbeux-ai/code/commit/9fdc5c2b264778ce728c889aba936908bdbc460a))
+* **sync:** bug crítico CLI + side-effects .openclaude vazando ([7a1f614](https://github.com/verbeux-ai/code/commit/7a1f6143365289c0f4156d2f0c7654a7c1374f29))
+* **ui:** /usage rendering e /resume ReferenceError ([b9d3569](https://github.com/verbeux-ai/code/commit/b9d356917fab5a4d86477cfcfe02983f82f9ebd8))
+* **ui:** contador da barra de contexto consistente com número exibido ([ba1a48c](https://github.com/verbeux-ai/code/commit/ba1a48cae8acb8cd56bfa59718dc352ff12db915))
+* **ui:** remover warning de native installer enganoso ([34c4e94](https://github.com/verbeux-ai/code/commit/34c4e94025c729fcf73161a86436aca7f90702d7))
+* **ui:** respeitar o tema na moldura do input em light mode ([3a8fe15](https://github.com/verbeux-ai/code/commit/3a8fe15e2c6a36298d00158f714163329043c9d9))
+* **ui:** substituir moldura ▄/▀ por borderStyle round no input ([302e188](https://github.com/verbeux-ai/code/commit/302e188ab5c6cb643f0d91494058e645ac0c8379))
+
 ## [0.8.11](https://github.com/verbeux-ai/code/compare/v0.8.10...v0.8.11) (2026-05-13)
 
 ### Correções

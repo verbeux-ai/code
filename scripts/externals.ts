@@ -10,7 +10,8 @@
 export const COMMON_EXTERNALS: string[] = [
   // Native image processing
   'sharp',
-  // Cloud provider SDKs
+  // Cloud provider SDKs (dynamically imported per-provider; also listed
+  // in OPTIONAL_RUNTIME_EXTERNALS for validation since they're not in deps)
   '@aws-sdk/client-bedrock',
   '@aws-sdk/client-bedrock-runtime',
   '@aws-sdk/client-sts',

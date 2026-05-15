@@ -25,7 +25,7 @@ import { generateWordSlug } from './words.js'
 const MAX_SLUG_RETRIES = 10
 
 export function getDefaultPlansDirectory({
-  configDirEnv = process.env.CLAUDE_CONFIG_DIR,
+  configDirEnv = process.env.VERBOO_CONFIG_DIR,
   homeDir = homedir(),
 }: {
   configDirEnv?: string
@@ -34,7 +34,7 @@ export function getDefaultPlansDirectory({
   if (configDirEnv) {
     return join(configDirEnv.normalize('NFC'), 'plans')
   }
-  return join(homeDir, '.openclaude', 'plans').normalize('NFC')
+  return join(homeDir, '.verboo', 'plans').normalize('NFC')
 }
 
 /**

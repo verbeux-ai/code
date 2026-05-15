@@ -28,15 +28,15 @@ export function isInClaudeFolder(filePath: string): boolean {
 }
 
 /**
- * Check if a path is within the global ~/.openclaude/ folder, or the legacy
- * ~/.claude/ folder during migration.
- * This is used to determine whether to show the special ".claude folder" permission option
+ * Check if a path is within the global ~/.verboo/ folder, or the legacy
+ * ~/.claude/ folder for Claude Code ecosystem interop.
+ * This is used to determine whether to show the special ".verboo folder" permission option
  * for files in the user's home directory.
  */
 export function isInGlobalClaudeFolder(filePath: string): boolean {
   const absolutePath = expandPath(filePath);
   const normalizedAbsolutePath = normalizeCaseForComparison(absolutePath);
-  const globalClaudeFolderPaths = [join(homedir(), '.openclaude'), join(homedir(), '.claude')];
+  const globalClaudeFolderPaths = [join(homedir(), '.verboo'), join(homedir(), '.claude')];
 
   return globalClaudeFolderPaths.some(globalClaudeFolderPath => {
     const normalizedGlobalClaudeFolderPath = normalizeCaseForComparison(globalClaudeFolderPath);

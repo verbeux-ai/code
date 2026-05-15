@@ -14,6 +14,7 @@ type Platform = 'win32' | 'darwin' | 'linux'
 // arquivos globais antigos/de outros CLIs. Sessões de resume continuam no
 // diretório compartilhado de projetos via sessionStorage.ts.
 export const getGlobalClaudeFile = memoize((): string => {
+  const oauthSuffix = fileSuffixForOauthConfig()
   const fileName = oauthSuffix ? `.config${oauthSuffix}.json` : '.config.json'
   return join(getClaudeConfigHomeDir(), fileName)
 })

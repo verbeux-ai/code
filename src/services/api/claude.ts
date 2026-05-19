@@ -2014,12 +2014,15 @@ async function* queryModel(
           }
           case 'content_block_start':
             switch (part.content_block.type) {
-              case 'tool_use':
+              case 'tool_use': {
+                const existing = contentBlocks[part.index]
                 contentBlocks[part.index] = {
                   ...part.content_block,
-                  input: '',
+                  // Preserve accumulated input on re-emit (late extra_content update)
+                  input: existing ? (existing as {input: unknown}).input : '',
                 }
                 break
+              }
               case 'server_tool_use':
                 contentBlocks[part.index] = {
                   ...part.content_block,

@@ -945,6 +945,7 @@ async function* openaiStreamToAnthropic(
       index: number
       jsonBuffer: string
       normalizeAtStop: boolean
+      extra_content?: Record<string, unknown>
     }
   >()
   let hasEmittedContentStart = false
@@ -1216,12 +1217,22 @@ async function* openaiStreamToAnthropic(
               const initialArguments = tc.function.arguments ?? ''
               const normalizeAtStop = hasToolFieldMapping(tc.function.name)
               processStreamChunk(streamState, tc.function.arguments ?? '')
+
+              // Capture extra_content / thought_signature (may be top-level or nested)
+              const topLevelSig = (tc as any).thought_signature as string | undefined
+              const initEC: Record<string, unknown> | undefined = tc.extra_content
+                ? { ...tc.extra_content }
+                : topLevelSig
+                ? { google: { thought_signature: topLevelSig } }
+                : undefined
+
               activeToolCalls.set(tc.index, {
                 id: tc.id,
                 name: tc.function.name,
                 index: toolBlockIndex,
                 jsonBuffer: initialArguments,
                 normalizeAtStop,
+                extra_content: initEC,
               })
 
               yield {
@@ -1232,13 +1243,9 @@ async function* openaiStreamToAnthropic(
                   id: tc.id,
                   name: tc.function.name,
                   input: {},
-                  ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
-                  // Extract Gemini signature from extra_content
-                  ...((tc.extra_content?.google as any)?.thought_signature
-                    ? {
-                        signature: (tc.extra_content.google as any)
-                          .thought_signature,
-                      }
+                  ...(initEC ? { extra_content: initEC } : {}),
+                  ...((initEC?.google as any)?.thought_signature
+                    ? { signature: (initEC.google as any).thought_signature }
                     : {}),
                 },
               }
@@ -1276,6 +1283,21 @@ async function* openaiStreamToAnthropic(
                   },
                 }
               }
+            } else {
+              // Chunk with only extra_content / thought_signature (Gemini thinking models
+              // may send thought_signature in a separate chunk from id/name/arguments)
+              const active = activeToolCalls.get(tc.index)
+              if (active) {
+                const lateSig = (tc as any).thought_signature as string | undefined
+                const lateEC = tc.extra_content
+                  ? { ...tc.extra_content }
+                  : lateSig
+                  ? { google: { thought_signature: lateSig } }
+                  : undefined
+                if (lateEC) {
+                  active.extra_content = { ...(active.extra_content ?? {}), ...lateEC }
+                }
+              }
             }
           }
         }
@@ -1297,6 +1319,25 @@ async function* openaiStreamToAnthropic(
           }
           // Close active tool calls
           for (const [, tc] of activeToolCalls) {
+            // Re-emit content_block_start with final extra_content so that
+            // late-arriving thought_signature chunks (Gemini thinking models)
+            // are reflected in the stored message block before it is finalized.
+            if (tc.extra_content) {
+              yield {
+                type: 'content_block_start' as const,
+                index: tc.index,
+                content_block: {
+                  type: 'tool_use' as const,
+                  id: tc.id,
+                  name: tc.name,
+                  input: {},
+                  extra_content: tc.extra_content,
+                  ...((tc.extra_content.google as any)?.thought_signature
+                    ? { signature: (tc.extra_content.google as any).thought_signature }
+                    : {}),
+                },
+              }
+            }
             if (tc.normalizeAtStop) {
               let partialJson: string
               if (choice.finish_reason === 'length') {

@@ -1525,21 +1525,21 @@ export function REPL({
   // Sem emoji pra evitar flicker em terminais com largura inconsistente.
   useEffect(() => {
     const warmingMessages = [
-      'Verboo Intelligence is firing up the engines',
-      'Verboo Intelligence is brewing a fresh cup',
-      'Verboo Intelligence is waking up the neurons',
-      'Verboo Intelligence is fueling the rockets',
-      'Verboo Intelligence is charging its capacitors',
-      'Verboo Intelligence is stretching its muscles',
-      'Verboo Intelligence is sharpening its wits',
-      'Verboo Intelligence is tuning the instruments',
-      'Verboo Intelligence is putting on the thinking cap',
-      'Verboo Intelligence is polishing the crystal ball',
-      'Verboo Intelligence is summoning brilliance',
-      'Verboo Intelligence is calibrating sensors',
-      'Verboo Intelligence is loading wisdom modules',
-      'Verboo Intelligence is gathering its thoughts',
-      'Verboo Intelligence is rolling out the red carpet',
+      '🔥 Verboo Intelligence is firing up the engines',
+      '☕ Verboo Intelligence is brewing a fresh cup',
+      '🧠 Verboo Intelligence is waking up the neurons',
+      '🚀 Verboo Intelligence is fueling the rockets',
+      '⚡ Verboo Intelligence is charging its capacitors',
+      '🦾 Verboo Intelligence is stretching its muscles',
+      '✨ Verboo Intelligence is summoning brilliance',
+      '🎩 Verboo Intelligence is putting on the thinking cap',
+      '🪄 Verboo Intelligence is polishing the wand',
+      '🔮 Verboo Intelligence is polishing the crystal ball',
+      '🛠️ Verboo Intelligence is calibrating sensors',
+      '📚 Verboo Intelligence is loading wisdom modules',
+      '🎯 Verboo Intelligence is locking onto the target',
+      '🎬 Verboo Intelligence is setting the scene',
+      '🎪 Verboo Intelligence is rolling out the red carpet',
     ];
     let cancelled = false;
     void import('../services/api/openaiShim.js').then(mod => {

@@ -1517,6 +1517,30 @@ export function REPL({
   const [spinnerMessage, setSpinnerMessage] = useState<string | null>(null);
   const [spinnerColor, setSpinnerColor] = useState<keyof Theme | null>(null);
   const [spinnerShimmerColor, setSpinnerShimmerColor] = useState<keyof Theme | null>(null);
+
+  // Hook pro warming-up signal vindo do router upstream (vast.ai cold start).
+  // O openaiShim parser detecta chunks `router_status:"warming"` e chama esse
+  // handler, que troca o verb do spinner por um aviso amigável até o primeiro
+  // chunk real chegar. Não vai pro histórico — só é UI transiente.
+  useEffect(() => {
+    let cancelled = false;
+    void import('../services/api/openaiShim.js').then(mod => {
+      if (cancelled) return;
+      mod.setOpenAIShimRouterStatusHandler(status => {
+        if (status === 'warming-up') {
+          setSpinnerMessage('🔥 Warming up vast.ai worker (cold start, ~1–3 min)');
+        } else {
+          setSpinnerMessage(null);
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      void import('../services/api/openaiShim.js').then(mod => {
+        mod.setOpenAIShimRouterStatusHandler(null);
+      });
+    };
+  }, []);
   const [isMessageSelectorVisible, setIsMessageSelectorVisible] = useState(false);
   const [messageSelectorPreselect, setMessageSelectorPreselect] = useState<UserMessage | undefined>(undefined);
   const [showCostDialog, setShowCostDialog] = useState(false);

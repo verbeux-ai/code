@@ -8,6 +8,7 @@ import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
 import { logError } from '../utils/log.js'
 import { getSmallFastModel } from '../utils/model/model.js'
 import { getAPIProvider } from '../utils/model/providers.js'
+import { isVerbooMode } from '../constants/oauth.js'
 import { isEssentialTrafficOnly } from '../utils/privacyLevel.js'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from './analytics/index.js'
 import { logEvent } from './analytics/index.js'
@@ -221,6 +222,14 @@ async function makeTestQuery() {
 export async function checkQuotaStatus(): Promise<void> {
   // Skip network requests if nonessential traffic is disabled
   if (isEssentialTrafficOnly()) {
+    return
+  }
+
+  // Verboo mode uses per-group RPM rate limits on the router, not Anthropic's
+  // account-level 5h/7d windows. The test query would go through openaiShim,
+  // pollute the router rate limit state with the wrong group's data, and
+  // consume a request from that group's RPM bucket.
+  if (isVerbooMode()) {
     return
   }
 

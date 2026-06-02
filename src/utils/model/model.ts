@@ -8,6 +8,7 @@
 import { getMainLoopModelOverride } from '../../bootstrap/state.js'
 import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
+import { getGlobalConfig, saveGlobalConfig } from '../config.js'
 import {
   getSubscriptionType,
   isClaudeAISubscriber,
@@ -62,10 +63,27 @@ export function isClaudeModelLike(model: unknown): boolean {
 
 export function getDefaultVerbooModel(): ModelName {
   const cached = getCachedVerbooModels()
-  const cachedModel = cached?.find(m => !isClaudeModelLike(m.id))?.id
+  if (!cached || cached.length === 0) {
+    throw new Error(VERBOO_NO_MODELS_ERROR)
+  }
+
+  // Prefer the last model the user explicitly used
+  const lastModel = getGlobalConfig().lastVerbooModel
+  if (lastModel && cached.some(m => m.id === lastModel && !isClaudeModelLike(m.id))) {
+    return lastModel
+  }
+
+  // Fallback to the first non-Claude model in the list
+  const cachedModel = cached.find(m => !isClaudeModelLike(m.id))?.id
   if (cachedModel) return cachedModel
 
   throw new Error(VERBOO_NO_MODELS_ERROR)
+}
+
+export function saveLastVerbooModel(model: string): void {
+  if (getGlobalConfig().lastVerbooModel !== model) {
+    saveGlobalConfig(current => ({ ...current, lastVerbooModel: model }))
+  }
 }
 
 function getVerbooSpecifiedModel(
@@ -224,10 +242,19 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
  */
 export function getMainLoopModel(): ModelName {
   const model = getUserSpecifiedModelSetting()
+  let resolved: ModelName
   if (model !== undefined && model !== null) {
-    return parseUserSpecifiedModel(model)
+    resolved = parseUserSpecifiedModel(model)
+  } else {
+    resolved = getDefaultMainLoopModel()
   }
-  return getDefaultMainLoopModel()
+
+  // Persist the last used Verboo model so the next session picks it up
+  if (isVerbooMode() && resolved) {
+    saveLastVerbooModel(resolved)
+  }
+
+  return resolved
 }
 
 export function getBestModel(): ModelName {

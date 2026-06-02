@@ -557,6 +557,9 @@ export type GlobalConfig = {
 
   // Teammate spawn mode: 'auto' | 'tmux' | 'in-process'
   teammateMode?: 'auto' | 'tmux' | 'in-process' // How to spawn teammates (default: 'auto')
+  // Last Verboo model used across sessions (persisted for default selection)
+  lastVerbooModel?: string
+
   // Model for new teammates when the tool call doesn't pass one.
   // undefined = hardcoded Opus (backward-compat); null = leader's model; string = model alias/ID.
   teammateDefaultModel?: string | null

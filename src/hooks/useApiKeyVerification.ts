@@ -7,6 +7,7 @@ import {
   isAnthropicAuthEnabled,
   isClaudeAISubscriber,
 } from '../utils/auth.js'
+import { isVerbooMode } from '../constants/oauth.js'
 
 export type VerificationStatus =
   | 'loading'
@@ -22,11 +23,9 @@ export type ApiKeyVerificationResult = {
 }
 
 function getInitialVerificationStatus(): VerificationStatus {
-  if (!isAnthropicAuthEnabled() || isClaudeAISubscriber()) {
+  if (!isAnthropicAuthEnabled() || isClaudeAISubscriber() || isVerbooMode()) {
     return 'valid'
   }
-  // Use skipRetrievingKeyFromApiKeyHelper to avoid executing apiKeyHelper
-  // before trust dialog is shown (security: prevents RCE via settings.json)
   const { key, source } = getAnthropicApiKeyWithSource({
     skipRetrievingKeyFromApiKeyHelper: true,
   })
@@ -44,7 +43,7 @@ export function useApiKeyVerification(): ApiKeyVerificationResult {
   )
   const [error, setError] = useState<Error | null>(null)
   const anthropicVerificationEnabled =
-    isAnthropicAuthEnabled() && !isClaudeAISubscriber()
+    isAnthropicAuthEnabled() && !isClaudeAISubscriber() && !isVerbooMode()
 
   useEffect(() => {
     const nextStatus = anthropicVerificationEnabled
@@ -60,7 +59,7 @@ export function useApiKeyVerification(): ApiKeyVerificationResult {
   }, [anthropicVerificationEnabled])
 
   const verify = useCallback(async (): Promise<void> => {
-    if (!isAnthropicAuthEnabled() || isClaudeAISubscriber()) {
+    if (!isAnthropicAuthEnabled() || isClaudeAISubscriber() || isVerbooMode()) {
       setStatus('valid')
       return
     }

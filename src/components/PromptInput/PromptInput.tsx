@@ -2024,8 +2024,6 @@ function PromptInput({
     columns,
     rows
   } = useTerminalSize();
-  // model name width removed — was causing rendering artifacts
-
   const textInputColumns = columns - 5 - companionReservedColumns(columns, companionSpeaking);
 
   // POC: click-to-position-cursor. Mouse tracking is only enabled inside

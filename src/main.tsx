@@ -1017,25 +1017,30 @@ async function run(): Promise<CommanderCommand> {
 
     // --list-models: fetch and display available Verboo models, then exit
     if ((options as { listModels?: boolean }).listModels) {
-      const tokens = await getClaudeAIOAuthTokensAsync();
-      if (!tokens?.accessToken) {
-        process.stderr.write('Error: Not authenticated. Run `verboo` first to log in.\n');
+      try {
+        const tokens = await getClaudeAIOAuthTokensAsync();
+        if (!tokens?.accessToken) {
+          process.stderr.write('Error: Not authenticated. Run `verboo` first to log in.\n');
+          process.exit(1);
+        }
+        const models = await fetchVerbooModels(tokens.accessToken);
+        if (!models || models.length === 0) {
+          process.stdout.write('[]\n');
+          process.exit(0);
+        }
+        const output = models.map(m => ({
+          id: m.id,
+          displayName: m.displayName || null,
+          contextWindow: m.contextWindow || null,
+          maxOutputTokens: m.maxOutputTokens || null,
+          description: m.description || null
+        }));
+        process.stdout.write(JSON.stringify(output, null, 2) + '\n');
+        process.exit(0);
+      } catch (error) {
+        process.stderr.write(`Error: Failed to fetch models — ${(error as Error).message ?? String(error)}\n`);
         process.exit(1);
       }
-      const models = await fetchVerbooModels(tokens.accessToken);
-      if (!models || models.length === 0) {
-        process.stdout.write('[]\n');
-        process.exit(0);
-      }
-      const output = models.map(m => ({
-        id: m.id,
-        displayName: m.displayName || null,
-        contextWindow: m.contextWindow || null,
-        maxOutputTokens: m.maxOutputTokens || null,
-        description: m.description || null
-      }));
-      process.stdout.write(JSON.stringify(output, null, 2) + '\n');
-      process.exit(0);
     }
 
     // --bare = one-switch minimal mode. Sets SIMPLE so all the existing

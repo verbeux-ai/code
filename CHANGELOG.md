@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0](https://github.com/verbeux-ai/code/compare/v0.9.4...v0.10.0) (2026-06-10)
+
+
+### Features
+
+* fluxo de compra no CLI com Select e Stripe checkout ([74ff3b8](https://github.com/verbeux-ai/code/commit/74ff3b80e45c08675f2a1f688a3649daaad1f6b7))
+* multi-source session loading for OpenClaude interop ([3bceb0e](https://github.com/verbeux-ai/code/commit/3bceb0e6c67104a79bf310946b1757139ab32760))
+* **updater:** auto-update silencioso no startup da CLI ([ae2c138](https://github.com/verbeux-ai/code/commit/ae2c138087dadc7397ee636636495fa9bc8649cf))
+
+
+### Bug Fixes
+
+* **gemini:** capturar thought_signature de chunks separados no stream ([42fae63](https://github.com/verbeux-ai/code/commit/42fae636527f0cfdb9e453e8d546b7050f740e83))
+* **gemini:** corrigir clobber de thought_signature e captura em chunk misto ([bdde610](https://github.com/verbeux-ai/code/commit/bdde61077e0368e2771cf6f42ce7250f27330b55))
+* rate limit wrong group on startup + persist last used model ([81f1d82](https://github.com/verbeux-ai/code/commit/81f1d82a08de6d4209f20eda09a1f670df06d32b))
+* retry on 429 rate limits in Verboo mode ([83b39dc](https://github.com/verbeux-ai/code/commit/83b39dc17d44ec1749787c771ed5326a0f410c9a))
+* return false for isClaudeAISubscriber() in Verboo mode ([bcbe1e7](https://github.com/verbeux-ai/code/commit/bcbe1e70f026ed3b1759621a662b68d57aec7303))
+
 ## [0.8.11](https://github.com/verbeux-ai/code/compare/v0.8.10...v0.8.11) (2026-05-13)
 
 ### Correções

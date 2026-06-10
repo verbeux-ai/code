@@ -7,6 +7,7 @@ import type { Dirent } from 'fs'
 import { closeSync, fstatSync, openSync, readSync } from 'fs'
 import {
   appendFile as fsAppendFile,
+  copyFile,
   open as fsOpen,
   mkdir,
   readdir,
@@ -69,7 +70,7 @@ import { updateSessionName } from './concurrentSessions.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { logForDiagnosticsNoPII } from './diagLogs.js'
-import { getClaudeConfigHomeDir, getProjectsDir, isEnvTruthy } from './envUtils.js'
+import { getClaudeConfigHomeDir, getAdditionalProjectsDirs, getProjectsDir, getProjectsDirs, isEnvTruthy } from './envUtils.js'
 import { isFsInaccessible } from './errors.js'
 import type { FileHistorySnapshot } from './fileHistory.js'
 import { formatFileSize } from './format.js'
@@ -218,6 +219,29 @@ export function getTranscriptPathForSession(sessionId: string): string {
   }
   const projectDir = getProjectDir(getOriginalCwd())
   return join(projectDir, `${sessionId}.jsonl`)
+}
+
+// Após escrever um transcript file, espelha para diretórios adicionais
+// (ex: ~/.openclaude/projects/) para que outros CLIs vejam as alterações.
+export async function mirrorTranscriptToAdditionalDirs(
+  writtenFile: string,
+  sessionId: string,
+): Promise<void> {
+  const additionalDirs = getAdditionalProjectsDirs()
+  if (additionalDirs.length === 0) return
+
+  const projectDirName = sanitizePath(getSessionProjectDir() ?? getOriginalCwd())
+
+  for (const baseDir of additionalDirs) {
+    const targetDir = join(baseDir, projectDirName)
+    const targetPath = join(targetDir, `${sessionId}.jsonl`)
+    try {
+      await mkdir(targetDir, { recursive: true, mode: 0o700 })
+      await copyFile(writtenFile, targetPath)
+    } catch {
+      // Non-critical — mirror failure should not block the write
+    }
+  }
 }
 
 // 50 MB — session JSONL can grow to multiple GB (inc-3930). Callers that
@@ -395,13 +419,23 @@ export async function listRemoteAgentMetadata(): Promise<
 }
 
 export function sessionIdExists(sessionId: string): boolean {
+  const fs = getFsImplementation()
   const projectDir = getProjectDir(getOriginalCwd())
   const sessionFile = join(projectDir, `${sessionId}.jsonl`)
-  const fs = getFsImplementation()
   try {
     fs.statSync(sessionFile)
     return true
   } catch {
+    // Check additional project dirs (OpenClaude, etc.)
+    for (const additionalDir of getAdditionalProjectsDirs()) {
+      const additionalFile = join(additionalDir, sanitizePath(getOriginalCwd()), `${sessionId}.jsonl`)
+      try {
+        fs.statSync(additionalFile)
+        return true
+      } catch {
+        continue
+      }
+    }
     return false
   }
 }
@@ -635,6 +669,12 @@ class Project {
       // unexpected error codes, so don't discriminate on code.
       await mkdir(dirname(filePath), { recursive: true, mode: 0o700 })
       await fsAppendFile(filePath, data, { mode: 0o600 })
+    }
+
+    // Mirror to additional project dirs (OpenClaude, etc.)
+    const sessionId = getSessionId()
+    if (sessionId) {
+      mirrorTranscriptToAdditionalDirs(filePath, sessionId).catch(() => {})
     }
   }
 
@@ -1284,15 +1324,30 @@ class Project {
     const cached = this.existingSessionFiles.get(sessionId)
     if (cached) return cached
 
+    // Check primary dir first
     const targetFile = getTranscriptPathForSession(sessionId)
     try {
       await stat(targetFile)
       this.existingSessionFiles.set(sessionId, targetFile)
       return targetFile
-    } catch (e) {
-      if (isFsInaccessible(e)) return null
-      throw e
+    } catch {
+      // Not in primary dir — check additional project dirs (OpenClaude, etc.)
     }
+
+    // Fallback: search additional dirs
+    const projectDirName = sanitizePath(getOriginalCwd())
+    for (const additionalDir of getAdditionalProjectsDirs()) {
+      const candidate = join(additionalDir, projectDirName, `${sessionId}.jsonl`)
+      try {
+        await stat(candidate)
+        this.existingSessionFiles.set(sessionId, candidate)
+        return candidate
+      } catch {
+        continue
+      }
+    }
+
+    return null
   }
 
   private async persistToRemote(sessionId: UUID, entry: TranscriptMessage) {
@@ -4080,10 +4135,21 @@ async function loadSessionFile(sessionId: UUID): Promise<{
   contextCollapseCommits: ContextCollapseCommitEntry[]
   contextCollapseSnapshot: ContextCollapseSnapshotEntry | undefined
 }> {
-  const sessionFile = join(
-    getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
-    `${sessionId}.jsonl`,
-  )
+  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+  let sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+  // If not found in primary dir, search additional project dirs (OpenClaude, etc.)
+  const fs = getFsImplementation()
+  if (!fs.existsSync(sessionFile)) {
+    for (const additionalDir of getAdditionalProjectsDirs()) {
+      const candidate = join(additionalDir, sanitizePath(getOriginalCwd()), `${sessionId}.jsonl`)
+      if (fs.existsSync(candidate)) {
+        sessionFile = candidate
+        break
+      }
+    }
+  }
+
   return loadTranscriptFile(sessionFile)
 }
 
@@ -4271,23 +4337,26 @@ export async function loadAllProjectsMessageLogsProgressive(
   limit?: number,
   initialEnrichCount: number = INITIAL_ENRICH_COUNT,
 ): Promise<SessionLogResult> {
-  const projectsDir = getProjectsDir()
-
-  let dirents: Dirent[]
-  try {
-    dirents = await readdir(projectsDir, { withFileTypes: true })
-  } catch {
-    return { logs: [], allStatLogs: [], nextIndex: 0 }
-  }
-
-  const projectDirs = dirents
-    .filter(dirent => dirent.isDirectory())
-    .map(dirent => join(projectsDir, dirent.name))
-
+  const projectsDirs = getProjectsDirs()
   const rawLogs: LogOption[] = []
-  for (const projectDir of projectDirs) {
-    rawLogs.push(...(await getSessionFilesLite(projectDir, limit)))
+
+  for (const projectsDir of projectsDirs) {
+    let dirents: Dirent[]
+    try {
+      dirents = await readdir(projectsDir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    const projectDirs = dirents
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => join(projectsDir, dirent.name))
+
+    for (const projectDir of projectDirs) {
+      rawLogs.push(...(await getSessionFilesLite(projectDir, limit)))
+    }
   }
+
   // Deduplicate — same session can appear in multiple project dirs
   const sorted = deduplicateLogsBySessionId(rawLogs)
 
@@ -4367,11 +4436,20 @@ async function getStatOnlyLogsForWorktrees(
   limit?: number,
 ): Promise<LogOption[]> {
   const projectsDir = getProjectsDir()
+  const allLogs: LogOption[] = []
 
   if (worktreePaths.length <= 1) {
     const cwd = getOriginalCwd()
     const projectDir = getProjectDir(cwd)
-    return getSessionFilesLite(projectDir, undefined, cwd)
+    allLogs.push(...(await getSessionFilesLite(projectDir, undefined, cwd)))
+    // Also scan additional dirs for the same project
+    for (const additionalDir of getAdditionalProjectsDirs()) {
+      const additionalProjectDir = join(additionalDir, sanitizePath(cwd))
+      allLogs.push(
+        ...(await getSessionFilesLite(additionalProjectDir, undefined, cwd)),
+      )
+    }
+    return deduplicateLogsBySessionId(allLogs)
   }
 
   // On Windows, drive letter case can differ between git worktree list
@@ -4392,39 +4470,43 @@ async function getStatOnlyLogsForWorktrees(
   })
   indexed.sort((a, b) => b.prefix.length - a.prefix.length)
 
-  const allLogs: LogOption[] = []
-  const seenDirs = new Set<string>()
+  // Helper to scan logs from a single source dir
+  async function scanSourceDir(srcDir: string): Promise<void> {
+    let allDirents: Dirent[]
+    try {
+      allDirents = await readdir(srcDir, { withFileTypes: true })
+    } catch {
+      return
+    }
 
-  let allDirents: Dirent[]
-  try {
-    allDirents = await readdir(projectsDir, { withFileTypes: true })
-  } catch (e) {
-    // Fall back to current project
-    logForDebugging(
-      `Failed to read projects dir ${projectsDir}, falling back to current project: ${e}`,
-    )
-    const projectDir = getProjectDir(getOriginalCwd())
-    return getSessionFilesLite(projectDir, limit, getOriginalCwd())
-  }
+    const seenDirs = new Set<string>()
+    for (const dirent of allDirents) {
+      if (!dirent.isDirectory()) continue
+      const dirName = caseInsensitive ? dirent.name.toLowerCase() : dirent.name
+      if (seenDirs.has(dirName)) continue
 
-  for (const dirent of allDirents) {
-    if (!dirent.isDirectory()) continue
-    const dirName = caseInsensitive ? dirent.name.toLowerCase() : dirent.name
-    if (seenDirs.has(dirName)) continue
-
-    for (const { path: wtPath, prefix } of indexed) {
-      if (dirName === prefix || dirName.startsWith(prefix + '-')) {
-        seenDirs.add(dirName)
-        allLogs.push(
-          ...(await getSessionFilesLite(
-            join(projectsDir, dirent.name),
-            undefined,
-            wtPath,
-          )),
-        )
-        break
+      for (const { path: wtPath, prefix } of indexed) {
+        if (dirName === prefix || dirName.startsWith(prefix + '-')) {
+          seenDirs.add(dirName)
+          allLogs.push(
+            ...(await getSessionFilesLite(
+              join(srcDir, dirent.name),
+              undefined,
+              wtPath,
+            )),
+          )
+          break
+        }
       }
     }
+  }
+
+  // Scan primary dir
+  await scanSourceDir(projectsDir)
+
+  // Scan additional dirs
+  for (const additionalDir of getAdditionalProjectsDirs()) {
+    await scanSourceDir(additionalDir)
   }
 
   // Deduplicate by sessionId — the same session can appear in multiple

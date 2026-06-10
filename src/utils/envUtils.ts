@@ -1,3 +1,4 @@
+import { existsSync } from 'fs'
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -57,6 +58,25 @@ export function getProjectsDir(): string {
     return process.env.VERBOO_PROJECTS_DIR
   }
   return join(homedir(), '.claude', 'projects')
+}
+
+// Diretórios adicionais de projetos para leitura multi-source.
+// Atualmente detecta OpenClaude (~/.openclaude/projects) se existir.
+export function getAdditionalProjectsDirs(): string[] {
+  const dirs: string[] = []
+
+  const openClaudeDir = join(homedir(), '.openclaude', 'projects')
+  if (existsSync(openClaudeDir)) {
+    dirs.push(openClaudeDir)
+  }
+
+  return dirs
+}
+
+// Retorna TODOS os diretórios de projetos (principal + adicionais).
+// Usado para LEITURA de sessions. Escrita continua usando getProjectsDir().
+export function getProjectsDirs(): string[] {
+  return [getProjectsDir(), ...getAdditionalProjectsDirs()]
 }
 
 // Read-only: ~/.claude é lido para compat com o ecossistema Claude Code

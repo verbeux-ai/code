@@ -21,6 +21,7 @@ import { logError } from '../../utils/log.js'
 import { refreshOAuthToken, storeOAuthAccountInfo } from './client.js'
 import type { OAuthTokens } from './types.js'
 import { showNoModelsFlow } from './purchaseFlow.js'
+import { showPastDueNotice } from './pastDueFlow.js'
 
 export type VerbooSessionResult =
   | { kind: 'ok'; tokens: OAuthTokens; refreshed: boolean }
@@ -250,6 +251,7 @@ export async function ensureVerbooAuthenticated(
   if (session.kind === 'ok') {
     validated = true
     await loadAndCheckModels(session.tokens.accessToken)
+    await showPastDueNotice(session.tokens.accessToken)
     return
   }
 

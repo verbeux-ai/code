@@ -415,7 +415,38 @@ export class StreamingToolExecutor {
       }
     }
 
-    const promise = collectResults()
+    const promise = collectResults().catch((error: unknown) => {
+      // If collectResults throws (e.g. MCP transport error not caught by
+      // runToolUse's internal try/catch), mark the tool as completed with an
+      // error result so getRemainingResults() doesn't wait forever.
+      if (tool.status !== 'completed') {
+        const errorText =
+          error instanceof Error ? error.message : String(error)
+        tool.results = [
+          {
+            message: {
+              type: 'user' as const,
+              uuid: crypto.randomUUID(),
+              message: {
+                role: 'user' as const,
+                content: [
+                  {
+                    type: 'tool_result' as const,
+                    content: `<tool_use_error>${errorText}</tool_use_error>`,
+                    is_error: true,
+                    tool_use_id: tool.id,
+                  },
+                ],
+              },
+              toolUseResult: `Error: ${errorText}`,
+              sourceToolAssistantUUID: tool.assistantMessage.uuid,
+            },
+          },
+        ]
+        tool.status = 'completed'
+        this.updateInterruptibleState()
+      }
+    })
     tool.promise = promise
 
     // Process more queue when done

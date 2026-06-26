@@ -1,7 +1,7 @@
 import { execa } from 'execa'
 import { readFile, realpath } from 'fs/promises'
 import { homedir } from 'os'
-import { delimiter, join, posix, win32 } from 'path'
+import { basename, delimiter, dirname, join, posix, win32 } from 'path'
 import { checkGlobalInstallPermissions } from './autoUpdater.js'
 import { isInBundledMode } from './bundledMode.js'
 import {
@@ -98,12 +98,47 @@ function getNormalizedPaths(): [invokedPath: string, execPath: string] {
   return [invokedPath, execPath]
 }
 
+async function isSourceCheckoutInvocation(invokedPath: string): Promise<boolean> {
+  if (!invokedPath) return false
+
+  try {
+    const resolvedPath = await realpath(invokedPath)
+    const normalizedPath =
+      getPlatform() === 'windows'
+        ? resolvedPath.split(win32.sep).join(posix.sep)
+        : resolvedPath
+
+    if (normalizedPath.includes('/node_modules/')) return false
+    if (basename(normalizedPath) !== getCliBinaryName()) return false
+    if (basename(dirname(normalizedPath)) !== 'bin') return false
+
+    const packageJsonPath = join(dirname(dirname(resolvedPath)), 'package.json')
+    const packageJson = jsonParse(await readFile(packageJsonPath, 'utf8')) as {
+      name?: unknown
+      bin?: unknown
+    }
+
+    return (
+      packageJson.name === MACRO.PACKAGE_URL &&
+      typeof packageJson.bin === 'object' &&
+      packageJson.bin !== null &&
+      getCliBinaryName() in packageJson.bin
+    )
+  } catch {
+    return false
+  }
+}
+
 export async function getCurrentInstallationType(): Promise<InstallationType> {
   if (process.env.NODE_ENV === 'development') {
     return 'development'
   }
 
   const [invokedPath] = getNormalizedPaths()
+
+  if (await isSourceCheckoutInvocation(invokedPath)) {
+    return 'development'
+  }
 
   // Check if running in bundled mode first
   if (isInBundledMode()) {

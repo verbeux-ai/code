@@ -20,7 +20,6 @@ describe('IncrementalTokenCounter', () => {
 
     it('creates with custom config', () => {
       const counter = new IncrementalTokenCounter({
-        maxCacheSize: 500,
         autoInvalidate: false,
         estimationMultiplier: 1.2,
       })
@@ -34,6 +33,19 @@ describe('IncrementalTokenCounter', () => {
       expect(counter.getCount([])).toBe(0)
     })
 
+    it('does NOT reset counter state when called with empty messages', () => {
+      const counter = new IncrementalTokenCounter()
+      const messages = [createMessage('Hello world this is a test message')]
+      counter.getCount(messages)
+      const countBefore = counter.cachedCount
+      expect(countBefore).toBeGreaterThan(0)
+
+      // Calling getCount([]) should NOT reset the cached state
+      counter.getCount([])
+      expect(counter.cachedCount).toBe(countBefore)
+      expect(counter.messageCount).toBe(1) // still remembers
+    })
+
     it('calculates count for new messages', () => {
       const counter = new IncrementalTokenCounter()
       const messages = [createMessage('Hello world')]
@@ -41,7 +53,7 @@ describe('IncrementalTokenCounter', () => {
       expect(count).toBeGreaterThan(0)
     })
 
-    it('uses cache for same message count', () => {
+    it('uses cache for same content', () => {
       const counter = new IncrementalTokenCounter()
       const messages = [createMessage('Hello world')]
 
@@ -55,6 +67,22 @@ describe('IncrementalTokenCounter', () => {
       expect(stats2.hits).toBeGreaterThan(stats1.hits)
     })
 
+    it('cache hits when message count and content length are the same', () => {
+      const counter = new IncrementalTokenCounter()
+      // Both 11 characters — same content length triggers cache hit
+      const msgA = createMessage('Hello world')
+      const msgB = createMessage('World hello')
+
+      counter.getCount([msgA])
+      const statsBefore = counter.getStats()
+
+      // Different content but same length = cache hit (acceptable trade-off)
+      // The estimate uses char-length / 4, so same length => same estimate
+      counter.getCount([msgB])
+      const statsAfter = counter.getStats()
+      expect(statsAfter.hits).toBeGreaterThan(statsBefore.hits)
+    })
+
     it('handles incremental growth', () => {
       const counter = new IncrementalTokenCounter({ autoInvalidate: true })
 
@@ -64,6 +92,17 @@ describe('IncrementalTokenCounter', () => {
       const msgs2 = [createMessage('Hello'), createMessage('World')]
       const count = counter.getCount(msgs2)
       expect(count).toBeGreaterThan(0)
+    })
+
+    it('recovers state after empty-message query', () => {
+      const counter = new IncrementalTokenCounter()
+      const msgs = [createMessage('Persistent state across empty queries')]
+
+      const count1 = counter.getCount(msgs)
+      counter.getCount([]) // should not reset
+      const count2 = counter.getCount(msgs)
+
+      expect(count1).toBe(count2)
     })
   })
 
@@ -163,7 +202,7 @@ describe('IncrementalTokenCounter', () => {
 
   describe('isApproachingLimit', () => {
     it('returns false when far from limit', () => {
-      const counter = new IncrementalTokenCounter({ maxCacheSize: 1000 })
+      const counter = new IncrementalTokenCounter({ tokenBudget: 1000 })
       counter.getCount([createMessage('Hi')])
       expect(counter.isApproachingLimit([createMessage('Hi')], 0.8)).toBe(false)
     })
@@ -207,7 +246,7 @@ describe('IncrementalTokenCounter', () => {
   describe('updateConfig', () => {
     it('updates config dynamically', () => {
       const counter = new IncrementalTokenCounter()
-      counter.updateConfig({ maxCacheSize: 2000 })
+      counter.updateConfig({ tokenBudget: 2000 })
       counter.getCount([createMessage('Hello')])
       expect(counter.cachedCount).toBeGreaterThan(0)
     })

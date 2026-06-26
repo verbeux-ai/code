@@ -10,8 +10,9 @@
 export const COMMON_EXTERNALS: string[] = [
   // Native image processing
   'sharp',
-  // Cloud provider SDKs (dynamically imported per-provider; also listed
-  // in OPTIONAL_RUNTIME_EXTERNALS for validation since they're not in deps)
+  // Cloud provider SDKs (dynamically imported per-provider; listed in
+  // package.json dependencies but kept external to avoid bundling ~1MB+
+  // of AWS SDK code into the output — loaded at runtime via dynamic import)
   '@aws-sdk/client-bedrock',
   '@aws-sdk/client-bedrock-runtime',
   '@aws-sdk/client-sts',
@@ -53,11 +54,7 @@ export const SDK_ONLY_EXTERNALS: string[] = [
 // These are dynamically imported at runtime — they're optional and resolved
 // from transitive deps or installed by users who need that provider/protocol.
 export const OPTIONAL_RUNTIME_EXTERNALS: string[] = [
-  // Cloud provider SDKs (dynamically imported per-provider)
-  '@aws-sdk/client-bedrock',
-  '@aws-sdk/client-bedrock-runtime',
-  '@aws-sdk/client-sts',
-  '@aws-sdk/credential-providers',
+  // Azure Identity SDK (not in deps; dynamically imported for Azure OpenAI)
   '@azure/identity',
 ]
 

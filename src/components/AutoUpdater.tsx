@@ -82,13 +82,6 @@ export function AutoUpdater({
       const startTime = Date.now();
       onChangeIsUpdating(true);
 
-      // Remove native installer symlink since we're using JS-based updates
-      // But only if user hasn't migrated to native installation
-      const config = getGlobalConfig();
-      if (config.installMethod !== 'native') {
-        await removeInstalledSymlink();
-      }
-
       // Detect actual running installation type
       const installationType = await getCurrentInstallationType();
       logForDebugging(`AutoUpdater: Detected installation type: ${installationType}`);
@@ -98,6 +91,13 @@ export function AutoUpdater({
         logForDebugging('AutoUpdater: Cannot auto-update development build');
         onChangeIsUpdating(false);
         return;
+      }
+
+      // Remove native installer symlink since we're using JS-based updates
+      // But only if user hasn't migrated to native installation
+      const config = getGlobalConfig();
+      if (config.installMethod !== 'native') {
+        await removeInstalledSymlink();
       }
 
       // Choose the appropriate update method based on what's actually running

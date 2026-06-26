@@ -17,6 +17,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  readFile,
   readdir,
   readlink,
   realpath,
@@ -1462,7 +1463,32 @@ async function isNpmSymlink(executablePath: string): Promise<boolean> {
   // checking npm prefix isn't guaranteed to work, as prefix can change
   // and users may set --prefix manually when installing
   // thus we use this heuristic:
-  return targetPath.endsWith('.js') || targetPath.includes('node_modules')
+  if (targetPath.endsWith('.js') || targetPath.includes('node_modules')) {
+    return true
+  }
+
+  // Local development installs commonly symlink ~/.local/bin/verboo to the
+  // package wrapper at repo/bin/verboo. Preserve that wrapper as npm-style JS
+  // rather than treating it as a native binary symlink to delete.
+  if (
+    basename(targetPath) === getBinaryName(getPlatform()) &&
+    basename(dirname(targetPath)) === 'bin'
+  ) {
+    try {
+      const targetStats = await stat(targetPath)
+      if (targetStats.size > 0 && targetStats.size < 20_000) {
+        const source = await readFile(targetPath, 'utf8')
+        return (
+          source.startsWith('#!/usr/bin/env node') &&
+          source.includes('dist/cli.mjs')
+        )
+      }
+    } catch {
+      return false
+    }
+  }
+
+  return false
 }
 
 /**

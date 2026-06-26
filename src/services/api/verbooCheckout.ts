@@ -7,6 +7,7 @@ import { logError } from '../../utils/log.js'
 export type CheckoutResult =
   | { mode: 'stripe'; url: string }
   | { mode: 'trial'; subscriptionId: string; trialEndAt: string }
+  | { mode: 'woovi'; wooviQrCode: string; wooviSubscriptionId: string }
 
 export async function createCheckoutSession(
   accessToken: string,

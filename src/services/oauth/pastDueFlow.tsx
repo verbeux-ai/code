@@ -68,7 +68,7 @@ export function PastDueView({
         // retry
       }
     }
-    setErrorMsg('Tempo limite excedido. Seu pagamento pode nao ter sido processado.')
+    setErrorMsg('Timeout exceeded. Your payment may not have been processed.')
     setStep('error')
   }, [accessToken, onDone])
 
@@ -77,13 +77,13 @@ export function PastDueView({
     try {
       const url = await fetchPortalUrl(accessToken)
       if (!url) {
-        setErrorMsg('Nao foi possivel abrir o portal de pagamento.')
+        setErrorMsg('Could not open the payment portal.')
         setStep('error')
         return
       }
       const opened = await openBrowser(url)
       if (!opened) {
-        setErrorMsg('Nao foi possivel abrir o navegador. Acesse o link manualmente: ' + url)
+        setErrorMsg('Could not open the browser. Open this link manually: ' + url)
         setStep('error')
         return
       }
@@ -100,25 +100,20 @@ export function PastDueView({
   }, [onDone])
 
   if (step === 'loading') {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text>Verificando pagamentos pendentes...</Text>
-        <Spinner />
-      </Box>
-    )
+    return null
   }
 
   if (step === 'notice') {
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column" gap={1}>
-          <Text color="yellow">⚠ Pagamento pendente</Text>
-          <Text>Seu acesso aos modelos esta bloqueado ate que o pagamento seja regularizado.</Text>
+          <Text color="yellow">⚠ Payment overdue</Text>
+          <Text>Your access to models is blocked until payment is resolved.</Text>
           {pastDueGroups.map(sub => {
             const groupName = sub.group?.name ?? sub.groupId
             let priceDesc = ''
             if (sub.group) {
-              priceDesc = ` — ${formatPrice(sub.group.priceCents, sub.group.currency)}/${sub.group.billingInterval === 'year' ? 'ano' : 'mes'}`
+              priceDesc = ` — ${formatPrice(sub.group.priceCents, sub.group.currency)}/${sub.group.billingInterval === 'year' ? 'year' : 'month'}`
             }
             return (
               <Text key={sub.id}>
@@ -129,8 +124,8 @@ export function PastDueView({
         </Box>
         <Select
           options={[
-            { label: 'Pagar agora', value: 'pay' },
-            { label: 'Ignorar', value: 'skip' },
+            { label: 'Pay now', value: 'pay' },
+            { label: 'Skip', value: 'skip' },
           ]}
           onChange={(v: string) => {
             if (v === 'pay') void handlePay()
@@ -144,7 +139,7 @@ export function PastDueView({
   if (step === 'opening') {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>Abrindo portal de pagamento no navegador...</Text>
+        <Text>Opening payment portal...</Text>
         <Spinner />
       </Box>
     )
@@ -153,14 +148,14 @@ export function PastDueView({
   if (step === 'polling') {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>Aguardando confirmacao do pagamento...</Text>
+        <Text>Waiting for payment confirmation...</Text>
         <Spinner />
       </Box>
     )
   }
 
   if (step === 'success') {
-    return <Text color="green">✓ Pagamento confirmado! Acesso liberado.</Text>
+    return <Text color="green">✓ Payment confirmed! Access restored.</Text>
   }
 
   // error
@@ -169,8 +164,8 @@ export function PastDueView({
       <Text color="red">Erro: {errorMsg}</Text>
       <Select
         options={[
-          { label: 'Tentar novamente', value: 'retry' },
-          { label: 'Ignorar', value: 'skip' },
+          { label: 'Try again', value: 'retry' },
+          { label: 'Skip', value: 'skip' },
         ]}
         onChange={(v: string) => {
           if (v === 'retry') void handlePay()

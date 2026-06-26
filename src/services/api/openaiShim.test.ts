@@ -323,6 +323,74 @@ test('captures router rate limit headers before a 429 error is thrown', async ()
   })
 })
 
+test('Verboo router preserves downloaded reasoning_content for generic model aliases', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-router-reasoning-ok',
+        model: 'verboo-default',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    providerOverride: {
+      model: 'verboo-default',
+      baseURL: VERBOO_ROUTER_URL,
+      apiKey: 'verboo-oauth-token',
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'ignored-by-provider-override',
+    system: 'test system',
+    messages: [
+      { role: 'user', content: 'inspect the repo' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Need to inspect files before answering.' },
+          { type: 'text', text: 'Vou ler os arquivos.' },
+          {
+            type: 'tool_use',
+            id: 'call_read_1',
+            name: 'Read',
+            input: { file_path: '/tmp/example.ts' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_read_1',
+            content: 'file contents',
+          },
+        ],
+      },
+    ],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  const messages = requestBody?.messages as Array<Record<string, unknown>>
+  const assistantWithToolCall = messages.find(
+    message => message.role === 'assistant' && Array.isArray(message.tool_calls),
+  )
+  expect(assistantWithToolCall?.reasoning_content).toBe(
+    'Need to inspect files before answering.',
+  )
+})
+
 test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses', async () => {
   process.env.OPENAI_API_FORMAT = 'responses'
   let capturedUrl = ''

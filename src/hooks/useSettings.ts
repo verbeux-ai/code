@@ -1,4 +1,9 @@
-import { type AppState, useAppState } from '../state/AppState.js'
+import React from 'react'
+import {
+  type AppState,
+  useAppStateMaybeOutsideOfProvider,
+} from '../state/AppState.js'
+import { getInitialSettings } from '../utils/settings/settings.js'
 
 /**
  * Settings type as stored in AppState (DeepImmutable wrapped).
@@ -13,5 +18,13 @@ export type ReadonlySettings = AppState['settings']
  * Use this instead of getSettings_DEPRECATED() in React components for reactive updates.
  */
 export function useSettings(): ReadonlySettings {
-  return useAppState(s => s.settings)
+  const settings = useAppStateMaybeOutsideOfProvider(s => s.settings)
+  const fallbackSettingsRef = React.useRef<ReadonlySettings | null>(null)
+
+  if (settings) {
+    return settings
+  }
+
+  fallbackSettingsRef.current ??= getInitialSettings()
+  return fallbackSettingsRef.current
 }

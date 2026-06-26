@@ -25,6 +25,7 @@ import {
   getLatestVersion,
   installGlobalPackage,
 } from './autoUpdater.js'
+import { getCurrentInstallationType } from './doctorDiagnostic.js'
 import { localInstallationExists, installOrUpdateClaudePackage } from './localInstaller.js'
 import { gte } from './semver.js'
 import { getInitialSettings } from './settings/settings.js'
@@ -38,6 +39,9 @@ const DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION = 10 * 60 * 1000
 
 async function autoUpdateCliInBackground(): Promise<void> {
   try {
+    const installationType = await getCurrentInstallationType()
+    if (installationType === 'development') return
+
     const channel = getInitialSettings()?.autoUpdatesChannel ?? 'latest'
     const latest = await getLatestVersion(channel)
     if (!latest || gte(MACRO.DISPLAY_VERSION, latest)) return

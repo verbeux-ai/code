@@ -34,18 +34,22 @@ import { PromptInputHelpMenu } from './PromptInputHelpMenu.js';
 
 const BAR_WIDTH = 16;
 
-export function ContextWindowDisplay({ messages, permissionMode }: {
+/**
+ * ContextWindowDisplay with memo to prevent re-renders on every keystroke.
+ * Compares message identity (reference + count) to avoid deep diffs.
+ */
+function ContextWindowDisplayInner({ messages, permissionMode }: {
   messages: Message[];
   permissionMode: PermissionMode;
 }): React.ReactNode {
   const mainLoopModel = useMainLoopModel();
-  const exceeds200k = doesMostRecentAssistantMessageExceed200k(messages);
+  const exceeds200k = useMemo(() => doesMostRecentAssistantMessageExceed200k(messages), [messages]);
   const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: exceeds200k });
   const windowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
   const { avgRate10s, isGenerating } = useTokenRateDetailed(messages);
 
-  const contextTokens = tokenCountWithEstimation(messages);
-  const pct = Math.min(100, Math.max(0, Math.round((contextTokens / windowSize) * 100)));
+  const contextTokens = useMemo(() => tokenCountWithEstimation(messages), [messages]);
+  const pct = useMemo(() => Math.min(100, Math.max(0, Math.round((contextTokens / windowSize) * 100))), [contextTokens, windowSize]);
   const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((pct / 100) * BAR_WIDTH)));
   const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
   const contextColor = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : undefined;
@@ -67,6 +71,18 @@ export function ContextWindowDisplay({ messages, permissionMode }: {
     </Box>
   );
 }
+
+export const ContextWindowDisplay = React.memo(ContextWindowDisplayInner, (prevProps, nextProps) => {
+  // Custom comparator: skip re-render if messages array has the same references
+  // and count. This prevents the context counter from recalculating on every
+  // keystroke or unrelated state change.
+  if (prevProps.permissionMode !== nextProps.permissionMode) return false;
+  if (prevProps.messages.length !== nextProps.messages.length) return false;
+  for (let i = 0; i < prevProps.messages.length; i++) {
+    if (prevProps.messages[i] !== nextProps.messages[i]) return false;
+  }
+  return true; // props are equal → skip render
+});
 
 type Props = {
   apiKeyStatus: VerificationStatus;

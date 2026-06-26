@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useState } from 'react'
 
 import { Select } from '../../components/CustomSelect/select.js'
 import { Spinner } from '../../components/Spinner.js'
-import { Box, render, Text } from '../../ink.js'
+import { Box, render, Text, useInput } from '../../ink.js'
 import { openBrowser } from '../../utils/browser.js'
 import { fetchVerbooModels } from '../api/verbooModels.js'
 import {
@@ -17,6 +17,7 @@ import {
 
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000
+const COLS = 3
 
 function formatPrice(cents: number, currency: string): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -55,10 +56,10 @@ function getPlanPriceDescription(group: MarketplaceGroup): string {
   const models = getModelNames(group)
   const slots = getSlotsInfo(group)
   let desc = `${price}${interval}`
-  if (models) desc += ` · ${models}`
-  desc += ` · ${slots}`
+  if (models) desc += ` \u00B7 ${models}`
+  desc += ` \u00B7 ${slots}`
   if (group.trialDays && group.trialDays > 0) {
-    desc += ` · ${group.trialDays} dias de trial`
+    desc += ` \u00B7 ${group.trialDays} dias de trial`
   }
   return desc
 }
@@ -67,6 +68,7 @@ type Step =
   | 'splash'
   | 'loading-plans'
   | 'plans'
+  | 'plan-detail'
   | 'checkout'
   | 'polling'
   | 'success'
@@ -81,6 +83,8 @@ export function PurchaseFlowView({
 }) {
   const [step, setStep] = useState<Step>('splash')
   const [plans, setPlans] = useState<MarketplaceGroup[]>([])
+  const [selectedPlan, setSelectedPlan] = useState<MarketplaceGroup | null>(null)
+  const [focusIndex, setFocusIndex] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const fetchPlans = useCallback(async () => {
@@ -91,6 +95,7 @@ export function PurchaseFlowView({
       setStep('splash')
     } else {
       setPlans(groups)
+      setFocusIndex(0)
       setStep('plans')
     }
   }, [])
@@ -113,7 +118,7 @@ export function PurchaseFlowView({
     onDone(false)
   }, [accessToken, onDone])
 
-  const handlePlanSelect = useCallback(
+  const handleCheckout = useCallback(
     async (group: MarketplaceGroup) => {
       setStep('checkout')
       try {
@@ -121,6 +126,13 @@ export function PurchaseFlowView({
         if (result.mode === 'trial') {
           setStep('success')
           setTimeout(() => onDone(true), 1_500)
+          return
+        }
+        if (result.mode === 'woovi') {
+          setStep('checkout')
+          setErrorMsg(result.wooviQrCode)
+          setStep('polling')
+          void startPolling()
           return
         }
         await openBrowser(result.url)
@@ -132,6 +144,32 @@ export function PurchaseFlowView({
       }
     },
     [accessToken, onDone, startPolling],
+  )
+
+  // Keyboard navigation for the plan grid
+  useInput(
+    (input, key) => {
+      if (step !== 'plans' || plans.length === 0) return
+
+      if (key.leftArrow) {
+        setFocusIndex(i => Math.max(0, i - 1))
+      } else if (key.rightArrow) {
+        setFocusIndex(i => Math.min(plans.length - 1, i + 1))
+      } else if (key.upArrow) {
+        setFocusIndex(i => Math.max(0, i - COLS))
+      } else if (key.downArrow) {
+        setFocusIndex(i => Math.min(plans.length - 1, i + COLS))
+      } else if (key.return) {
+        const plan = plans[focusIndex]
+        if (plan) {
+          setSelectedPlan(plan)
+          setStep('plan-detail')
+        }
+      } else if (key.escape) {
+        setStep('splash')
+      }
+    },
+    { isActive: step === 'plans' },
   )
 
   switch (step) {
@@ -161,23 +199,117 @@ export function PurchaseFlowView({
       )
 
     case 'plans': {
-      const options = plans.map((plan, idx) => ({
-        label: `${idx + 1}. ${plan.name}`,
-        value: plan,
-        description: getPlanPriceDescription(plan),
-      }))
-      options.push({ label: 'Voltar', value: null, description: '' })
+      // Grid layout: 3 plans per row
+      const rows: MarketplaceGroup[][] = []
+      for (let i = 0; i < plans.length; i += COLS) {
+        rows.push(plans.slice(i, i + COLS))
+      }
+      const focusedRow = Math.floor(focusIndex / COLS)
+      const focusedCol = focusIndex % COLS
+
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Planos disponiveis</Text>
+          <Text dimColor>Setas para navegar, Enter para selecionar, Esc para voltar</Text>
+          <Box flexDirection="column" gap={1}>
+            {rows.map((row, rowIdx) => (
+              <Box key={rowIdx} flexDirection="row" gap={2}>
+                {row.map((plan, colIdx) => {
+                  const isFocused = rowIdx === focusedRow && colIdx === focusedCol
+                  const price = formatPrice(plan.priceCents, plan.currency)
+                  const interval = formatInterval(plan.billingInterval)
+                  const models = getModelNames(plan)
+                  const slots = getSlotsInfo(plan)
+
+                  return (
+                    <Box
+                      key={plan.id}
+                      flexDirection="column"
+                      borderStyle={isFocused ? 'bold' : 'round'}
+                      borderColor={isFocused ? 'claude' : undefined}
+                      paddingX={1}
+                      paddingY={0}
+                      flexGrow={1}
+                      width="33%"
+                    >
+                      <Text bold wrap="truncate">
+                        {plan.name}
+                      </Text>
+                      <Text>
+                        {price}{interval}
+                      </Text>
+                      <Text dimColor wrap="truncate" title={models}>
+                        {models}
+                      </Text>
+                      <Text dimColor>{slots}</Text>
+                      {plan.trialDays && plan.trialDays > 0 && (
+                        <Text color="success">{plan.trialDays} dias trial</Text>
+                      )}
+                    </Box>
+                  )
+                })}
+                {/* Fill empty slots in the last row */}
+                {row.length < COLS &&
+                  Array.from({ length: COLS - row.length }).map((_, i) => (
+                    <Box
+                      key={`empty-${i}`}
+                      flexGrow={1}
+                      width="33%"
+                    />
+                  ))}
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      )
+    }
+
+    case 'plan-detail': {
+      const plan = selectedPlan!
+      const price = formatPrice(plan.priceCents, plan.currency)
+      const interval = formatInterval(plan.billingInterval)
+      const models = getModelNames(plan)
+      const slots = getSlotsInfo(plan)
+
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Box
+            flexDirection="column"
+            borderStyle="round"
+            paddingX={1}
+            paddingY={0}
+            gap={0}
+          >
+            <Text bold>{plan.name}</Text>
+            <Text>{price}{interval}</Text>
+            <Box flexDirection="column" marginTop={1}>
+              <Text>
+                <Text dimColor>Modelos: </Text>
+                {models}
+              </Text>
+              <Text>
+                <Text dimColor>Assinantes: </Text>
+                {slots}
+              </Text>
+              {plan.trialDays && plan.trialDays > 0 && (
+                <Text>
+                  <Text dimColor>Trial: </Text>
+                  {plan.trialDays} dias
+                </Text>
+              )}
+            </Box>
+          </Box>
           <Select
-            options={options}
-            onChange={(v: MarketplaceGroup | null) => {
-              if (!v) {
-                setStep('splash')
-                return
+            options={[
+              { label: 'Assinar Agora', value: 'confirm' },
+              { label: 'Voltar', value: 'back' },
+            ]}
+            onChange={(v: string) => {
+              if (v === 'confirm') {
+                void handleCheckout(plan)
+              } else {
+                setStep('plans')
               }
-              void handlePlanSelect(v)
             }}
           />
         </Box>

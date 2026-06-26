@@ -166,6 +166,33 @@ function inferRemoteModelOpenAIShimConfig(
   return undefined
 }
 
+function inferVerbooRouterOpenAIShimConfig(
+  baseUrl: string | undefined,
+): Partial<OpenAIShimTransportConfig> | undefined {
+  if (!baseUrl?.trim()) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(baseUrl)
+    const path = parsed.pathname.toLowerCase().replace(/\/+$/, '')
+    if (parsed.hostname.toLowerCase() !== 'code.verboo.ai') {
+      return undefined
+    }
+    if (path !== '/router/v1' && !path.startsWith('/router/v1/')) {
+      return undefined
+    }
+
+    return {
+      preserveReasoningContent: true,
+      requireReasoningContentOnAssistantMessages: true,
+      reasoningContentFallback: '',
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export type OpenAIShimRuntimeContext = {
   routeId: string | null
   descriptor: RouteDescriptor | null
@@ -215,12 +242,24 @@ export function resolveOpenAIShimRuntimeContext(options?: {
     descriptor && routeId
       ? getCatalogEntryForModel(routeId, options?.model)
       : null
-  const inferredConfig =
+  const modelInferredConfig =
+    options?.treatAsLocal === true
+      ? undefined
+      : inferRemoteModelOpenAIShimConfig(options?.model)
+  const routeInferredConfig =
     options?.treatAsLocal === true
       ? {
           maxTokensField: 'max_tokens' as const,
         }
-      : inferRemoteModelOpenAIShimConfig(options?.model)
+      : inferVerbooRouterOpenAIShimConfig(options?.baseUrl)
+  const inferredConfig =
+    routeInferredConfig || modelInferredConfig
+      ? mergeOpenAIShimConfig(
+          routeInferredConfig,
+          undefined,
+          modelInferredConfig,
+        )
+      : undefined
 
   return {
     routeId,

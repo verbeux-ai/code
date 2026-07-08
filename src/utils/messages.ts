@@ -330,6 +330,25 @@ function isSyntheticApiErrorMessage(
   )
 }
 
+/**
+ * Removes an interrupted user message and the sentinel that follows it
+ * from the message array. Used during resume to clean up the message
+ * chain before re-enqueuing the interrupted prompt.
+ *
+ * @internal Exported for testing
+ */
+export function removeInterruptedMessage(
+  messages: Message[],
+  interruptedUserMessage: NormalizedUserMessage,
+): void {
+  const idx = messages.findIndex(m => m.uuid === interruptedUserMessage.uuid)
+  if (idx !== -1) {
+    // Remove the user message and the sentinel that immediately follows it.
+    // splice safely handles the case where idx is the last element.
+    messages.splice(idx, 2)
+  }
+}
+
 export function getLastAssistantMessage(
   messages: Message[],
 ): AssistantMessage | undefined {

@@ -257,7 +257,7 @@ import {
   toInternalMessages,
   toSDKRateLimitInfo,
 } from 'src/utils/messages/mappers.js'
-import { createModelSwitchBreadcrumbs } from 'src/utils/messages.js'
+import { createModelSwitchBreadcrumbs, removeInterruptedMessage } from 'src/utils/messages.js'
 import { collectContextData } from 'src/commands/context/context-noninteractive.js'
 import { LOCAL_COMMAND_STDOUT_TAG } from 'src/constants/xml.js'
 import {
@@ -4862,17 +4862,6 @@ function emitLoadError(
  *
  * @internal Exported for testing
  */
-export function removeInterruptedMessage(
-  messages: Message[],
-  interruptedUserMessage: NormalizedUserMessage,
-): void {
-  const idx = messages.findIndex(m => m.uuid === interruptedUserMessage.uuid)
-  if (idx !== -1) {
-    // Remove the user message and the sentinel that immediately follows it.
-    // splice safely handles the case where idx is the last element.
-    messages.splice(idx, 2)
-  }
-}
 
 type LoadInitialMessagesResult = {
   messages: Message[]

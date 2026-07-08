@@ -56,7 +56,7 @@ import { seedEarlyInput, stopCapturingEarlyInput } from './utils/earlyInput.js';
 import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
 import { getInitialFastModeSetting, isFastModeEnabled, prefetchFastModeStatus, resolveFastModeStatusFromCache } from './utils/fastMode.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
-import { createSystemMessage, createUserMessage } from './utils/messages.js';
+import { createSystemMessage, createUserMessage, removeInterruptedMessage } from './utils/messages.js';
 import { getPlatform } from './utils/platform.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
 import { getSessionIngressAuthToken } from './utils/sessionIngressAuth.js';
@@ -3701,6 +3701,26 @@ async function run(): Promise<CommanderCommand> {
           }, resumeContext);
           if (processedResume.restoredAgentDef) {
             mainThreadAgentDefinition = processedResume.restoredAgentDef;
+          }
+          // Resume without auto-submitting any message — just restore the
+          // conversation and wait for user interaction.
+          if (
+            processedResume &&
+            !processedResume.initialState.initialMessage &&
+            result.turnInterruptionState &&
+            result.turnInterruptionState.kind !== 'none'
+          ) {
+            // For synthetic interrupted_turn (isMeta), remove the injected
+            // "Continue from where you left off." message + sentinel so the
+            // user doesn't see it in history. Real interrupted_prompt messages
+            // stay in the conversation as-is (the invisible sentinel maintains
+            // valid API alternation until the user types something new).
+            if (result.turnInterruptionState.message.isMeta) {
+              removeInterruptedMessage(
+                processedResume.messages,
+                result.turnInterruptionState.message,
+              );
+            }
           }
           logEvent('tengu_session_resumed', {
             entrypoint: 'cli_flag' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,

@@ -3274,6 +3274,19 @@ export function REPL({
         // Plan messages use onQuery to preserve planContent metadata for rendering
         // TODO: Once onSubmit supports ContentBlockParam arrays, remove this branch
         const newAbortController = createAbortController();
+        // Guard against indefinite hang. If the API doesn't respond within
+        // 120s, the abort fires, queryGuard transitions back to idle via
+        // onQuery's finally block, and the REPL shows an error to the user.
+        const INIT_ABORT_TIMEOUT_MS = 120_000;
+        const abortTimeoutId = setTimeout(
+          () => newAbortController.abort('timeout'),
+          INIT_ABORT_TIMEOUT_MS,
+        );
+        newAbortController.signal.addEventListener(
+          'abort',
+          () => clearTimeout(abortTimeoutId),
+          { once: true },
+        );
         setAbortController(newAbortController);
         void onQuery([initialMsg.message], newAbortController, true,
           // shouldQuery

@@ -27,6 +27,8 @@
 
 import { randomUUID } from 'crypto'
 import { APIError } from '@anthropic-ai/sdk'
+import { getSessionId } from '../../bootstrap/state.js'
+import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import {
   readCodexCredentialsAsync,
   refreshCodexAccessTokenIfNeeded,
@@ -101,6 +103,7 @@ const GITHUB_429_MAX_RETRIES = 3
 const GITHUB_429_BASE_DELAY_SEC = 1
 const GITHUB_429_MAX_DELAY_SEC = 32
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com'
+const VERBOO_SESSION_HEADER = 'X-Verboo-Session-Id'
 const COPILOT_HEADERS: Record<string, string> = {
   'User-Agent': 'GitHubCopilotChat/0.26.7',
   'Editor-Version': 'vscode/1.99.3',
@@ -124,6 +127,7 @@ function filterAnthropicHeaders(
       lower.startsWith('x-anthropic') ||
       lower.startsWith('anthropic-') ||
       lower.startsWith('x-claude') ||
+      lower.startsWith('x-verboo') ||
       lower === 'x-app' ||
       lower === 'x-client-app' ||
       lower === 'authorization' ||
@@ -136,6 +140,15 @@ function filterAnthropicHeaders(
   }
 
   return filtered
+}
+
+function normalizeBaseUrlForComparison(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '').toLowerCase()
+}
+
+function isVerbooRouterUrl(baseUrl: string): boolean {
+  return normalizeBaseUrlForComparison(baseUrl) ===
+    normalizeBaseUrlForComparison(VERBOO_ROUTER_URL)
 }
 
 function hasGeminiApiHost(baseUrl: string | undefined): boolean {
@@ -206,6 +219,43 @@ function captureRouterRateLimit(
   sourceUrl: string,
 ): void {
   updateRouterRateLimitFromHeaders(headers, { sourceUrl })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function buildResponseFormatFromOutputConfig(
+  params: ShimCreateParams,
+): Record<string, unknown> | undefined {
+  const outputConfig = params.output_config
+  if (!isRecord(outputConfig)) return undefined
+
+  const format = outputConfig.format
+  if (!isRecord(format)) return undefined
+
+  if (format.type === 'json_object') {
+    return { type: 'json_object' }
+  }
+
+  if (format.type !== 'json_schema' || !isRecord(format.schema)) {
+    return undefined
+  }
+
+  const name =
+    typeof format.name === 'string' && format.name.trim()
+      ? format.name.trim()
+      : 'structured_output'
+  const strict = typeof format.strict === 'boolean' ? format.strict : true
+
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name,
+      strict,
+      schema: sanitizeSchemaForOpenAICompat(format.schema),
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1747,12 +1797,21 @@ class OpenAIShimMessages {
       stream: params.stream ?? false,
       store: false,
     }
+
+    const responseFormat = buildResponseFormatFromOutputConfig(params)
+    if (responseFormat) {
+      body.response_format = responseFormat
+    }
+
     // Emit reasoning_effort for chat_completions when the resolved provider
-     // request carries a reasoning effort (set via /effort, model alias default,
-     // or `?reasoning=<level>` query on the model string). OpenAI, Codex, and
-     // most OpenAI-compatible endpoints read it from this top-level field.
+    // request carries a reasoning effort (set via /effort, model alias default,
+    // or `?reasoning=<level>` query on the model string). OpenAI, Codex, and
+    // most OpenAI-compatible endpoints read it from this top-level field.
     if (request.reasoning) {
       body.reasoning_effort = request.reasoning.effort
+      // vLLM-compatible alias: some vLLM/SGLang deployments expose effort
+      // under this top-level key instead of reasoning_effort.
+      body.effort = request.reasoning.effort
     }
     // Convert max_tokens to max_completion_tokens for OpenAI API compatibility.
     // Azure OpenAI requires max_completion_tokens and does not accept max_tokens.
@@ -1822,7 +1881,9 @@ class OpenAIShimMessages {
       if (deepSeekThinkingType === 'enabled') {
         const effort = request.reasoning?.effort
         if (effort) {
-          body.reasoning_effort = normalizeDeepSeekReasoningEffort(effort)
+          const normalizedEffort = normalizeDeepSeekReasoningEffort(effort)
+          body.reasoning_effort = normalizedEffort
+          body.effort = normalizedEffort
         }
       }
     }
@@ -1920,6 +1981,9 @@ class OpenAIShimMessages {
       ...filterAnthropicHeaders(shimConfig.headers),
       ...this.defaultHeaders,
       ...filterAnthropicHeaders(options?.headers),
+    }
+    if (isVerbooRouterUrl(request.baseUrl)) {
+      headers[VERBOO_SESSION_HEADER] = getSessionId()
     }
 
     const isGemini = isGeminiMode()
@@ -2230,7 +2294,7 @@ class OpenAIShimMessages {
             tokensOut = data.usage?.completion_tokens ?? 0
           } catch { /* ignore */ }
         }
-        logApiCallEnd(correlationId, startTime, request.resolvedModel, 'success', tokensIn, tokensOut, false)
+        logApiCallEnd(correlationId, startTime, request.resolvedModel, 'success', tokensIn, tokensOut, Boolean(params.stream))
         return response
       }
 

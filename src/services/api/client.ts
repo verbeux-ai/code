@@ -309,6 +309,7 @@ export async function getAnthropicClient({
       defaultHeaders,
       maxRetries,
       timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+      reasoningEffort: shimReasoningEffort,
       providerOverride: {
         model: safeVerbooModel,
         baseURL: VERBOO_ROUTER_URL,

@@ -80,7 +80,7 @@ import { getBranch } from './git.js'
 import { gracefulShutdownSync, isShuttingDown } from './gracefulShutdown.js'
 import { parseJSONL } from './json.js'
 import { logError } from './log.js'
-import { extractTag, isCompactBoundaryMessage } from './messages.js'
+import { extractTag, isCompactBoundaryMessage, isSyntheticMessage } from './messages.js'
 import { sanitizePath } from './path.js'
 import {
   extractJsonStringField,
@@ -4785,7 +4785,9 @@ export function cleanMessagesForLogging(
   messages: Message[],
   allMessages: readonly Message[] = messages,
 ): Transcript {
-  const filtered = messages.filter(isLoggableMessage) as Transcript
+  const filtered = messages.filter(
+    m => isLoggableMessage(m) && !isSyntheticMessage(m),
+  ) as Transcript
   return getUserType() !== 'ant'
     ? transformMessagesForExternalTranscript(
         filtered,

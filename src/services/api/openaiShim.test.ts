@@ -202,6 +202,7 @@ test('strips canonical Anthropic headers from direct shim defaultHeaders', async
       'anthropic-beta': 'prompt-caching-2024-07-31',
       'x-anthropic-additional-protection': 'true',
       'x-claude-remote-session-id': 'remote-123',
+      'x-verboo-session-id': 'custom-verboo-session',
       'x-app': 'cli',
       'x-client-app': 'sdk',
       'x-safe-header': 'keep-me',
@@ -222,7 +223,69 @@ test('strips canonical Anthropic headers from direct shim defaultHeaders', async
   expect(capturedHeaders?.get('x-claude-remote-session-id')).toBeNull()
   expect(capturedHeaders?.get('x-app')).toBeNull()
   expect(capturedHeaders?.get('x-client-app')).toBeNull()
+  expect(capturedHeaders?.get('x-verboo-session-id')).toBeNull()
   expect(capturedHeaders?.get('x-safe-header')).toBe('keep-me')
+})
+
+test('adds Verboo session header only for Verboo router requests', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = VERBOO_ROUTER_URL
+  process.env.OPENAI_MODEL = 'gpt-4o'
+
+  let capturedHeaders: Headers | undefined
+
+  globalThis.fetch = (async (_input, init) => {
+    capturedHeaders = new Headers(init?.headers)
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-router-session',
+        model: 'gpt-4o',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'ok',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 8,
+          completion_tokens: 3,
+          total_tokens: 11,
+        },
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    defaultHeaders: {
+      'X-Claude-Code-Session-Id': 'claude-session-should-strip',
+      'X-Verboo-Session-Id': 'custom-session-should-not-win',
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'gpt-4o',
+    system: 'test system',
+    messages: [{ role: 'user', content: 'hello' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  const rfcCompliantUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  expect(capturedHeaders?.get('x-verboo-session-id')).toMatch(rfcCompliantUuid)
+  expect(capturedHeaders?.get('x-verboo-session-id')).not.toBe(
+    'custom-session-should-not-win',
+  )
+  expect(capturedHeaders?.get('x-claude-code-session-id')).toBeNull()
 })
 
 test('captures router rate limit headers from successful Verboo router responses', async () => {
@@ -1048,6 +1111,83 @@ test('preserves usage from final OpenAI stream chunk with empty choices', async 
   expect(usageEvent).toBeDefined()
   expect(usageEvent?.usage?.input_tokens).toBe(123)
   expect(usageEvent?.usage?.output_tokens).toBe(45)
+})
+
+test('streaming: Crof-style empty stop chunk with tools completes without visible assistant text', async () => {
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    expect(body.model).toBe('glm-5.2:dedicated')
+    expect(body.stream).toBe(true)
+    expect(body.tools).toHaveLength(1)
+    expect(body.tool_choice).toBeUndefined()
+
+    const chunks = makeStreamChunks([
+      {
+        id: 'chatcmpl-crof-dedicated-empty',
+        object: 'chat.completion.chunk',
+        model: 'glm-5.2:dedicated',
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    ])
+
+    return makeSseResponse(chunks)
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+
+  const result = await client.beta.messages
+    .create({
+      model: 'glm-5.2:dedicated',
+      system: 'test system',
+      messages: [{ role: 'user', content: 'oi' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file from disk.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              file_path: { type: 'string' },
+            },
+            required: ['file_path'],
+            additionalProperties: false,
+          },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) {
+    events.push(event)
+  }
+
+  const textDeltas = events.filter(
+    event => (event as { delta?: { type?: string } }).delta?.type === 'text_delta',
+  )
+  const thinkingDeltas = events.filter(
+    event => (event as { delta?: { type?: string } }).delta?.type === 'thinking_delta',
+  )
+  const stopEvent = events.find(
+    event => event.type === 'message_delta',
+  ) as { delta?: { stop_reason?: string } } | undefined
+
+  expect(events.map(event => event.type)).toEqual([
+    'message_start',
+    'message_delta',
+    'message_stop',
+  ])
+  expect(textDeltas).toHaveLength(0)
+  expect(thinkingDeltas).toHaveLength(0)
+  expect(stopEvent?.delta?.stop_reason).toBe('end_turn')
 })
 
 test('uses max_tokens instead of max_completion_tokens for local providers', async () => {
@@ -3739,6 +3879,83 @@ test('streaming: strips <think> tag split across multiple content chunks', async
   expect(textDeltas.join('')).toBe('Hey! How can I help you today?')
 })
 
+test('streaming: content made only of <think> tags yields no visible text', async () => {
+  globalThis.fetch = (async () => {
+    const chunks = makeStreamChunks([
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        model: 'glm-5',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              content: '<think>I should greet the user briefly.',
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        model: 'glm-5',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              content: '</think>',
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        model: 'glm-5',
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    ])
+
+    return makeSseResponse(chunks)
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'glm-5',
+      system: 'test system',
+      messages: [{ role: 'user', content: 'hey' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) {
+    events.push(event)
+  }
+
+  const textDeltas = events
+    .map(event => (event as { delta?: { type?: string; text?: string } }).delta)
+    .filter(delta => delta?.type === 'text_delta')
+
+  const stopEvent = events.find(
+    event => event.type === 'message_delta',
+  ) as { delta?: { stop_reason?: string } } | undefined
+
+  expect(textDeltas).toHaveLength(0)
+  expect(stopEvent?.delta?.stop_reason).toBe('end_turn')
+})
+
 test('streaming: preserves prose without tags (no phrase-based false positive)', async () => {
   // Regression: older phrase-based sanitizer would strip "I should..." prose.
   // The tag-based approach leaves legitimate assistant output alone.
@@ -5178,6 +5395,129 @@ test('preserves mixed text and image tool results as multipart content', async (
   expect(content[1].type).toBe('image_url')
 })
 
+test('maps output_config json_schema to OpenAI response_format', async () => {
+  let requestBody: Record<string, unknown> | undefined
+
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '{"title":"Oi"}',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 4,
+          total_tokens: 16,
+        },
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'gpt-4o',
+    system: 'Create a title.',
+    messages: [{ role: 'user', content: 'oi' }],
+    max_tokens: 64,
+    stream: false,
+    output_config: {
+      format: {
+        type: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+          },
+          required: ['title'],
+          additionalProperties: false,
+        },
+      },
+    },
+  })
+
+  expect(requestBody?.response_format).toEqual({
+    type: 'json_schema',
+    json_schema: {
+      name: 'structured_output',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+        },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    },
+  })
+})
+
+test('maps output_config json_object to OpenAI response_format', async () => {
+  let requestBody: Record<string, unknown> | undefined
+
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '{"ok":true}',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 4,
+          total_tokens: 16,
+        },
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: 'return json' }],
+    max_tokens: 64,
+    stream: false,
+    output_config: {
+      format: {
+        type: 'json_object',
+      },
+    },
+  })
+
+  expect(requestBody?.response_format).toEqual({ type: 'json_object' })
+})
+
 test('Z.AI: uses max_tokens (not max_completion_tokens) and strips store', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
   process.env.OPENAI_API_KEY = 'sk-zai-test'
@@ -5350,7 +5690,7 @@ test('strips Anthropic attribution header block from responses-API instructions 
   expect(instructions).toContain('You are Claude Code.')
 })
 
-test('emits reasoning_effort on chat_completions when reasoningEffort is passed', async () => {
+test('emits reasoning_effort and effort on chat_completions when reasoningEffort is passed', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
   process.env.OPENAI_API_KEY = 'test-key'
 
@@ -5386,6 +5726,7 @@ test('emits reasoning_effort on chat_completions when reasoningEffort is passed'
   })
 
   expect(requestBody?.reasoning_effort).toBe('xhigh')
+  expect(requestBody?.effort).toBe('xhigh')
 })
 
 test('omits reasoning_effort on chat_completions when no override and model has no alias default', async () => {

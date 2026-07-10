@@ -184,6 +184,7 @@ export async function processUserInput({
     appState.toolPermissionContext.mode,
     context,
     context.requestPrompt,
+    pastedContents,
   )) {
     // We only care about the result
     if (hookResult.message?.type === 'progress') {

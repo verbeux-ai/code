@@ -15,10 +15,12 @@
  */
 
 import { registerKarpathyGuidelinesPlugin } from './karpathyGuidelines.js'
+import { registerVisionFallbackPlugin } from './vision-fallback/index.js'
 
 /**
  * Initialize built-in plugins. Called during CLI startup.
  */
 export function initBuiltinPlugins(): void {
   registerKarpathyGuidelinesPlugin()
+  registerVisionFallbackPlugin()
 }

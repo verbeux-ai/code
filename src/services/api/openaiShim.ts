@@ -1584,12 +1584,19 @@ class OpenAIShimStream {
 class OpenAIShimMessages {
   private defaultHeaders: Record<string, string>
   private reasoningEffort?: string
+  private suppressReasoningEffort: boolean
   private providerOverride?: { model: string; baseURL: string; apiKey: string }
 
-  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: string, providerOverride?: { model: string; baseURL: string; apiKey: string }) {
+  constructor(
+    defaultHeaders: Record<string, string>,
+    reasoningEffort?: string,
+    providerOverride?: { model: string; baseURL: string; apiKey: string },
+    suppressReasoningEffort = false,
+  ) {
     this.defaultHeaders = filterAnthropicHeaders(defaultHeaders)
     this.reasoningEffort = reasoningEffort
     this.providerOverride = providerOverride
+    this.suppressReasoningEffort = suppressReasoningEffort
   }
 
   create(
@@ -1601,7 +1608,12 @@ class OpenAIShimMessages {
     let httpResponse: Response | undefined
 
     const promise = (async () => {
-      const request = resolveProviderRequest({ model: self.providerOverride?.model ?? params.model, baseUrl: self.providerOverride?.baseURL, reasoningEffortOverride: self.reasoningEffort })
+      const request = resolveProviderRequest({
+        model: self.providerOverride?.model ?? params.model,
+        baseUrl: self.providerOverride?.baseURL,
+        reasoningEffortOverride: self.reasoningEffort,
+        suppressReasoningEffort: self.suppressReasoningEffort,
+      })
       const response = await self._doRequest(request, params, options)
       httpResponse = response
 
@@ -2543,8 +2555,18 @@ class OpenAIShimBeta {
   messages: OpenAIShimMessages
   reasoningEffort?: string
 
-  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: string, providerOverride?: { model: string; baseURL: string; apiKey: string }) {
-    this.messages = new OpenAIShimMessages(defaultHeaders, reasoningEffort, providerOverride)
+  constructor(
+    defaultHeaders: Record<string, string>,
+    reasoningEffort?: string,
+    providerOverride?: { model: string; baseURL: string; apiKey: string },
+    suppressReasoningEffort = false,
+  ) {
+    this.messages = new OpenAIShimMessages(
+      defaultHeaders,
+      reasoningEffort,
+      providerOverride,
+      suppressReasoningEffort,
+    )
     this.reasoningEffort = reasoningEffort
   }
 }
@@ -2554,15 +2576,21 @@ export function createOpenAIShimClient(options: {
   maxRetries?: number
   timeout?: number
   reasoningEffort?: string
+  suppressReasoningEffort?: boolean
   providerOverride?: { model: string; baseURL: string; apiKey: string }
 }): unknown {
   hydrateGeminiAccessTokenFromSecureStorage()
   hydrateGithubModelsTokenFromSecureStorage()
   hydrateOpenAIShimCompatibilityEnv()
 
-  const beta = new OpenAIShimBeta({
-    ...(options.defaultHeaders ?? {}),
-  }, options.reasoningEffort, options.providerOverride)
+  const beta = new OpenAIShimBeta(
+    {
+      ...(options.defaultHeaders ?? {}),
+    },
+    options.reasoningEffort,
+    options.providerOverride,
+    options.suppressReasoningEffort,
+  )
 
   return {
     beta,

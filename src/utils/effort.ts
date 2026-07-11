@@ -222,11 +222,11 @@ export function getEffortEnvOverride(): EffortValue | null | undefined {
 
 /**
  * Resolve the effort value that will actually be sent to the API for a given
- * model, following the full precedence chain:
+ * model. Outside Verboo, it follows the full precedence chain:
  *   env CLAUDE_CODE_EFFORT_LEVEL → appState.effortValue → model default
  *
- * Returns undefined when no effort parameter should be sent (env set to
- * 'unset', or no default exists for the model).
+ * In Verboo mode, Auto intentionally returns undefined: the router applies
+ * the model default, but the CLI must not send a reasoning field on the wire.
  */
 export function resolveAppliedEffort(
   model: string,
@@ -239,7 +239,8 @@ export function resolveAppliedEffort(
   if (isVerbooMode()) {
     const reasoning = getVerbooModelReasoning(model)
     if (!reasoning) return undefined
-    const selected = envOverride ?? appStateEffortValue ?? reasoning.defaultEffort
+    const selected = envOverride ?? appStateEffortValue
+    if (selected === undefined) return undefined
     return typeof selected === 'string'
       ? getVerbooReasoningEffort(model, selected) ?? reasoning.defaultEffort
       : reasoning.defaultEffort
@@ -261,39 +262,43 @@ export function resolveAppliedEffort(
 
 /**
  * Resolve the effort level to show the user. Wraps resolveAppliedEffort
- * with the 'high' fallback (what the API uses when no effort param is sent).
- * Single source of truth for the status bar and /effort output (CC-1088).
+ * with the model's advertised default in Verboo Auto, or the 'high' fallback
+ * elsewhere. Single source of truth for the status bar and /effort output
+ * (CC-1088).
  */
 export function getDisplayedEffortLevel(
   model: string,
   appStateEffort: EffortValue | undefined,
 ): EffortString {
   const resolved = resolveAppliedEffort(model, appStateEffort)
-  if (isVerbooMode() && typeof resolved === 'string') return resolved
+  if (isVerbooMode()) {
+    return typeof resolved === 'string'
+      ? resolved
+      : (getVerbooModelReasoning(model)?.defaultEffort ?? 'high')
+  }
   return convertEffortValueToLevel(resolved ?? 'high')
 }
 
 /**
  * Build the ` with {level} effort` suffix shown in Logo/Spinner.
- * Returns empty string if the user hasn't explicitly set an effort value.
- * Delegates to resolveAppliedEffort() so the displayed level matches what
- * the API actually receives (including max→high clamp for non-Opus models).
+ * In Verboo Auto, it shows the router's advertised default even though that
+ * value is deliberately omitted from the request payload.
  */
 export function getEffortSuffix(
   model: string,
   effortValue: EffortValue | undefined,
 ): string {
   const resolved = resolveAppliedEffort(model, effortValue)
-  if (resolved === undefined) return ''
-  // Verboo receives the model default from /models. Show that resolved value
-  // even when the user left /effort on Auto, so the spinner says exactly what
-  // the current request uses (for example: "thinking with max effort").
-  if (isVerbooMode() && typeof resolved === 'string') {
-    return ` with ${resolved} effort`
+  if (isVerbooMode()) {
+    const reasoning = getVerbooModelReasoning(model)
+    if (!reasoning) return ''
+    const displayed =
+      typeof resolved === 'string' ? resolved : reasoning.defaultEffort
+    return ` with ${displayed} effort`
   }
+  if (resolved === undefined) return ''
   if (effortValue === undefined) return ''
-  const displayed =
-    convertEffortValueToLevel(resolved)
+  const displayed = convertEffortValueToLevel(resolved)
   return ` with ${displayed} effort`
 }
 

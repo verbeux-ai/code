@@ -1,16 +1,14 @@
-// React hook for hold-to-talk voice input using Anthropic voice_stream STT.
+// React hook for hold-to-talk voice input through Verboo's live STT router.
 //
 // Hold the keybinding to record; release to stop and submit.  Auto-repeat
 // key events reset an internal timer — when no keypress arrives within
-// RELEASE_TIMEOUT_MS the recording stops automatically.  Uses the native
-// audio module (macOS) or SoX for recording, and Anthropic's voice_stream
-// endpoint (conversation_engine) for STT.
+// RELEASE_TIMEOUT_MS the recording stops automatically. Uses the existing
+// audio capture path and the router's AssemblyAI-backed STT endpoint.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSetVoiceState } from '../context/voice.js'
 import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
 import {
-  type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../services/analytics/index.js'
 import { getVoiceKeyterms } from '../services/voiceKeyterms.js'
@@ -22,116 +20,7 @@ import {
 } from '../services/voiceStreamSTT.js'
 import { logForDebugging } from '../utils/debug.js'
 import { toError } from '../utils/errors.js'
-import { getSystemLocaleLanguage } from '../utils/intl.js'
 import { logError } from '../utils/log.js'
-import { getInitialSettings } from '../utils/settings/settings.js'
-import { sleep } from '../utils/sleep.js'
-
-// ─── Language normalization ─────────────────────────────────────────────
-
-const DEFAULT_STT_LANGUAGE = 'en'
-
-// Maps language names (English and native) to BCP-47 codes supported by
-// the voice_stream Deepgram backend.  Keys must be lowercase.
-//
-// This list must be a SUBSET of the server-side supported_language_codes
-// allowlist (GrowthBook: speech_to_text_voice_stream_config).
-// If the CLI sends a code the server rejects, the WebSocket closes with
-// 1008 "Unsupported language" and voice breaks.  Unsupported languages
-// fall back to DEFAULT_STT_LANGUAGE so recording still works.
-const LANGUAGE_NAME_TO_CODE: Record<string, string> = {
-  english: 'en',
-  spanish: 'es',
-  español: 'es',
-  espanol: 'es',
-  french: 'fr',
-  français: 'fr',
-  francais: 'fr',
-  japanese: 'ja',
-  日本語: 'ja',
-  german: 'de',
-  deutsch: 'de',
-  portuguese: 'pt',
-  português: 'pt',
-  portugues: 'pt',
-  italian: 'it',
-  italiano: 'it',
-  korean: 'ko',
-  한국어: 'ko',
-  hindi: 'hi',
-  हिन्दी: 'hi',
-  हिंदी: 'hi',
-  indonesian: 'id',
-  'bahasa indonesia': 'id',
-  bahasa: 'id',
-  russian: 'ru',
-  русский: 'ru',
-  polish: 'pl',
-  polski: 'pl',
-  turkish: 'tr',
-  türkçe: 'tr',
-  turkce: 'tr',
-  dutch: 'nl',
-  nederlands: 'nl',
-  ukrainian: 'uk',
-  українська: 'uk',
-  greek: 'el',
-  ελληνικά: 'el',
-  czech: 'cs',
-  čeština: 'cs',
-  cestina: 'cs',
-  danish: 'da',
-  dansk: 'da',
-  swedish: 'sv',
-  svenska: 'sv',
-  norwegian: 'no',
-  norsk: 'no',
-}
-
-// Subset of the GrowthBook speech_to_text_voice_stream_config allowlist.
-// Sending a code not in the server allowlist closes the connection.
-const SUPPORTED_LANGUAGE_CODES = new Set([
-  'en',
-  'es',
-  'fr',
-  'ja',
-  'de',
-  'pt',
-  'it',
-  'ko',
-  'hi',
-  'id',
-  'ru',
-  'pl',
-  'tr',
-  'nl',
-  'uk',
-  'el',
-  'cs',
-  'da',
-  'sv',
-  'no',
-])
-
-// Normalize a language preference string (from settings.language) to a
-// BCP-47 code supported by the voice_stream endpoint.  Returns the
-// default language if the input cannot be resolved.  When the input is
-// non-empty but unsupported, fellBackFrom is set to the original input so
-// callers can surface a warning.
-export function normalizeLanguageForSTT(language: string | undefined): {
-  code: string
-  fellBackFrom?: string
-} {
-  if (!language) return { code: DEFAULT_STT_LANGUAGE }
-  const lower = language.toLowerCase().trim()
-  if (!lower) return { code: DEFAULT_STT_LANGUAGE }
-  if (SUPPORTED_LANGUAGE_CODES.has(lower)) return { code: lower }
-  const fromName = LANGUAGE_NAME_TO_CODE[lower]
-  if (fromName) return { code: fromName }
-  const base = lower.split('-')[0]
-  if (base && SUPPORTED_LANGUAGE_CODES.has(base)) return { code: base }
-  return { code: DEFAULT_STT_LANGUAGE, fellBackFrom: language }
-}
 
 // Lazy-loaded voice module. We defer importing voice.ts (and its native
 // audio-capture-napi dependency) until voice input is actually activated.
@@ -235,16 +124,10 @@ export function useVoice({
   // slow-connecting WS from an abandoned session from overwriting
   // connectionRef mid-way through the next session.
   const sessionGenRef = useRef(0)
-  // True if the early-error retry fired during this session.
-  // Tracked for the tengu_voice_recording_completed analytics event.
+  // Preserved in completion analytics for backwards compatibility. Router
+  // sessions are deliberately not retried because each new connection counts
+  // against the user's live-STT session budget.
   const retryUsedRef = useRef(false)
-  // Full audio captured this session, kept for silent-drop replay. ~1% of
-  // sessions get a sticky-broken CE pod that accepts audio but returns zero
-  // transcripts (anthropics/anthropic#287008 session-sticky variant); when
-  // finalize() resolves via no_data_timeout with hadAudioSignal=true, we
-  // replay the buffer on a fresh WS once. Bounded: 32KB/s × ~60s max ≈ 2MB.
-  const fullAudioRef = useRef<Buffer[]>([])
-  const silentDropRetriedRef = useRef(false)
   // Bumped when the early-error retry is scheduled. Captured per
   // attemptConnect — onError swallows stale-gen events (conn 1's
   // trailing close-error) but surfaces current-gen ones (conn 2's
@@ -311,7 +194,6 @@ export function useVoice({
     }
     accumulatedRef.current = ''
     audioLevelsRef.current = []
-    fullAudioRef.current = []
     setVoiceState(prev => {
       if (prev.voiceInterimTranscript === '' && !prev.voiceAudioLevels.length)
         return prev
@@ -368,112 +250,20 @@ export function useVoice({
         : Promise.resolve(undefined)
 
     void finalizePromise
-      .then(async finalizeSource => {
+      .then(() => {
         if (isStale()) return
-        // Silent-drop replay: when the server accepted audio (wsConnected),
-        // the mic captured real signal (hadAudioSignal), but finalize timed
-        // out with zero transcript — the ~1% session-sticky CE-pod bug.
-        // Replay the buffered audio on a fresh connection once. A 250ms
-        // backoff clears the same-pod rapid-reconnect race (same gap as the
-        // early-error retry path below).
-        if (
-          finalizeSource === 'no_data_timeout' &&
-          hadAudioSignal &&
-          wsConnected &&
-          !focusTriggered &&
-          focusFlushedChars === 0 &&
-          accumulatedRef.current.trim() === '' &&
-          !silentDropRetriedRef.current &&
-          fullAudioRef.current.length > 0
-        ) {
-          silentDropRetriedRef.current = true
-          logForDebugging(
-            `[voice] Silent-drop detected (no_data_timeout, ${String(fullAudioRef.current.length)} chunks); replaying on fresh connection`,
-          )
-          logEvent('tengu_voice_silent_drop_replay', {
-            recordingDurationMs,
-            chunkCount: fullAudioRef.current.length,
-          })
-          if (connectionRef.current) {
-            connectionRef.current.close()
-            connectionRef.current = null
-          }
-          const replayBuffer = fullAudioRef.current
-          await sleep(250)
-          if (isStale()) return
-          const stt = normalizeLanguageForSTT(getInitialSettings().language)
-          const keyterms = await getVoiceKeyterms()
-          if (isStale()) return
-          await new Promise<void>(resolve => {
-            void connectVoiceStream(
-              {
-                onTranscript: (t, isFinal) => {
-                  if (isStale()) return
-                  if (isFinal && t.trim()) {
-                    if (accumulatedRef.current) accumulatedRef.current += ' '
-                    accumulatedRef.current += t.trim()
-                  }
-                },
-                onError: () => resolve(),
-                onClose: () => {},
-                onReady: conn => {
-                  if (isStale()) {
-                    conn.close()
-                    resolve()
-                    return
-                  }
-                  connectionRef.current = conn
-                  const SLICE = 32_000
-                  let slice: Buffer[] = []
-                  let bytes = 0
-                  for (const c of replayBuffer) {
-                    if (bytes > 0 && bytes + c.length > SLICE) {
-                      conn.send(Buffer.concat(slice))
-                      slice = []
-                      bytes = 0
-                    }
-                    slice.push(c)
-                    bytes += c.length
-                  }
-                  if (slice.length) conn.send(Buffer.concat(slice))
-                  void conn.finalize().then(() => {
-                    conn.close()
-                    resolve()
-                  })
-                },
-              },
-              { language: stt.code, keyterms },
-            ).then(
-              c => {
-                if (!c) resolve()
-              },
-              () => resolve(),
-            )
-          })
-          if (isStale()) return
-        }
-        fullAudioRef.current = []
 
         const text = accumulatedRef.current.trim()
         logForDebugging(
           `[voice] Final transcript assembled (${String(text.length)} chars): "${text.slice(0, 200)}"`,
         )
 
-        // Tracks silent-drop rate: transcriptChars=0 + hadAudioSignal=true
-        // + recordingDurationMs>2000 = the bug backend PR #287008 fixes.
-        // focusFlushedCharsRef makes transcriptChars accurate for focus mode
-        // (where each final is injected immediately and accumulatedRef reset).
-        //
-        // NOTE: this fires only on the finishRecording() path. The onError
-        // fallthrough and !conn (no-OAuth) paths bypass this → don't compute
-        // COUNT(completed)/COUNT(started) as a success rate; the silent-drop
-        // denominator (completed events only) is internally consistent.
         logEvent('tengu_voice_recording_completed', {
           transcriptChars: text.length + focusFlushedChars,
           recordingDurationMs,
           hadAudioSignal,
           retried,
-          silentDropRetried: silentDropRetriedRef.current,
+          silentDropRetried: false,
           wsConnected,
           focusTriggered,
         })
@@ -651,8 +441,6 @@ export function useVoice({
     seenRepeatRef.current = false
     hasAudioSignalRef.current = false
     retryUsedRef.current = false
-    silentDropRetriedRef.current = false
-    fullAudioRef.current = []
     focusFlushedCharsRef.current = 0
     everConnectedRef.current = false
     const myGen = ++sessionGenRef.current
@@ -693,14 +481,9 @@ export function useVoice({
     audioLevelsRef.current = []
     const started = await voiceModule.startRecording(
       (chunk: Buffer) => {
-        // Copy for fullAudioRef replay buffer. send() in voiceStreamSTT
-        // copies again defensively — acceptable overhead at audio rates.
-        // Skip buffering in focus mode — replay is gated on !focusTriggered
-        // so the buffer is dead weight (up to ~20MB for a 10min session).
+        // Own the chunk before buffering or sending it. Native audio modules
+        // may reuse their backing buffer before the WebSocket consumes it.
         const owned = Buffer.from(chunk)
-        if (!focusTriggeredRef.current) {
-          fullAudioRef.current.push(owned)
-        }
         if (connectionRef.current) {
           connectionRef.current.send(owned)
         } else {
@@ -744,29 +527,9 @@ export function useVoice({
       return
     }
 
-    const rawLanguage = getInitialSettings().language
-    const stt = normalizeLanguageForSTT(rawLanguage)
     logEvent('tengu_voice_recording_started', {
       focusTriggered: focusTriggeredRef.current,
-      sttLanguage:
-        stt.code as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      sttLanguageIsDefault: !rawLanguage?.trim(),
-      sttLanguageFellBack: stt.fellBackFrom !== undefined,
-      // ISO 639 subtag from Intl (bounded set, never user text). undefined if
-      // Intl failed — omitted from the payload, no retry cost (cached).
-      systemLocaleLanguage:
-        getSystemLocaleLanguage() as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
-
-    // Retry once if the connection errors before delivering any transcript.
-    // The conversation-engine proxy can reject rapid reconnects (~1/N_pods
-    // same-pod collision) or CE's Deepgram upstream can fail during its own
-    // teardown window (anthropics/anthropic#287008 surfaces this as
-    // TranscriptError instead of silent-drop). A 250ms backoff clears both.
-    // Audio captured during the retry window routes to audioBuffer (via the
-    // connectionRef.current null check in the recording callback above) and
-    // is flushed by the second onReady.
-    let sawTranscript = false
 
     // Connect WebSocket in parallel with audio recording.
     // Gather keyterms first (async but fast — no model calls), then connect.
@@ -782,7 +545,6 @@ export function useVoice({
         {
           onTranscript: (text: string, isFinal: boolean) => {
             if (isStale()) return
-            sawTranscript = true
             logForDebugging(
               `[voice] onTranscript: isFinal=${String(isFinal)} text="${text}"`,
             )
@@ -838,62 +600,25 @@ export function useVoice({
               })
             }
           },
-          onError: (error: string, opts?: { fatal?: boolean }) => {
+          onError: (error: string) => {
             if (isStale()) {
               logForDebugging(
                 `[voice] ignoring onError from stale session: ${error}`,
               )
               return
             }
-            // Swallow errors from superseded attempts. Covers conn 1's
-            // trailing close after retry is scheduled, AND the current
-            // conn's ws close event after its ws error already surfaced
-            // below (gen bumped at surface).
+            // Swallow a trailing close-error after the same connection's
+            // original error was surfaced below.
             if (attemptGenRef.current !== myAttemptGen) {
               logForDebugging(
                 `[voice] ignoring stale onError from superseded attempt: ${error}`,
               )
               return
             }
-            // Early-failure retry: server error before any transcript =
-            // likely a transient upstream race (CE rejection, Deepgram
-            // not ready). Clear connectionRef so audio re-buffers, back
-            // off, reconnect. Skip if the user has already released the
-            // key (state left 'recording') — no point retrying a session
-            // they've ended. Fatal errors (Cloudflare bot challenge, auth
-            // rejection) are the same failure on every retry attempt, so
-            // fall through to surface the message.
-            if (
-              !opts?.fatal &&
-              !sawTranscript &&
-              stateRef.current === 'recording'
-            ) {
-              if (!retryUsedRef.current) {
-                retryUsedRef.current = true
-                logForDebugging(
-                  `[voice] early voice_stream error (pre-transcript), retrying once: ${error}`,
-                )
-                logEvent('tengu_voice_stream_early_retry', {})
-                connectionRef.current = null
-                attemptGenRef.current++
-                setTimeout(
-                  (stateRef, attemptConnect, keyterms) => {
-                    if (stateRef.current === 'recording') {
-                      attemptConnect(keyterms)
-                    }
-                  },
-                  250,
-                  stateRef,
-                  attemptConnect,
-                  keyterms,
-                )
-                return
-              }
-            }
             // Surfacing — bump gen so this conn's trailing close-error
             // (ws fires error then close 1006) is swallowed above.
             attemptGenRef.current++
-            logError(new Error(`[voice] voice_stream error: ${error}`))
+            logError(new Error(`[voice] voice STT error: ${error}`))
             onErrorRef.current?.(`Voice stream error: ${error}`)
             // Clear the audio buffer on error to avoid memory leaks
             audioBuffer.length = 0
@@ -975,7 +700,6 @@ export function useVoice({
           },
         },
         {
-          language: stt.code,
           keyterms,
         },
       ).then(conn => {
@@ -988,7 +712,7 @@ export function useVoice({
             '[voice] Failed to connect to voice_stream (no OAuth token?)',
           )
           onErrorRef.current?.(
-            'Voice mode requires a Claude.ai account. Please run /login to sign in.',
+            'Voice mode requires a Verboo account. Please run /login to sign in.',
           )
           // Clear the audio buffer on failure
           audioBuffer.length = 0

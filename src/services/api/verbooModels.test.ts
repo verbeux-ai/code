@@ -7,16 +7,27 @@ import {
   getVerbooModelReasoning,
   getVerbooReasoningEffort,
 } from './verbooModels.js'
-import { getEffortSuffix, toPersistableEffort } from '../../utils/effort.js'
+import {
+  getEffortSuffix,
+  resolveAppliedEffort,
+  toPersistableEffort,
+} from '../../utils/effort.js'
 
 const originalGet = axios.get
+const originalEffortLevel = process.env.CLAUDE_CODE_EFFORT_LEVEL
 
 afterEach(() => {
   axios.get = originalGet
   clearVerbooModelsCache()
+  if (originalEffortLevel === undefined) {
+    delete process.env.CLAUDE_CODE_EFFORT_LEVEL
+  } else {
+    process.env.CLAUDE_CODE_EFFORT_LEVEL = originalEffortLevel
+  }
 })
 
 test('uses the router reasoning contract as the model capability source', async () => {
+  delete process.env.CLAUDE_CODE_EFFORT_LEVEL
   const get = mock(async () => ({
     data: {
       data: [
@@ -48,6 +59,8 @@ test('uses the router reasoning contract as the model capability source', async 
   expect(getVerbooReasoningEffort('verboo/reasoner', 'FAST')).toBe('Fast')
   expect(getVerbooReasoningEffort('verboo/reasoner', 'unknown')).toBeUndefined()
   expect(toPersistableEffort('Fast')).toBe('Fast')
+  expect(resolveAppliedEffort('verboo/reasoner', undefined)).toBeUndefined()
+  expect(resolveAppliedEffort('verboo/reasoner', 'deep')).toBe('deep')
   expect(getEffortSuffix('verboo/reasoner', undefined)).toBe(
     ' with balanced effort',
   )

@@ -657,7 +657,7 @@ export const SettingsSchema = lazySchema(() =>
         .string()
         .optional()
         .describe(
-          'Preferred language for Claude responses and voice dictation (e.g., "japanese", "spanish")',
+          'Preferred language for assistant responses (e.g., "japanese", "spanish")',
         ),
       skipWebFetchPreflight: z
         .boolean()

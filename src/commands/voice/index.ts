@@ -1,17 +1,15 @@
 import type { Command } from '../../commands.js'
-import {
-  isVoiceGrowthBookEnabled,
-  isVoiceModeEnabled,
-} from '../../voice/voiceModeEnabled.js'
+import { isVoiceGrowthBookEnabled } from '../../voice/voiceModeEnabled.js'
 
 const voice = {
   type: 'local',
   name: 'voice',
   description: 'Toggle voice mode',
-  availability: ['claude-ai'],
   isEnabled: () => isVoiceGrowthBookEnabled(),
   get isHidden() {
-    return !isVoiceModeEnabled()
+    // Keep the command discoverable before login. Invoking it explains that
+    // a Verboo account is required, while the router enforces auth again.
+    return !isVoiceGrowthBookEnabled()
   },
   supportsNonInteractive: false,
   load: () => import('./voice.js'),

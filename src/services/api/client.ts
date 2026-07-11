@@ -214,13 +214,15 @@ export async function getAnthropicClient({
   effortValue?: EffortValue
 }): Promise<Anthropic> {
   // Convert the runtime effort value to the OpenAI-shaped enum the shim
-  // expects. Undefined → shim falls back to descriptor/alias defaults.
+  // expects. In Verboo Auto, suppress descriptor/alias defaults too, so the
+  // router receives no reasoning fields and selects its own default.
   const shimReasoningEffort: string | undefined =
     effortValue !== undefined
       ? isVerbooMode() && typeof effortValue === 'string'
         ? effortValue
         : standardEffortToOpenAI(convertEffortValueToLevel(effortValue))
       : undefined
+  const suppressReasoningEffort = isVerbooMode() && effortValue === undefined
   const containerId = process.env.CLAUDE_CODE_CONTAINER_ID
   const remoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID
   const clientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP
@@ -311,6 +313,7 @@ export async function getAnthropicClient({
       maxRetries,
       timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
       reasoningEffort: shimReasoningEffort,
+      suppressReasoningEffort,
       providerOverride: {
         model: safeVerbooModel,
         baseURL: VERBOO_ROUTER_URL,

@@ -590,6 +590,7 @@ export function resolveProviderRequest(options?: {
   baseUrl?: string
   fallbackModel?: string
   reasoningEffortOverride?: ReasoningEffort
+  suppressReasoningEffort?: boolean
   apiFormat?: OpenAICompatibleApiFormat | string
 }): ResolvedProviderRequest {
   const isGithubMode = isEnvTruthy(process.env.CLAUDE_CODE_USE_GITHUB)
@@ -720,9 +721,11 @@ export function resolveProviderRequest(options?: {
       ? normalizeGithubModelsApiModel(descriptor.baseModel)
       : descriptor.baseModel)
 
-  const reasoning = options?.reasoningEffortOverride
-    ? { effort: options.reasoningEffortOverride }
-    : descriptor.reasoning
+  const reasoning = options?.suppressReasoningEffort
+    ? undefined
+    : options?.reasoningEffortOverride
+      ? { effort: options.reasoningEffortOverride }
+      : descriptor.reasoning
 
   return {
     transport,

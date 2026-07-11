@@ -5764,6 +5764,48 @@ test('omits reasoning_effort on chat_completions when no override and model has 
   })
 
   expect(requestBody && 'reasoning_effort' in requestBody).toBe(false)
+  expect(requestBody && 'effort' in requestBody).toBe(false)
+})
+
+test('omits reasoning fields when reasoning defaults are suppressed', async () => {
+  let requestBody: Record<string, unknown> | undefined
+
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'gpt-5.4',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    suppressReasoningEffort: true,
+    providerOverride: {
+      model: 'gpt-5.4',
+      baseURL: VERBOO_ROUTER_URL,
+      apiKey: 'test-key',
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'gpt-5.4',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 16,
+    stream: false,
+  })
+
+  expect(requestBody && 'reasoning_effort' in requestBody).toBe(false)
+  expect(requestBody && 'effort' in requestBody).toBe(false)
 })
 
 test('emits reasoning_effort from codex alias default when no override is passed', async () => {

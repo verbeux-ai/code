@@ -21,7 +21,7 @@ const version = pkg.version
 // selectively enabled here when their full source exists in the mirror.
 const featureFlags: Record<string, boolean> = {
   // ── Disabled: require Anthropic infrastructure or missing source ─────
-  VOICE_MODE: false,              // Push-to-talk STT via claude.ai OAuth endpoint
+  VOICE_MODE: true,               // Push-to-talk STT via the Verboo router
   PROACTIVE: false,               // Autonomous agent mode (missing proactive/ module)
   KAIROS: false,                  // Persistent assistant/session mode (cloud backend)
   BRIDGE_MODE: false,             // Remote desktop bridge via CCR infrastructure
@@ -281,6 +281,13 @@ export const ColorFile = null;
 export const getSyntaxTheme = noop;
 export const plot = noop;
 export const createClaudeForChromeMcpServer = noop;
+// Audio capture falls back to SoX/arecord when the optional native addon is
+// not bundled. Keep its complete public surface so enabling VOICE_MODE does
+// not turn the optional dependency into a runtime import failure.
+export const isNativeAudioAvailable = () => false;
+export const isNativeRecordingActive = () => false;
+export const startNativeRecording = () => false;
+export const stopNativeRecording = noop;
 `,
             loader: 'js',
           }),

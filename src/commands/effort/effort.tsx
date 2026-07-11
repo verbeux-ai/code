@@ -4,9 +4,11 @@ import { useMainLoopModel } from '../../hooks/useMainLoopModel.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandOnDone } from '../../types/command.js';
-import { type EffortValue, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, isOpenAIEffortLevel, modelUsesOpenAIEffort, openAIEffortToStandard, toPersistableEffort } from '../../utils/effort.js';
+import { type EffortValue, getAvailableEffortLevels, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, isOpenAIEffortLevel, openAIEffortToStandard, toPersistableEffort } from '../../utils/effort.js';
 import { EffortPicker } from '../../components/EffortPicker.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
+import { isVerbooMode } from '../../constants/oauth.js';
+import { getVerbooReasoningEffort } from '../../services/api/verbooModels.js';
 const COMMON_HELP_ARGS = ['help', '-h', '--help'];
 type EffortCommandResult = {
   message: string;
@@ -63,6 +65,18 @@ function setEffortValue(effortValue: EffortValue): EffortCommandResult {
 export function showCurrentEffort(appStateEffort: EffortValue | undefined, model: string): EffortCommandResult {
   const envOverride = getEffortEnvOverride();
   const effectiveValue = envOverride === null ? undefined : envOverride ?? appStateEffort;
+  if (isVerbooMode()) {
+    const displayed = getDisplayedEffortLevel(model, appStateEffort);
+    const explicit = typeof effectiveValue === 'string' && Boolean(getVerbooReasoningEffort(model, effectiveValue));
+    if (!explicit) {
+      return {
+        message: `Effort level: auto (currently ${displayed})`
+      };
+    }
+    return {
+      message: `Current effort level: ${displayed} (${getEffortValueDescription(displayed)})`
+    };
+  }
   if (effectiveValue === undefined) {
     const level = getDisplayedEffortLevel(model, appStateEffort);
     return {
@@ -105,10 +119,22 @@ function unsetEffortLevel(): EffortCommandResult {
     }
   };
 }
-export function executeEffort(args: string): EffortCommandResult {
+export function executeEffort(args: string, model?: string): EffortCommandResult {
   const normalized = args.toLowerCase();
   if (normalized === 'auto' || normalized === 'unset') {
     return unsetEffortLevel();
+  }
+  if (isVerbooMode() && model) {
+    const available = getAvailableEffortLevels(model);
+    const supported = getVerbooReasoningEffort(model, normalized);
+    if (supported) {
+      return setEffortValue(supported);
+    }
+    return {
+      message: available.length > 0
+        ? `Invalid reasoning level: ${args}. Available for ${model}: ${available.join(', ')}, auto`
+        : `Reasoning is not supported for ${model}`
+    };
   }
   if (isEffortLevel(normalized)) {
     return setEffortValue(normalized);
@@ -173,10 +199,18 @@ function ApplyEffortAndClose(t0) {
   React.useEffect(t1, t2);
   return null;
 }
+function ExecuteEffort(t0) {
+  const {
+    args,
+    onDone
+  } = t0;
+  const model = useMainLoopModel();
+  return <ApplyEffortAndClose result={executeEffort(args, model)} onDone={onDone} />;
+}
 export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, args?: string): Promise<React.ReactNode> {
   args = args?.trim() || '';
   if (COMMON_HELP_ARGS.includes(args)) {
-    onDone('Usage: /effort [low|medium|high|max|xhigh|auto]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (Opus 4.6 only)\n- xhigh: Extra-high reasoning for OpenAI/Codex models (alias for max)\n- auto: Use the default effort level for your model');
+    onDone('Usage: /effort [level|auto]\n\nThe available reasoning levels are loaded from /models for the active model.\n- auto: Use the model default returned by the API');
     return;
   }
   if (args === 'current' || args === 'status') {
@@ -185,14 +219,12 @@ export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, arg
   if (!args) {
     return <EffortPickerWrapper onDone={onDone} />;
   }
-  const result = executeEffort(args);
-  return <ApplyEffortAndClose result={result} onDone={onDone} />;
+  return <ExecuteEffort args={args} onDone={onDone} />;
 }
 
 function EffortPickerWrapper({ onDone }: { onDone: LocalJSXCommandOnDone }) {
   const setAppState = useSetAppState();
   const model = useMainLoopModel();
-  const usesOpenAIEffort = modelUsesOpenAIEffort(model);
 
   function handleSelect(effort: EffortValue | undefined) {
     const persistable = toPersistableEffort(effort);

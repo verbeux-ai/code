@@ -86,7 +86,7 @@ const CODEX_ALIAS_MODELS: Record<
 } as const
 
 type CodexAlias = keyof typeof CODEX_ALIAS_MODELS
-type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type ReasoningEffort = string
 
 const OPENAI_CODEX_SHORTCUT_ALIASES = new Set(['codexplan', 'codexspark'])
 

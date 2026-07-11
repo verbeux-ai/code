@@ -10,7 +10,13 @@ export type VerbooModel = {
   maxOutputTokens?: number
   displayName?: string
   description?: string
+  reasoning?: VerbooModelReasoning
   raw: Record<string, unknown>
+}
+
+export type VerbooModelReasoning = {
+  effortLevels: string[]
+  defaultEffort: string
 }
 
 type ModelsResponse = {
@@ -45,6 +51,41 @@ function pickString(
   return undefined
 }
 
+function normalizeReasoning(
+  raw: Record<string, unknown>,
+): VerbooModelReasoning | undefined {
+  const source = raw.reasoning
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return undefined
+  }
+  const reasoning = source as Record<string, unknown>
+  const rawLevels = reasoning.effort_levels ?? reasoning.effortLevels
+  if (!Array.isArray(rawLevels)) return undefined
+
+  const effortLevels = [
+    ...new Set(
+      rawLevels
+        .filter((value): value is string => typeof value === 'string')
+        .map(value => value.trim())
+        .filter(Boolean),
+    ),
+  ]
+  const defaultEffort = pickString(
+    reasoning,
+    'default_effort',
+    'defaultEffort',
+  )?.trim()
+  const canonicalDefault = defaultEffort
+    ? effortLevels.find(
+        level => level.toLowerCase() === defaultEffort.toLowerCase(),
+      )
+    : undefined
+  if (!canonicalDefault) {
+    return undefined
+  }
+  return { effortLevels, defaultEffort: canonicalDefault }
+}
+
 function normalizeModel(raw: Record<string, unknown>): VerbooModel | null {
   const id = pickString(raw, 'id', 'name', 'model')
   if (!id) return null
@@ -65,6 +106,7 @@ function normalizeModel(raw: Record<string, unknown>): VerbooModel | null {
     ),
     displayName: pickString(raw, 'display_name', 'displayName', 'label'),
     description: pickString(raw, 'description'),
+    reasoning: normalizeReasoning(raw),
     raw,
   }
 }
@@ -123,4 +165,26 @@ export function getCachedVerbooModels(): VerbooModel[] | null {
 export function getVerbooModelMeta(modelId: string): VerbooModel | undefined {
   if (!cache) return undefined
   return cache.models.find(m => m.id === modelId)
+}
+
+export function getVerbooModelReasoning(
+  modelId: string,
+): VerbooModelReasoning | undefined {
+  return getVerbooModelMeta(modelId)?.reasoning
+}
+
+/**
+ * Resolves user/environment input to the exact API value advertised by the
+ * current model. Matching is case-insensitive, while the value sent on the
+ * wire remains the server-provided canonical value.
+ */
+export function getVerbooReasoningEffort(
+  modelId: string,
+  requested: string,
+): string | undefined {
+  const normalized = requested.trim().toLowerCase()
+  if (!normalized) return undefined
+  return getVerbooModelReasoning(modelId)?.effortLevels.find(
+    level => level.toLowerCase() === normalized,
+  )
 }

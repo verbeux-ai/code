@@ -1,23 +1,46 @@
+import { toString as qrToString } from 'qrcode'
 import React, { useCallback, useState } from 'react'
 
 import { Select } from '../../components/CustomSelect/select.js'
 import { Spinner } from '../../components/Spinner.js'
+import TextInput from '../../components/TextInput.js'
 import { Box, render, Text, useInput } from '../../ink.js'
 import { openBrowser } from '../../utils/browser.js'
 import { fetchVerbooModels } from '../api/verbooModels.js'
 import {
   createCheckoutSession,
-  type CheckoutResult,
+  isWooviSubscriptionActive,
+  type PaymentMethod,
+  type WooviCheckoutData,
 } from '../api/verbooCheckout.js'
 import {
   clearMarketplaceCache,
   fetchMarketplaceGroups,
   type MarketplaceGroup,
 } from '../api/verbooMarketplace.js'
+import { isValidCPF, onlyDigits } from './purchaseValidation.js'
 
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000
 const COLS = 3
+const INPUT_COLUMNS = 48
+
+function formatCPF(value: string): string {
+  const digits = onlyDigits(value).slice(0, 11)
+  if (digits.length <= 3) return digits
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`
+  }
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`
+}
+
+function formatPhone(value: string): string {
+  const digits = onlyDigits(value).slice(0, 11)
+  if (digits.length <= 2) return digits.length > 0 ? `(${digits}` : ''
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+}
 
 function formatPrice(cents: number, currency: string): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -32,10 +55,8 @@ function formatInterval(interval: string): string {
 
 function getModelNames(group: MarketplaceGroup): string {
   const names = new Set<string>()
-  for (const inst of group.instances) {
-    for (const m of inst.models) {
-      names.add(m.modelName)
-    }
+  for (const instance of group.instances) {
+    for (const model of instance.models) names.add(model.modelName)
   }
   return [...names].join(', ')
 }
@@ -50,18 +71,208 @@ function getSlotsInfo(group: MarketplaceGroup): string {
   return `${current} assinantes`
 }
 
-function getPlanPriceDescription(group: MarketplaceGroup): string {
-  const price = formatPrice(group.priceCents, group.currency)
-  const interval = formatInterval(group.billingInterval)
-  const models = getModelNames(group)
-  const slots = getSlotsInfo(group)
-  let desc = `${price}${interval}`
-  if (models) desc += ` \u00B7 ${models}`
-  desc += ` \u00B7 ${slots}`
-  if (group.trialDays && group.trialDays > 0) {
-    desc += ` \u00B7 ${group.trialDays} dias de trial`
+function paymentProviderLabel(provider: MarketplaceGroup['paymentProvider']): string {
+  switch (provider) {
+    case 'woovi':
+      return 'Pix Automático'
+    case 'both':
+      return 'Cartão ou Pix'
+    default:
+      return 'Cartão'
   }
-  return desc
+}
+
+type WooviPayerFormProps = {
+  onCancel: () => void
+  onSubmit: (data: WooviCheckoutData) => void
+}
+
+function WooviPayerForm({ onCancel, onSubmit }: WooviPayerFormProps): React.ReactNode {
+  const [field, setField] = useState<'cpf' | 'phone'>('cpf')
+  const [cpf, setCPF] = useState('')
+  const [phone, setPhone] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const submitCPF = (value: string) => {
+    const formatted = formatCPF(value)
+    setCPF(formatted)
+    if (!isValidCPF(formatted)) {
+      setError('Informe um CPF válido para continuar.')
+      return
+    }
+    setError(null)
+    setField('phone')
+  }
+
+  const submitPhone = (value: string) => {
+    const formatted = formatPhone(value)
+    setPhone(formatted)
+    const digits = onlyDigits(formatted)
+    if (digits.length !== 11 || digits[2] !== '9') {
+      setError('Informe um celular brasileiro com DDD.')
+      return
+    }
+    onSubmit({ taxId: onlyDigits(cpf), phone: digits })
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Dados para o Pix Automático</Text>
+      <Text dimColor>
+        A Woovi precisa destes dados para criar a recorrência. Eles não são salvos no seu computador.
+      </Text>
+      {field === 'cpf' ? (
+        <Box flexDirection="column">
+          <Text>CPF</Text>
+          <TextInput
+            value={cpf}
+            onChange={value => {
+              setError(null)
+              setCPF(formatCPF(value))
+            }}
+            onSubmit={submitCPF}
+            onExit={onCancel}
+            columns={INPUT_COLUMNS}
+            placeholder="000.000.000-00"
+            focus
+            showCursor
+            multiline={false}
+          />
+        </Box>
+      ) : (
+        <Box flexDirection="column">
+          <Text>Celular com DDD</Text>
+          <TextInput
+            value={phone}
+            onChange={value => {
+              setError(null)
+              setPhone(formatPhone(value))
+            }}
+            onSubmit={submitPhone}
+            onExit={onCancel}
+            columns={INPUT_COLUMNS}
+            placeholder="(11) 99999-9999"
+            focus
+            showCursor
+            multiline={false}
+          />
+        </Box>
+      )}
+      {error ? <Text color="red">{error}</Text> : null}
+      <Text dimColor>Enter para continuar · Esc para voltar</Text>
+    </Box>
+  )
+}
+
+type WooviPaymentViewProps = {
+  accessToken: string
+  qrCode: string
+  subscriptionId: string
+  onCancel: () => void
+  onConfirmed: () => void
+}
+
+function WooviPaymentView({
+  accessToken,
+  qrCode,
+  subscriptionId,
+  onCancel,
+  onConfirmed,
+}: WooviPaymentViewProps): React.ReactNode {
+  const [qr, setQR] = useState('')
+  const [timedOut, setTimedOut] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+
+  React.useEffect(() => {
+    let cancelled = false
+    qrToString(qrCode, {
+      type: 'utf8',
+      errorCorrectionLevel: 'M',
+      small: true,
+    })
+      .then(value => {
+        if (!cancelled) setQR(value)
+      })
+      .catch(() => {
+        if (!cancelled) setQR('')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [qrCode])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const start = Date.now()
+    setTimedOut(false)
+
+    const poll = async () => {
+      while (!cancelled && Date.now() - start < POLL_TIMEOUT_MS) {
+        try {
+          if (await isWooviSubscriptionActive(accessToken, subscriptionId)) {
+            if (!cancelled) onConfirmed()
+            return
+          }
+        } catch {
+          // A confirmação do banco é assíncrona; tenta novamente até o timeout.
+        }
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+      }
+      if (!cancelled) setTimedOut(true)
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, attempt, onConfirmed, subscriptionId])
+
+  useInput(
+    (_input, key) => {
+      if (key.escape) onCancel()
+    },
+    { isActive: !timedOut },
+  )
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Escaneie o QR Code para aprovar o Pix Automático</Text>
+      {qr ? (
+        <Box flexDirection="column">
+          {qr
+            .split('\n')
+            .filter(line => line.length > 0)
+            .map((line, index) => (
+              <Text key={index}>{line}</Text>
+            ))}
+        </Box>
+      ) : (
+        <Spinner />
+      )}
+      <Text dimColor>Pix copia e cola:</Text>
+      <Text wrap="wrap">{qrCode}</Text>
+      {timedOut ? (
+        <Box flexDirection="column" gap={1}>
+          <Text color="warning">Ainda não recebemos a confirmação. O QR continua válido.</Text>
+          <Select
+            options={[
+              { label: 'Verificar novamente', value: 'retry' },
+              { label: 'Fechar', value: 'close' },
+            ]}
+            onChange={(value: string) => {
+              if (value === 'retry') setAttempt(current => current + 1)
+              else onCancel()
+            }}
+          />
+        </Box>
+      ) : (
+        <Box>
+          <Spinner />
+          <Text>Aguardando a aprovação no seu banco…</Text>
+        </Box>
+      )}
+    </Box>
+  )
 }
 
 type Step =
@@ -69,8 +280,11 @@ type Step =
   | 'loading-plans'
   | 'plans'
   | 'plan-detail'
+  | 'payment-method'
+  | 'woovi-form'
   | 'checkout'
   | 'polling'
+  | 'woovi-qr'
   | 'success'
   | 'error'
 
@@ -86,6 +300,10 @@ export function PurchaseFlowView({
   const [selectedPlan, setSelectedPlan] = useState<MarketplaceGroup | null>(null)
   const [focusIndex, setFocusIndex] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [wooviPayment, setWooviPayment] = useState<{
+    qrCode: string
+    subscriptionId: string
+  } | null>(null)
 
   const fetchPlans = useCallback(async () => {
     setStep('loading-plans')
@@ -100,10 +318,10 @@ export function PurchaseFlowView({
     }
   }, [])
 
-  const startPolling = useCallback(async () => {
+  const startStripePolling = useCallback(async () => {
     const startTime = Date.now()
     while (Date.now() - startTime < POLL_TIMEOUT_MS) {
-      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
       try {
         const models = await fetchVerbooModels(accessToken, { force: true })
         if (models.length > 0) {
@@ -112,62 +330,84 @@ export function PurchaseFlowView({
           return
         }
       } catch {
-        // retry
+        // O checkout Stripe pode estar aguardando ação no navegador.
       }
     }
-    onDone(false)
+    setErrorMsg('O pagamento ainda não foi confirmado. Verifique o checkout e tente novamente.')
+    setStep('error')
   }, [accessToken, onDone])
 
   const handleCheckout = useCallback(
-    async (group: MarketplaceGroup) => {
+    async (
+      group: MarketplaceGroup,
+      paymentMethod: PaymentMethod,
+      woovi?: WooviCheckoutData,
+    ) => {
       setStep('checkout')
       try {
-        const result = await createCheckoutSession(accessToken, group.id)
-        if (result.mode === 'trial') {
+        const result = await createCheckoutSession(accessToken, group.id, {
+          paymentMethod,
+          woovi,
+        })
+        if (result.mode === 'reactivated') {
           setStep('success')
           setTimeout(() => onDone(true), 1_500)
           return
         }
         if (result.mode === 'woovi') {
-          setStep('checkout')
-          setErrorMsg(result.wooviQrCode)
-          setStep('polling')
-          void startPolling()
+          setWooviPayment({
+            qrCode: result.wooviQrCode,
+            subscriptionId: result.wooviSubscriptionId,
+          })
+          setStep('woovi-qr')
           return
         }
         await openBrowser(result.url)
         setStep('polling')
-        void startPolling()
-      } catch (e) {
-        setErrorMsg((e as Error).message)
+        void startStripePolling()
+      } catch (error) {
+        setErrorMsg((error as Error).message)
         setStep('error')
       }
     },
-    [accessToken, onDone, startPolling],
+    [accessToken, onDone, startStripePolling],
   )
 
-  // Keyboard navigation for the plan grid
-  useInput(
-    (input, key) => {
-      if (step !== 'plans' || plans.length === 0) return
+  const startPlanCheckout = (group: MarketplaceGroup) => {
+    if (group.paymentProvider === 'both') {
+      setStep('payment-method')
+    } else if (group.paymentProvider === 'woovi') {
+      setStep('woovi-form')
+    } else {
+      void handleCheckout(group, 'stripe')
+    }
+  }
 
-      if (key.leftArrow) {
-        setFocusIndex(i => Math.max(0, i - 1))
-      } else if (key.rightArrow) {
-        setFocusIndex(i => Math.min(plans.length - 1, i + 1))
-      } else if (key.upArrow) {
-        setFocusIndex(i => Math.max(0, i - COLS))
-      } else if (key.downArrow) {
-        setFocusIndex(i => Math.min(plans.length - 1, i + COLS))
-      } else if (key.return) {
+  const handleWooviConfirmed = useCallback(async () => {
+    const models = await fetchVerbooModels(accessToken, { force: true })
+    if (models.length === 0) {
+      setErrorMsg('Pagamento confirmado, mas os modelos ainda não foram liberados. Aguarde alguns segundos e execute o Verboo novamente.')
+      setStep('error')
+      return
+    }
+    setStep('success')
+    setTimeout(() => onDone(true), 1_500)
+  }, [accessToken, onDone])
+
+  useInput(
+    (_input, key) => {
+      if (step !== 'plans' || plans.length === 0) return
+      if (key.leftArrow) setFocusIndex(index => Math.max(0, index - 1))
+      else if (key.rightArrow) setFocusIndex(index => Math.min(plans.length - 1, index + 1))
+      else if (key.upArrow) setFocusIndex(index => Math.max(0, index - COLS))
+      else if (key.downArrow) setFocusIndex(index => Math.min(plans.length - 1, index + COLS))
+      else if (key.return) {
         const plan = plans[focusIndex]
         if (plan) {
           setSelectedPlan(plan)
           setStep('plan-detail')
         }
-      } else if (key.escape) {
-        setStep('splash')
-      }
+      } else if (key.escape) setStep('splash')
     },
     { isActive: step === 'plans' },
   )
@@ -176,14 +416,14 @@ export function PurchaseFlowView({
     case 'splash':
       return (
         <Box flexDirection="column" gap={1}>
-          <Text>Nenhum modelo disponivel na sua conta.</Text>
+          <Text>Nenhum modelo disponível na sua conta.</Text>
           <Select
             options={[
               { label: 'Fechar', value: 'fechar' },
-              { label: 'Ver Planos', value: 'planos' },
+              { label: 'Ver planos', value: 'planos' },
             ]}
-            onChange={(v: string) => {
-              if (v === 'fechar') onDone(false)
+            onChange={(value: string) => {
+              if (value === 'fechar') onDone(false)
               else void fetchPlans()
             }}
           />
@@ -193,70 +433,54 @@ export function PurchaseFlowView({
     case 'loading-plans':
       return (
         <Box flexDirection="column" gap={1}>
-          <Text>Buscando planos disponiveis...</Text>
+          <Text>Buscando planos disponíveis…</Text>
           <Spinner />
         </Box>
       )
 
     case 'plans': {
-      // Grid layout: 3 plans per row
       const rows: MarketplaceGroup[][] = []
-      for (let i = 0; i < plans.length; i += COLS) {
-        rows.push(plans.slice(i, i + COLS))
+      for (let index = 0; index < plans.length; index += COLS) {
+        rows.push(plans.slice(index, index + COLS))
       }
       const focusedRow = Math.floor(focusIndex / COLS)
       const focusedCol = focusIndex % COLS
 
       return (
         <Box flexDirection="column" gap={1}>
-          <Text bold>Planos disponiveis</Text>
+          <Text bold>Planos disponíveis</Text>
           <Text dimColor>Setas para navegar, Enter para selecionar, Esc para voltar</Text>
           <Box flexDirection="column" gap={1}>
-            {rows.map((row, rowIdx) => (
-              <Box key={rowIdx} flexDirection="row" gap={2}>
-                {row.map((plan, colIdx) => {
-                  const isFocused = rowIdx === focusedRow && colIdx === focusedCol
-                  const price = formatPrice(plan.priceCents, plan.currency)
-                  const interval = formatInterval(plan.billingInterval)
-                  const models = getModelNames(plan)
-                  const slots = getSlotsInfo(plan)
-
+            {rows.map((row, rowIndex) => (
+              <Box key={rowIndex} flexDirection="row" gap={2}>
+                {row.map((plan, columnIndex) => {
+                  const focused = rowIndex === focusedRow && columnIndex === focusedCol
                   return (
                     <Box
                       key={plan.id}
                       flexDirection="column"
-                      borderStyle={isFocused ? 'bold' : 'round'}
-                      borderColor={isFocused ? 'claude' : undefined}
+                      borderStyle={focused ? 'bold' : 'round'}
+                      borderColor={focused ? 'claude' : undefined}
                       paddingX={1}
-                      paddingY={0}
                       flexGrow={1}
                       width="33%"
                     >
-                      <Text bold wrap="truncate">
-                        {plan.name}
-                      </Text>
-                      <Text>
-                        {price}{interval}
-                      </Text>
-                      <Text dimColor wrap="truncate" title={models}>
-                        {models}
-                      </Text>
-                      <Text dimColor>{slots}</Text>
-                      {plan.trialDays && plan.trialDays > 0 && (
-                        <Text color="success">{plan.trialDays} dias trial</Text>
-                      )}
+                      <Text bold wrap="truncate">{plan.name}</Text>
+                      <Text>{formatPrice(plan.priceCents, plan.currency)}{formatInterval(plan.billingInterval)}</Text>
+                      <Text dimColor wrap="truncate" title={getModelNames(plan)}>{getModelNames(plan)}</Text>
+                      <Text dimColor>{getSlotsInfo(plan)}</Text>
+                      <Text dimColor>{paymentProviderLabel(plan.paymentProvider)}</Text>
+                      {plan.trialDays && plan.trialDays > 0 && plan.paymentProvider !== 'woovi' ? (
+                        <Text color="success">{plan.trialDays} dias de trial</Text>
+                      ) : null}
                     </Box>
                   )
                 })}
-                {/* Fill empty slots in the last row */}
-                {row.length < COLS &&
-                  Array.from({ length: COLS - row.length }).map((_, i) => (
-                    <Box
-                      key={`empty-${i}`}
-                      flexGrow={1}
-                      width="33%"
-                    />
-                  ))}
+                {row.length < COLS
+                  ? Array.from({ length: COLS - row.length }).map((_, index) => (
+                      <Box key={`empty-${index}`} flexGrow={1} width="33%" />
+                    ))
+                  : null}
               </Box>
             ))}
           </Box>
@@ -266,60 +490,65 @@ export function PurchaseFlowView({
 
     case 'plan-detail': {
       const plan = selectedPlan!
-      const price = formatPrice(plan.priceCents, plan.currency)
-      const interval = formatInterval(plan.billingInterval)
-      const models = getModelNames(plan)
-      const slots = getSlotsInfo(plan)
-
       return (
         <Box flexDirection="column" gap={1}>
-          <Box
-            flexDirection="column"
-            borderStyle="round"
-            paddingX={1}
-            paddingY={0}
-            gap={0}
-          >
+          <Box flexDirection="column" borderStyle="round" paddingX={1}>
             <Text bold>{plan.name}</Text>
-            <Text>{price}{interval}</Text>
-            <Box flexDirection="column" marginTop={1}>
-              <Text>
-                <Text dimColor>Modelos: </Text>
-                {models}
-              </Text>
-              <Text>
-                <Text dimColor>Assinantes: </Text>
-                {slots}
-              </Text>
-              {plan.trialDays && plan.trialDays > 0 && (
-                <Text>
-                  <Text dimColor>Trial: </Text>
-                  {plan.trialDays} dias
-                </Text>
-              )}
-            </Box>
+            <Text>{formatPrice(plan.priceCents, plan.currency)}{formatInterval(plan.billingInterval)}</Text>
+            <Text dimColor>Modelos: {getModelNames(plan)}</Text>
+            <Text dimColor>Assinantes: {getSlotsInfo(plan)}</Text>
+            <Text dimColor>Pagamento: {paymentProviderLabel(plan.paymentProvider)}</Text>
+            {plan.trialDays && plan.trialDays > 0 && plan.paymentProvider !== 'woovi' ? (
+              <Text color="success">Trial: {plan.trialDays} dias</Text>
+            ) : null}
           </Box>
           <Select
             options={[
-              { label: 'Assinar Agora', value: 'confirm' },
+              { label: 'Assinar agora', value: 'confirm' },
               { label: 'Voltar', value: 'back' },
             ]}
-            onChange={(v: string) => {
-              if (v === 'confirm') {
-                void handleCheckout(plan)
-              } else {
-                setStep('plans')
-              }
+            onChange={(value: string) => {
+              if (value === 'confirm') startPlanCheckout(plan)
+              else setStep('plans')
             }}
           />
         </Box>
       )
     }
 
+    case 'payment-method':
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Como deseja pagar?</Text>
+          <Select
+            options={[
+              { label: 'Cartão de crédito', value: 'stripe', description: 'Checkout seguro da Stripe no navegador' },
+              { label: 'Pix Automático', value: 'woovi', description: 'Aprove a recorrência pelo QR Code no terminal' },
+              { label: 'Voltar', value: 'back' },
+            ]}
+            onChange={(value: string) => {
+              if (value === 'back') setStep('plan-detail')
+              else if (value === 'woovi') setStep('woovi-form')
+              else if (selectedPlan) void handleCheckout(selectedPlan, 'stripe')
+            }}
+          />
+        </Box>
+      )
+
+    case 'woovi-form':
+      return (
+        <WooviPayerForm
+          onCancel={() => setStep(selectedPlan?.paymentProvider === 'both' ? 'payment-method' : 'plan-detail')}
+          onSubmit={data => {
+            if (selectedPlan) void handleCheckout(selectedPlan, 'woovi', data)
+          }}
+        />
+      )
+
     case 'checkout':
       return (
         <Box flexDirection="column" gap={1}>
-          <Text>Abrindo checkout no navegador...</Text>
+          <Text>Criando checkout…</Text>
           <Spinner />
         </Box>
       )
@@ -327,13 +556,24 @@ export function PurchaseFlowView({
     case 'polling':
       return (
         <Box flexDirection="column" gap={1}>
-          <Text>Aguardando confirmacao do pagamento...</Text>
+          <Text>Aguardando confirmação do pagamento no navegador…</Text>
           <Spinner />
         </Box>
       )
 
+    case 'woovi-qr':
+      return wooviPayment ? (
+        <WooviPaymentView
+          accessToken={accessToken}
+          qrCode={wooviPayment.qrCode}
+          subscriptionId={wooviPayment.subscriptionId}
+          onCancel={() => onDone(false)}
+          onConfirmed={() => void handleWooviConfirmed()}
+        />
+      ) : null
+
     case 'success':
-      return <Text>Pagamento confirmado! Modelos disponiveis.</Text>
+      return <Text color="success">Pagamento confirmado! Modelos disponíveis.</Text>
 
     case 'error':
       return (
@@ -341,11 +581,11 @@ export function PurchaseFlowView({
           <Text color="red">Erro: {errorMsg}</Text>
           <Select
             options={[
-              { label: 'Tentar novamente', value: 'retry' },
+              { label: 'Ver planos', value: 'retry' },
               { label: 'Fechar', value: 'fechar' },
             ]}
-            onChange={(v: string) => {
-              if (v === 'fechar') onDone(false)
+            onChange={(value: string) => {
+              if (value === 'fechar') onDone(false)
               else void fetchPlans()
             }}
           />
@@ -354,12 +594,9 @@ export function PurchaseFlowView({
   }
 }
 
-export async function showNoModelsFlow(
-  accessToken: string,
-): Promise<boolean> {
+export async function showNoModelsFlow(accessToken: string): Promise<boolean> {
   return new Promise<boolean>(resolve => {
     let instance: { unmount: () => void } | null = null
-
     render(
       <PurchaseFlowView
         accessToken={accessToken}
@@ -368,8 +605,8 @@ export async function showNoModelsFlow(
           setTimeout(() => resolve(ok), 50)
         }}
       />,
-    ).then(inst => {
-      instance = inst
+    ).then(created => {
+      instance = created
     })
   })
 }

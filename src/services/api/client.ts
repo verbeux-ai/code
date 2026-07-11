@@ -13,7 +13,6 @@ import {
   convertEffortValueToLevel,
   type EffortValue,
   standardEffortToOpenAI,
-  type OpenAIEffortLevel,
 } from 'src/utils/effort.js'
 import { getUserAgent } from 'src/utils/http.js'
 import {
@@ -216,9 +215,11 @@ export async function getAnthropicClient({
 }): Promise<Anthropic> {
   // Convert the runtime effort value to the OpenAI-shaped enum the shim
   // expects. Undefined → shim falls back to descriptor/alias defaults.
-  const shimReasoningEffort: OpenAIEffortLevel | undefined =
+  const shimReasoningEffort: string | undefined =
     effortValue !== undefined
-      ? standardEffortToOpenAI(convertEffortValueToLevel(effortValue))
+      ? isVerbooMode() && typeof effortValue === 'string'
+        ? effortValue
+        : standardEffortToOpenAI(convertEffortValueToLevel(effortValue))
       : undefined
   const containerId = process.env.CLAUDE_CODE_CONTAINER_ID
   const remoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID

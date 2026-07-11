@@ -13,6 +13,12 @@ import { fileURLToPath, pathToFileURL } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const distPath = join(__dirname, '..', 'dist', 'cli.mjs')
+const normalizedDir = __dirname.replaceAll('\\', '/')
+const isSourceCheckout = !normalizedDir.includes('/node_modules/')
+
+if (isSourceCheckout) {
+  process.env.DISABLE_AUTOUPDATER ??= '1'
+}
 
 if (existsSync(distPath)) {
   await import(pathToFileURL(distPath).href)

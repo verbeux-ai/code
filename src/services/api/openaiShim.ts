@@ -1583,10 +1583,10 @@ class OpenAIShimStream {
 
 class OpenAIShimMessages {
   private defaultHeaders: Record<string, string>
-  private reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+  private reasoningEffort?: string
   private providerOverride?: { model: string; baseURL: string; apiKey: string }
 
-  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh', providerOverride?: { model: string; baseURL: string; apiKey: string }) {
+  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: string, providerOverride?: { model: string; baseURL: string; apiKey: string }) {
     this.defaultHeaders = filterAnthropicHeaders(defaultHeaders)
     this.reasoningEffort = reasoningEffort
     this.providerOverride = providerOverride
@@ -2541,9 +2541,9 @@ class OpenAIShimMessages {
 
 class OpenAIShimBeta {
   messages: OpenAIShimMessages
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+  reasoningEffort?: string
 
-  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh', providerOverride?: { model: string; baseURL: string; apiKey: string }) {
+  constructor(defaultHeaders: Record<string, string>, reasoningEffort?: string, providerOverride?: { model: string; baseURL: string; apiKey: string }) {
     this.messages = new OpenAIShimMessages(defaultHeaders, reasoningEffort, providerOverride)
     this.reasoningEffort = reasoningEffort
   }
@@ -2553,7 +2553,7 @@ export function createOpenAIShimClient(options: {
   defaultHeaders?: Record<string, string>
   maxRetries?: number
   timeout?: number
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+  reasoningEffort?: string
   providerOverride?: { model: string; baseURL: string; apiKey: string }
 }): unknown {
   hydrateGeminiAccessTokenFromSecureStorage()

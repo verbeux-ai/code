@@ -11,8 +11,13 @@ import * as actualThinking from './thinking.js'
 import * as actualGrowthbook from 'src/services/analytics/growthbook.js'
 import * as actualProviders from './model/providers.js'
 import * as actualModelSupportOverrides from './model/modelSupportOverrides.js'
+import * as actualOAuth from '../constants/oauth.js'
 
 afterEach(() => {
+  // `mock.module` survives `mock.restore` in Bun. Restore native Verboo mode
+  // after each isolated compatibility case so this file cannot affect later
+  // test modules.
+  mock.module('../constants/oauth.js', () => actualOAuth)
   mock.restore()
 })
 
@@ -20,6 +25,13 @@ async function importFreshEffortModule(options: {
   provider: 'codex' | 'openai'
   supportsCodexReasoningEffort: boolean
 }) {
+  // This suite verifies the non-Verboo provider compatibility path. Verboo is
+  // intentionally always enabled in this distribution, so make that scope
+  // explicit instead of depending on the production mode.
+  mock.module('../constants/oauth.js', () => ({
+    ...actualOAuth,
+    isVerbooMode: () => false,
+  }))
   mock.module('./model/providers.js', () => ({
     ...actualProviders,
     getAPIProvider: () => options.provider,

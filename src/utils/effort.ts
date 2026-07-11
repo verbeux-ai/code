@@ -8,6 +8,10 @@ import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { supportsCodexReasoningEffort } from '../services/api/providerConfig.js'
 import { isEnvTruthy } from './envUtils.js'
 import { isVerbooMode } from '../constants/oauth.js'
+import {
+  getVerbooModelReasoning,
+  getVerbooReasoningEffort,
+} from '../services/api/verbooModels.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 
 export type { EffortLevel }
@@ -27,11 +31,12 @@ export const OPENAI_EFFORT_LEVELS = [
 ] as const
 
 export type OpenAIEffortLevel = typeof OPENAI_EFFORT_LEVELS[number]
-export type EffortValue = EffortLevel | number
+export type EffortString = EffortLevel | (string & {})
+export type EffortValue = EffortString | number
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
-  if (isVerbooMode()) return false
+  if (isVerbooMode()) return getVerbooModelReasoning(model) !== undefined
   const m = model.toLowerCase()
   if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
     return true
@@ -87,16 +92,20 @@ export function isOpenAIEffortLevel(value: string): value is OpenAIEffortLevel {
 }
 
 export function modelUsesOpenAIEffort(model: string): boolean {
+  if (isVerbooMode()) return false
   const provider = getAPIProvider()
   return provider === 'openai' || provider === 'codex'
 }
 
-export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIEffortLevel[] {
+export function getAvailableEffortLevels(model: string): string[] {
+  if (isVerbooMode()) {
+    return getVerbooModelReasoning(model)?.effortLevels ?? []
+  }
   if (!modelSupportsEffort(model)) {
     return []
   }
   if (modelUsesOpenAIEffort(model)) {
-    return [...OPENAI_EFFORT_LEVELS] as OpenAIEffortLevel[]
+    return [...OPENAI_EFFORT_LEVELS]
   }
   const levels: EffortLevel[] = ['low', 'medium', 'high']
   if (modelSupportsMaxEffort(model)) {
@@ -105,7 +114,7 @@ export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIE
   return levels
 }
 
-export function getEffortLevelLabel(level: EffortLevel | OpenAIEffortLevel): string {
+export function getEffortLevelLabel(level: string): string {
   if (level === 'xhigh') return 'Extra High'
   if (level === 'max') return 'Max'
   return capitalize(level)
@@ -133,6 +142,9 @@ export function parseEffortValue(value: unknown): EffortValue | undefined {
     return value
   }
   const str = String(value).toLowerCase()
+  if (isVerbooMode() && str.trim()) {
+    return str
+  }
   if (isEffortLevel(str)) {
     return str
   }
@@ -145,7 +157,9 @@ export function parseEffortValue(value: unknown): EffortValue | undefined {
 
 /**
  * Numeric values are model-default only and not persisted.
- * 'max' can now be persisted by all users.
+ * 'max' and the Verboo router's model-specific reasoning values can be
+ * persisted. Values loaded from settings are still validated against the
+ * active model immediately before they are sent to the API.
  * OpenAI-shaped 'xhigh' is normalized to its EffortLevel equivalent ('max')
  * so any code path that leaks the OpenAI label still persists correctly.
  * Write sites call this before saving to settings so the Zod schema
@@ -153,7 +167,10 @@ export function parseEffortValue(value: unknown): EffortValue | undefined {
  */
 export function toPersistableEffort(
   value: EffortValue | undefined,
-): EffortLevel | undefined {
+): EffortString | undefined {
+  if (isVerbooMode() && typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
   if (value === 'low' || value === 'medium' || value === 'high') {
     return value
   }
@@ -166,7 +183,7 @@ export function toPersistableEffort(
   return undefined
 }
 
-export function getInitialEffortSetting(): EffortLevel | undefined {
+export function getInitialEffortSetting(): EffortString | undefined {
   // toPersistableEffort validates 'max' on read, so a manually
   // edited settings.json with an invalid level doesn't leak into a fresh session.
   return toPersistableEffort(getInitialSettings().effortLevel)
@@ -186,11 +203,11 @@ export function getInitialEffortSetting(): EffortLevel | undefined {
  * deliberately do not write to settings.json).
  */
 export function resolvePickerEffortPersistence(
-  picked: EffortLevel | undefined,
-  modelDefault: EffortLevel,
-  priorPersisted: EffortLevel | undefined,
+  picked: EffortString | undefined,
+  modelDefault: EffortString,
+  priorPersisted: EffortString | undefined,
   toggledInPicker: boolean,
-): EffortLevel | undefined {
+): EffortString | undefined {
   const hadExplicit = priorPersisted !== undefined || toggledInPicker
   return hadExplicit || picked !== modelDefault ? picked : undefined
 }
@@ -219,6 +236,14 @@ export function resolveAppliedEffort(
   if (envOverride === null) {
     return undefined
   }
+  if (isVerbooMode()) {
+    const reasoning = getVerbooModelReasoning(model)
+    if (!reasoning) return undefined
+    const selected = envOverride ?? appStateEffortValue ?? reasoning.defaultEffort
+    return typeof selected === 'string'
+      ? getVerbooReasoningEffort(model, selected) ?? reasoning.defaultEffort
+      : reasoning.defaultEffort
+  }
   const resolved =
     envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
   // API rejects 'max' on non-Opus-4.6 Anthropic models — downgrade to 'high'.
@@ -242,9 +267,10 @@ export function resolveAppliedEffort(
 export function getDisplayedEffortLevel(
   model: string,
   appStateEffort: EffortValue | undefined,
-): EffortLevel {
-  const resolved = resolveAppliedEffort(model, appStateEffort) ?? 'high'
-  return convertEffortValueToLevel(resolved)
+): EffortString {
+  const resolved = resolveAppliedEffort(model, appStateEffort)
+  if (isVerbooMode() && typeof resolved === 'string') return resolved
+  return convertEffortValueToLevel(resolved ?? 'high')
 }
 
 /**
@@ -257,10 +283,18 @@ export function getEffortSuffix(
   model: string,
   effortValue: EffortValue | undefined,
 ): string {
-  if (effortValue === undefined) return ''
   const resolved = resolveAppliedEffort(model, effortValue)
   if (resolved === undefined) return ''
-  return ` with ${convertEffortValueToLevel(resolved)} effort`
+  // Verboo receives the model default from /models. Show that resolved value
+  // even when the user left /effort on Auto, so the spinner says exactly what
+  // the current request uses (for example: "thinking with max effort").
+  if (isVerbooMode() && typeof resolved === 'string') {
+    return ` with ${resolved} effort`
+  }
+  if (effortValue === undefined) return ''
+  const displayed =
+    convertEffortValueToLevel(resolved)
+  return ` with ${displayed} effort`
 }
 
 export function isValidNumericEffort(value: number): boolean {
@@ -289,7 +323,7 @@ export function convertEffortValueToLevel(value: EffortValue): EffortLevel {
  * @param level The effort level to describe
  * @returns Human-readable description
  */
-export function getEffortLevelDescription(level: EffortLevel | OpenAIEffortLevel): string {
+export function getEffortLevelDescription(level: string): string {
   switch (level) {
     case 'low':
       return 'Quick, straightforward implementation with minimal overhead'
@@ -298,9 +332,11 @@ export function getEffortLevelDescription(level: EffortLevel | OpenAIEffortLevel
     case 'high':
       return 'Comprehensive implementation with extensive testing and documentation'
     case 'max':
-      return 'Maximum capability with deepest reasoning (Opus 4.6 only)'
+      return 'Maximum reasoning for the most complex tasks'
     case 'xhigh':
       return 'Extra high reasoning effort for complex tasks (OpenAI/Codex)'
+    default:
+      return 'Reasoning level supported by this model'
   }
 }
 
@@ -329,9 +365,9 @@ export type OpusDefaultEffortConfig = {
 
 const OPUS_DEFAULT_EFFORT_CONFIG_DEFAULT: OpusDefaultEffortConfig = {
   enabled: true,
-  dialogTitle: 'We recommend medium effort for Opus',
+  dialogTitle: 'We recommend balanced effort',
   dialogDescription:
-    'Effort determines how long Claude thinks for when completing your task. We recommend medium effort for most tasks to balance speed and intelligence and maximize rate limits. Use ultrathink to trigger high effort when needed.',
+    'Effort determines how long the model reasons before responding. We recommend balanced effort for most tasks.',
 }
 
 export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
@@ -349,6 +385,9 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 export function getDefaultEffortForModel(
   model: string,
 ): EffortValue | undefined {
+  if (isVerbooMode()) {
+    return getVerbooModelReasoning(model)?.defaultEffort
+  }
   if (process.env.USER_TYPE === 'ant') {
     const config = getAntModelOverrideConfig()
     const isDefaultModel =

@@ -5,7 +5,6 @@ import {
   EFFORT_MEDIUM,
 } from '../constants/figures.js'
 import {
-  type EffortLevel,
   type EffortValue,
   getDisplayedEffortLevel,
   modelSupportsEffort,
@@ -24,7 +23,7 @@ export function getEffortNotificationText(
   return `${effortLevelToSymbol(level)} ${level} · /effort`
 }
 
-export function effortLevelToSymbol(level: EffortLevel): string {
+export function effortLevelToSymbol(level: string): string {
   switch (level) {
     case 'low':
       return EFFORT_LOW

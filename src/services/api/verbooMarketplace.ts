@@ -19,6 +19,7 @@ export type MarketplaceGroup = {
   subscriberLimit?: number | null
   trialDays?: number | null
   maxTokensPerSec?: number | null
+  paymentProvider: 'stripe' | 'woovi' | 'both'
 }
 
 const CACHE_TTL_MS = 2 * 60 * 1000

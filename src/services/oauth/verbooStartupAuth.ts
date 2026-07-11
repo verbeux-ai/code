@@ -170,6 +170,11 @@ export async function checkVerbooModels(
 async function loadAndCheckModels(accessToken: string): Promise<void> {
   const models = await checkVerbooModels(accessToken)
   if (models.length > 0) return
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      'Nenhum modelo disponível nesta conta. Execute `verboo /login` em um terminal interativo para escolher um plano.',
+    )
+  }
   const ok = await showNoModelsFlow(accessToken)
   if (ok) {
     // Re-check models after purchase flow

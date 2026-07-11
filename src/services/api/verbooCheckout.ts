@@ -6,18 +6,36 @@ import { logError } from '../../utils/log.js'
 
 export type CheckoutResult =
   | { mode: 'stripe'; url: string }
-  | { mode: 'trial'; subscriptionId: string; trialEndAt: string }
   | { mode: 'woovi'; wooviQrCode: string; wooviSubscriptionId: string }
+  | { mode: 'reactivated' }
+
+export type PaymentMethod = 'stripe' | 'woovi'
+
+export type WooviCheckoutData = {
+  taxId: string
+  phone: string
+}
+
+export type CheckoutInput = {
+  paymentMethod: PaymentMethod
+  woovi?: WooviCheckoutData
+}
+
+type SubscriptionSummary = {
+  status: string
+  wooviSubscriptionId?: string
+}
 
 export async function createCheckoutSession(
   accessToken: string,
   groupId: string,
+  input: CheckoutInput,
 ): Promise<CheckoutResult> {
   const endpoint = `${VERBOO_API_BASE_URL}/api/me/groups/${groupId}/checkout`
   try {
     const response = await axios.post<{ data: CheckoutResult }>(
       endpoint,
-      {},
+      input,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -37,4 +55,22 @@ export async function createCheckoutSession(
     logForDebugging(msg)
     throw new Error(msg)
   }
+}
+
+export async function isWooviSubscriptionActive(
+  accessToken: string,
+  wooviSubscriptionId: string,
+): Promise<boolean> {
+  const endpoint = `${VERBOO_API_BASE_URL}/api/me/subscriptions`
+  const response = await axios.get<{ data: SubscriptionSummary[] }>(endpoint, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 10_000,
+  })
+  return (response.data?.data ?? []).some(
+    sub =>
+      sub.wooviSubscriptionId === wooviSubscriptionId && sub.status === 'active',
+  )
 }

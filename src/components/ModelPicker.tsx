@@ -8,6 +8,7 @@ import { FAST_MODE_MODEL_DISPLAY, isFastModeAvailable, isFastModeCooldown, isFas
 import { Box, Text } from '../ink.js';
 import { useKeybindings } from '../keybindings/useKeybinding.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
+import { isVerbooMode } from '../constants/oauth.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
 import { getModelOptions, type ModelOption } from '../utils/model/modelOptions.js';
@@ -171,7 +172,7 @@ export function ModelPicker(t0) {
   let t8;
   if ($[20] !== focusedValue) {
     const focusedModel = resolveOptionModel(focusedValue);
-    focusedSupportsEffort = focusedModel ? modelSupportsEffort(focusedModel) : false;
+    focusedSupportsEffort = !isVerbooMode() && focusedModel ? modelSupportsEffort(focusedModel) : false;
     t8 = focusedModel ? modelSupportsMaxEffort(focusedModel) : false;
     $[20] = focusedValue;
     $[21] = focusedSupportsEffort;

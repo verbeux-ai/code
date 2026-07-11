@@ -714,10 +714,15 @@ spinnerVerbs: z
             'enabled automatically for supported models.',
         ),
       effortLevel: z
-        .enum(['low', 'medium', 'high', 'max'])
+        .string()
+        .trim()
+        .min(1)
+        .max(64)
         .optional()
         .catch(undefined)
-        .describe('Persisted effort level for supported models.'),
+        .describe(
+          'Persisted reasoning level. Verboo validates it against the active model before sending it to the API.',
+        ),
       advisorModel: z
         .string()
         .optional()

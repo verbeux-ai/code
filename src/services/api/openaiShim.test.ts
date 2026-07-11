@@ -286,6 +286,7 @@ test('adds Verboo session header only for Verboo router requests', async () => {
     'custom-session-should-not-win',
   )
   expect(capturedHeaders?.get('x-claude-code-session-id')).toBeNull()
+  expect(capturedHeaders?.get('user-agent')).toMatch(/^verboo-code\/(?:[\w.-]+)$/)
 })
 
 test('captures router rate limit headers from successful Verboo router responses', async () => {

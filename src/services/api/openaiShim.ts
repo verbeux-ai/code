@@ -87,6 +87,7 @@ import {
   getStreamStats,
 } from '../../utils/streamingOptimizer.js'
 import { stableStringifyJson } from '../../utils/stableStringify.js'
+import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
 import { updateRouterRateLimitFromHeaders } from '../routerRateLimit.js'
 
 type SecretValueSource = Partial<{
@@ -1984,6 +1985,7 @@ class OpenAIShimMessages {
     }
     if (isVerbooRouterUrl(request.baseUrl)) {
       headers[VERBOO_SESSION_HEADER] = getSessionId()
+      headers['User-Agent'] = getVerbooCodeUserAgent()
     }
 
     const isGemini = isGeminiMode()

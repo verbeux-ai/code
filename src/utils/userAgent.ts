@@ -12,6 +12,9 @@ export function getClaudeCodeUserAgent(): string {
 // Stable product identifier for calls made to Verboo infrastructure. Keep it
 // minimal: platform details are not needed for the router client metrics.
 export function getVerbooCodeUserAgent(): string {
-  const version = typeof MACRO !== 'undefined' && MACRO.VERSION ? MACRO.VERSION : 'unknown'
+  const version =
+    typeof MACRO !== 'undefined' && MACRO.DISPLAY_VERSION
+      ? MACRO.DISPLAY_VERSION
+      : 'unknown'
   return `verboo-code/${version}`
 }

@@ -14,10 +14,19 @@ import * as actualModelSupportOverrides from './model/modelSupportOverrides.js'
 import * as actualOAuth from '../constants/oauth.js'
 
 afterEach(() => {
-  // `mock.module` survives `mock.restore` in Bun. Restore native Verboo mode
-  // after each isolated compatibility case so this file cannot affect later
-  // test modules.
-  mock.module('../constants/oauth.js', () => actualOAuth)
+  // `mock.module` survives `mock.restore` in Bun. Restore every replacement
+  // here so this non-Verboo compatibility suite cannot leak into native
+  // Verboo tests that run later in the same process.
+  mock.module('../constants/oauth.js', () => ({
+    ...actualOAuth,
+    isVerbooMode: () => true,
+  }))
+  mock.module('./model/providers.js', () => actualProviders)
+  mock.module('./model/modelSupportOverrides.js', () => actualModelSupportOverrides)
+  mock.module('../services/api/providerConfig.js', () => actualProviderConfig)
+  mock.module('./auth.js', () => actualAuth)
+  mock.module('./thinking.js', () => actualThinking)
+  mock.module('src/services/analytics/growthbook.js', () => actualGrowthbook)
   mock.restore()
 })
 

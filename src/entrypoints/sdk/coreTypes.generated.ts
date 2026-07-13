@@ -373,6 +373,15 @@ export type NotificationHookInput = {
   notification_type: string
 }
 
+export type HookAttachment = {
+  type: "image"
+  source: "base64" | "file"
+  mediaType: string
+  data?: string
+  path?: string
+  filename?: string
+}
+
 export type UserPromptSubmitHookInput = {
   session_id: string
   transcript_path: string
@@ -383,6 +392,14 @@ export type UserPromptSubmitHookInput = {
 } & {
   hook_event_name: "UserPromptSubmit"
   prompt: string
+  attachments?: {
+    type: "image"
+    source: "base64" | "file"
+    mediaType: string
+    data?: string
+    path?: string
+    filename?: string
+  }[]
 }
 
 export type SessionStartHookInput = {
@@ -789,6 +806,14 @@ export type HookInput = ({
 } & {
   hook_event_name: "UserPromptSubmit"
   prompt: string
+  attachments?: {
+    type: "image"
+    source: "base64" | "file"
+    mediaType: string
+    data?: string
+    path?: string
+    filename?: string
+  }[]
 }) | ({
   session_id: string
   transcript_path: string

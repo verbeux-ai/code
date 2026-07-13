@@ -4058,6 +4058,32 @@ export async function* executeTaskCompletedHooks(
  * @param toolUseContext ToolUseContext for prompt-based hooks
  * @returns Async generator that yields progress messages and hook results
  */
+export function buildUserPromptSubmitAttachments(
+  pastedContents?: Record<number, import('./config.js').PastedContent>,
+): UserPromptSubmitHookInput['attachments'] {
+  if (!pastedContents) {
+    return undefined
+  }
+
+  const attachments = Object.values(pastedContents)
+    .filter(
+      (
+        content,
+      ): content is import('./config.js').PastedContent & { type: 'image' } =>
+        content.type === 'image',
+    )
+    .map(content => ({
+      type: 'image' as const,
+      source: content.sourcePath ? ('file' as const) : ('base64' as const),
+      mediaType: content.mediaType || 'image/png',
+      data: content.sourcePath ? undefined : content.content,
+      path: content.sourcePath,
+      filename: content.filename,
+    }))
+
+  return attachments.length > 0 ? attachments : undefined
+}
+
 export async function* executeUserPromptSubmitHooks(
   prompt: string,
   permissionMode: string,
@@ -4066,6 +4092,7 @@ export async function* executeUserPromptSubmitHooks(
     sourceName: string,
     toolInputSummary?: string | null,
   ) => (request: PromptRequest) => Promise<PromptResponse>,
+  pastedContents?: Record<number, import('./config.js').PastedContent>,
 ): AsyncGenerator<AggregatedHookResult> {
   const appState = toolUseContext.getAppState()
   const sessionId = toolUseContext.agentId ?? getSessionId()
@@ -4077,6 +4104,7 @@ export async function* executeUserPromptSubmitHooks(
     ...createBaseHookInput(permissionMode),
     hook_event_name: 'UserPromptSubmit',
     prompt,
+    attachments: buildUserPromptSubmitAttachments(pastedContents),
   }
 
   yield* executeHooks({

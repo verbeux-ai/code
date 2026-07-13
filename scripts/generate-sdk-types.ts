@@ -108,6 +108,7 @@ const EXPORT_ORDER = [
   'PostToolUseFailureHookInputSchema',
   'PermissionDeniedHookInputSchema',
   'NotificationHookInputSchema',
+  'HookAttachmentSchema',
   'UserPromptSubmitHookInputSchema',
   'SessionStartHookInputSchema',
   'SessionEndHookInputSchema',

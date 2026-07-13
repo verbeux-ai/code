@@ -481,11 +481,25 @@ export const NotificationHookInputSchema = lazySchema(() =>
   ),
 )
 
+export const HookAttachmentSchema = lazySchema(() =>
+  z.object({
+    type: z.literal('image'),
+    source: z.enum(['base64', 'file']),
+    mediaType: z.string(),
+    data: z.string().optional().describe('Base64-encoded image data when source is base64.'),
+    path: z.string().optional().describe('Absolute file path when source is file.'),
+    filename: z.string().optional(),
+  }),
+)
+
 export const UserPromptSubmitHookInputSchema = lazySchema(() =>
   BaseHookInputSchema().and(
     z.object({
       hook_event_name: z.literal('UserPromptSubmit'),
       prompt: z.string(),
+      attachments: z.array(HookAttachmentSchema()).optional().describe(
+        'Image attachments submitted by the user. Present only when the prompt includes images.',
+      ),
     }),
   ),
 )

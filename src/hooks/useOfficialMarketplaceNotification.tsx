@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { Notification } from '../context/notifications.js';
 import { Text } from '../ink.js';
 import { logForDebugging } from '../utils/debug.js';
-import { checkAndInstallOfficialMarketplace } from '../utils/plugins/officialMarketplaceStartupCheck.js';
+import { checkAndInstallNativeMarketplaces } from '../utils/plugins/officialMarketplaceStartupCheck.js';
 import { useStartupNotification } from './notifs/useStartupNotification.js';
 
 /**
@@ -13,7 +13,7 @@ export function useOfficialMarketplaceNotification() {
   useStartupNotification(_temp);
 }
 async function _temp() {
-  const result = await checkAndInstallOfficialMarketplace();
+  const { verboo: result } = await checkAndInstallNativeMarketplaces();
   const notifs = [];
   if (result.configSaveFailed) {
     logForDebugging("Showing marketplace config save failure notification");
@@ -28,7 +28,7 @@ async function _temp() {
     logForDebugging("Showing marketplace installation success notification");
     notifs.push({
       key: "marketplace-installed",
-      jsx: <Text color="success">✓ Anthropic marketplace installed · /plugin to see available plugins</Text>,
+      jsx: <Text color="success">✓ Marketplace Verboo instalada · /plugin para ver os plugins</Text>,
       priority: "immediate",
       timeoutMs: 7000
     });
@@ -37,7 +37,7 @@ async function _temp() {
       logForDebugging("Showing marketplace installation failure notification");
       notifs.push({
         key: "marketplace-install-failed",
-        jsx: <Text color="warning">Failed to install Anthropic marketplace · Will retry on next startup</Text>,
+        jsx: <Text color="warning">Não foi possível instalar a marketplace Verboo · Tentaremos novamente ao iniciar</Text>,
         priority: "immediate",
         timeoutMs: 8000
       });

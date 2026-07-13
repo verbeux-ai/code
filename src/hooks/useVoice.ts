@@ -17,6 +17,7 @@ import {
   type FinalizeSource,
   isVoiceStreamAvailable,
   type VoiceStreamConnection,
+  VOICE_SESSION_LIMIT_MS,
 } from '../services/voiceStreamSTT.js'
 import { logForDebugging } from '../utils/debug.js'
 import { toError } from '../utils/errors.js'
@@ -99,6 +100,7 @@ export function useVoice({
   const onErrorRef = useRef(onError)
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const releaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // True once we've seen a second keypress (auto-repeat) while recording.
   // The OS key repeat delay (~500ms on macOS) means the first keypress is
   // solo — arming the release timer before auto-repeat starts would cause
@@ -178,6 +180,10 @@ export function useVoice({
       clearTimeout(releaseTimerRef.current)
       releaseTimerRef.current = null
     }
+    if (sessionLimitTimerRef.current) {
+      clearTimeout(sessionLimitTimerRef.current)
+      sessionLimitTimerRef.current = null
+    }
     if (repeatFallbackTimerRef.current) {
       clearTimeout(repeatFallbackTimerRef.current)
       repeatFallbackTimerRef.current = null
@@ -209,6 +215,10 @@ export function useVoice({
     // (conn 2 responding after user released key) doesn't double-fire on
     // top of the "check network" message below.
     attemptGenRef.current++
+    if (sessionLimitTimerRef.current) {
+      clearTimeout(sessionLimitTimerRef.current)
+      sessionLimitTimerRef.current = null
+    }
     // Capture focusTriggered BEFORE clearing it — needed as an event dimension
     // so BigQuery can filter out passive focus-mode auto-recordings (user focused
     // terminal without speaking → ambient noise sets hadAudioSignal=true → false
@@ -444,6 +454,27 @@ export function useVoice({
     focusFlushedCharsRef.current = 0
     everConnectedRef.current = false
     const myGen = ++sessionGenRef.current
+    sessionLimitTimerRef.current = setTimeout(
+      (
+        sessionLimitTimerRef,
+        stateRef,
+        onErrorRef,
+        finishRecording,
+      ) => {
+        sessionLimitTimerRef.current = null
+        if (stateRef.current !== 'recording') return
+        logForDebugging('[voice] 180-second session limit reached')
+        onErrorRef.current?.(
+          'Voice session reached the 180-second limit and was stopped.',
+        )
+        finishRecording()
+      },
+      VOICE_SESSION_LIMIT_MS,
+      sessionLimitTimerRef,
+      stateRef,
+      onErrorRef,
+      finishRecording,
+    )
 
     // ── Pre-check: can we actually record audio? ──────────────
     const availability = await voiceModule.checkRecordingAvailability()

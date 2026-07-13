@@ -65,8 +65,8 @@ import {
   isSourceInBlocklist,
 } from './marketplaceHelpers.js'
 import {
-  OFFICIAL_MARKETPLACE_NAME,
-  OFFICIAL_MARKETPLACE_SOURCE,
+  CLAUDE_MARKETPLACE_NAME,
+  NATIVE_MARKETPLACES,
 } from './officialMarketplace.js'
 import { fetchOfficialMarketplaceFromGcs } from './officialMarketplaceGcs.js'
 import {
@@ -144,9 +144,9 @@ export type DeclaredMarketplace = {
    * Presence suffices. When set, diffMarketplaces treats an already-materialized
    * entry as upToDate regardless of source shape — never reports sourceChanged.
    *
-   * Used for the implicit official-marketplace declaration: we want "clone from
-   * GitHub if missing", not "replace with GitHub if present under a different
-   * source". Without this, a seed dir that registers the official marketplace
+   * Used for implicit native marketplace declarations: we want "install if
+   * missing", not "replace if present under a different source". Without
+   * this, a seed dir that registers a native marketplace
    * under e.g. an internal-mirror source would be stomped by a GitHub re-clone.
    */
   sourceIsFallback?: boolean
@@ -156,35 +156,34 @@ export type DeclaredMarketplace = {
  * Get declared marketplace intent from merged settings and --add-dir sources.
  * This is what SHOULD exist — used by the reconciler to find gaps.
  *
- * The official marketplace is implicitly declared with `sourceIsFallback: true`
+ * Native marketplaces are implicitly declared with `sourceIsFallback: true`
  * when any enabled plugin references it.
  */
 export function getDeclaredMarketplaces(): Record<string, DeclaredMarketplace> {
   const implicit: Record<string, DeclaredMarketplace> = {}
 
-  // Only the official marketplace can be implicitly declared — it's the one
-  // built-in source we know. Other marketplaces have no default source to inject.
+  // Native marketplaces can be implicitly declared. Third-party marketplaces
+  // have no default source to inject.
   // Explicitly-disabled entries (value: false) don't count.
   const enabledPlugins = {
     ...getAddDirEnabledPlugins(),
     ...(getInitialSettings().enabledPlugins ?? {}),
   }
   for (const [pluginId, value] of Object.entries(enabledPlugins)) {
-    if (
-      value &&
-      parsePluginIdentifier(pluginId).marketplace === OFFICIAL_MARKETPLACE_NAME
-    ) {
-      implicit[OFFICIAL_MARKETPLACE_NAME] = {
-        source: OFFICIAL_MARKETPLACE_SOURCE,
+    const marketplaceName = parsePluginIdentifier(pluginId).marketplace
+    const nativeMarketplace = NATIVE_MARKETPLACES.find(
+      marketplace => marketplace.name === marketplaceName,
+    )
+    if (value && nativeMarketplace) {
+      implicit[nativeMarketplace.name] = {
+        source: nativeMarketplace.source,
         sourceIsFallback: true,
       }
-      break
     }
   }
 
   // Lowest precedence: implicit < --add-dir < merged settings.
-  // An explicit extraKnownMarketplaces entry for claude-plugins-official
-  // in --add-dir or settings wins.
+  // An explicit extraKnownMarketplaces entry in --add-dir or settings wins.
   return {
     ...implicit,
     ...getAddDirExtraMarketplaces(),
@@ -2312,7 +2311,7 @@ export async function refreshAllMarketplaces(): Promise<void> {
     }
     // inc-5046: same GCS intercept as refreshMarketplace() — bulk update
     // hits this path on `claude plugin marketplace update` (no name arg).
-    if (name === OFFICIAL_MARKETPLACE_NAME) {
+    if (name === CLAUDE_MARKETPLACE_NAME) {
       const sha = await fetchOfficialMarketplaceFromGcs(
         entry.installLocation,
         getMarketplacesCacheDir(),
@@ -2430,7 +2429,7 @@ export async function refreshMarketplace(
     // git-cloning GitHub. Special-cased by NAME (not a new source type) so
     // no data migration is needed — existing known_marketplaces.json entries
     // still say source:'github', which is true (GCS is a mirror).
-    if (name === OFFICIAL_MARKETPLACE_NAME) {
+    if (name === CLAUDE_MARKETPLACE_NAME) {
       const sha = await fetchOfficialMarketplaceFromGcs(
         installLocation,
         getMarketplacesCacheDir(),

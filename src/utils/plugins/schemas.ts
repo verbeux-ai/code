@@ -2,6 +2,10 @@ import { z } from 'zod/v4'
 import { HooksSchema } from '../../schemas/hooks.js'
 import { McpServerConfigSchema } from '../../services/mcp/types.js'
 import { lazySchema } from '../lazySchema.js'
+import {
+  VERBOO_MARKETPLACE_NAME,
+  VERBOO_MARKETPLACE_URL,
+} from './officialMarketplace.js'
 
 /**
  * First-layer defense against official marketplace impersonation.
@@ -13,8 +17,8 @@ import { lazySchema } from '../lazySchema.js'
  */
 
 /**
- * Official marketplace names that are reserved for Anthropic/Claude official use.
- * These names are allowed ONLY for official marketplaces and blocked for third parties.
+ * Native marketplace names that are reserved for Verboo Code or Anthropic.
+ * These names are allowed only for their respective trusted source.
  */
 export const ALLOWED_OFFICIAL_MARKETPLACE_NAMES = new Set([
   'claude-code-marketplace',
@@ -25,6 +29,7 @@ export const ALLOWED_OFFICIAL_MARKETPLACE_NAMES = new Set([
   'agent-skills',
   'life-sciences',
   'knowledge-work-plugins',
+  VERBOO_MARKETPLACE_NAME,
 ])
 
 /**
@@ -37,8 +42,8 @@ const NO_AUTO_UPDATE_OFFICIAL_MARKETPLACES = new Set(['knowledge-work-plugins'])
 /**
  * Check if auto-update is enabled for a marketplace.
  * Uses the stored value if set, otherwise defaults based on whether
- * it's an official Anthropic marketplace (true) or not (false).
- * Official marketplaces in NO_AUTO_UPDATE_OFFICIAL_MARKETPLACES are excluded
+ * it's a native first-party marketplace (true) or not (false).
+ * Native marketplaces in NO_AUTO_UPDATE_OFFICIAL_MARKETPLACES are excluded
  * from the auto-update default.
  *
  * @param marketplaceName - The name of the marketplace
@@ -109,8 +114,7 @@ export const OFFICIAL_GITHUB_ORG = 'anthropics'
 /**
  * Validate that a marketplace with a reserved name comes from the official source.
  *
- * Reserved names (in ALLOWED_OFFICIAL_MARKETPLACE_NAMES) can only be used by
- * marketplaces from the official Anthropic GitHub organization.
+ * Reserved names can only be used by their native, trusted source.
  *
  * @param name - The marketplace name
  * @param source - The marketplace source configuration
@@ -125,6 +129,13 @@ export function validateOfficialNameSource(
   // Only validate reserved names
   if (!ALLOWED_OFFICIAL_MARKETPLACE_NAMES.has(normalizedName)) {
     return null // Not a reserved name, no source validation needed
+  }
+
+  if (normalizedName === VERBOO_MARKETPLACE_NAME) {
+    if (source.source === 'url' && source.url === VERBOO_MARKETPLACE_URL) {
+      return null
+    }
+    return `The name '${name}' is reserved for the Verboo marketplace and can only use '${VERBOO_MARKETPLACE_URL}'.`
   }
 
   // Check for GitHub source type
@@ -1018,7 +1029,7 @@ export const MarketplaceSourceSchema = lazySchema(() =>
             {
               message:
                 'Reserved official marketplace names cannot be used with settings sources. ' +
-                'validateOfficialNameSource only accepts github/git sources from anthropics/* ' +
+                'validateOfficialNameSource only accepts the respective native source ' +
                 'for these names; a settings source would be rejected after ' +
                 'loadAndCacheMarketplace has already written to disk with cleanupNeeded=false.',
             },

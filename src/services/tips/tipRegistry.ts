@@ -38,7 +38,7 @@ import {
 import { getPlatform } from '../../utils/platform.js'
 import { isPluginInstalled } from '../../utils/plugins/installedPluginsManager.js'
 import { loadKnownMarketplacesConfigSafe } from '../../utils/plugins/marketplaceManager.js'
-import { OFFICIAL_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
+import { CLAUDE_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
 import {
   getCurrentSessionAgentColor,
   isCustomTitleEnabled,
@@ -62,7 +62,7 @@ async function isOfficialMarketplaceInstalled(): Promise<boolean> {
     return _isOfficialMarketplaceInstalledCache
   }
   const config = await loadKnownMarketplacesConfigSafe()
-  _isOfficialMarketplaceInstalledCache = OFFICIAL_MARKETPLACE_NAME in config
+  _isOfficialMarketplaceInstalledCache = CLAUDE_MARKETPLACE_NAME in config
   return _isOfficialMarketplaceInstalledCache
 }
 
@@ -74,7 +74,7 @@ async function isMarketplacePluginRelevant(
   if (!(await isOfficialMarketplaceInstalled())) {
     return false
   }
-  if (isPluginInstalled(`${pluginName}@${OFFICIAL_MARKETPLACE_NAME}`)) {
+  if (isPluginInstalled(`${pluginName}@${CLAUDE_MARKETPLACE_NAME}`)) {
     return false
   }
   const { bashTools } = context ?? {}
@@ -480,7 +480,7 @@ const externalTips: Tip[] = [
     id: 'frontend-design-plugin',
     content: async ctx => {
       const blue = color('suggestion', ctx.theme)
-      return `Working with HTML/CSS? Install the frontend-design plugin:\n${blue(`/plugin install frontend-design@${OFFICIAL_MARKETPLACE_NAME}`)}`
+      return `Working with HTML/CSS? Install the frontend-design plugin:\n${blue(`/plugin install frontend-design@${CLAUDE_MARKETPLACE_NAME}`)}`
     },
     cooldownSessions: 3,
     isRelevant: async context =>
@@ -492,7 +492,7 @@ const externalTips: Tip[] = [
     id: 'vercel-plugin',
     content: async ctx => {
       const blue = color('suggestion', ctx.theme)
-      return `Working with Vercel? Install the vercel plugin:\n${blue(`/plugin install vercel@${OFFICIAL_MARKETPLACE_NAME}`)}`
+      return `Working with Vercel? Install the vercel plugin:\n${blue(`/plugin install vercel@${CLAUDE_MARKETPLACE_NAME}`)}`
     },
     cooldownSessions: 3,
     isRelevant: async context =>

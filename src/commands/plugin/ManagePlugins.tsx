@@ -33,6 +33,7 @@ import { logError } from '../../utils/log.js';
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js';
 import { loadInstalledPluginsV2 } from '../../utils/plugins/installedPluginsManager.js';
 import { getMarketplace } from '../../utils/plugins/marketplaceManager.js';
+import { nativeMarketplacePriority } from '../../utils/plugins/officialMarketplace.js';
 import { isMcpbSource, loadMcpbFile, type McpbNeedsConfigResult, type UserConfigValues } from '../../utils/plugins/mcpbHandler.js';
 import { getPluginDataDirSize, pluginDataDirPath } from '../../utils/plugins/pluginDirectories.js';
 import { getFlaggedPlugins, markFlaggedPluginsSeen, removeFlaggedPlugin } from '../../utils/plugins/pluginFlagging.js';
@@ -895,8 +896,11 @@ export function ManagePlugins({
           });
         }
 
-        // Sort marketplaces: claude-plugin-directory first, then alphabetically
+        // Keep native marketplaces first, with Verboo as the primary source.
         marketplaceInfos.sort((a, b) => {
+          const priorityA = nativeMarketplacePriority(a.name);
+          const priorityB = nativeMarketplacePriority(b.name);
+          if (priorityA !== priorityB) return priorityA - priorityB;
           if (a.name === 'claude-plugin-directory') return -1;
           if (b.name === 'claude-plugin-directory') return 1;
           return a.name.localeCompare(b.name);

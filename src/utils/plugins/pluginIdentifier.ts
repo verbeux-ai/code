@@ -67,8 +67,8 @@ export function buildPluginId(name: string, marketplace?: string): string {
 }
 
 /**
- * Check if a marketplace name is an official (Anthropic-controlled) marketplace.
- * Used for telemetry redaction — official plugin identifiers are safe to log to
+ * Check if a marketplace name is a trusted native marketplace.
+ * Used for telemetry redaction — native plugin identifiers are safe to log to
  * general-access additional_metadata; third-party identifiers go only to the
  * PII-tagged _PROTO_* BQ columns.
  */

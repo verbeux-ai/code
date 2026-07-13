@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
 
 type TestGlobalConfig = {
+  nativeMarketplaceAutoInstall?: Record<
+    string,
+    {
+      attempted?: boolean
+      installed?: boolean
+      failReason?: 'policy_blocked' | 'git_unavailable' | 'gcs_unavailable' | 'unknown'
+      retryCount?: number
+      lastAttemptTime?: number
+      nextRetryTime?: number
+    }
+  >
   officialMarketplaceAutoInstallAttempted?: boolean
   officialMarketplaceAutoInstalled?: boolean
   officialMarketplaceAutoInstallFailReason?:
@@ -73,7 +84,11 @@ mock.module('./officialMarketplaceGcs.js', () => ({
   fetchOfficialMarketplaceFromGcs,
 }))
 
-const { checkAndInstallOfficialMarketplace } = await import(
+const {
+  checkAndInstallNativeMarketplaces,
+  checkAndInstallOfficialMarketplace,
+  checkAndInstallVerbooMarketplace,
+} = await import(
   './officialMarketplaceStartupCheck.js'
 )
 
@@ -121,5 +136,64 @@ describe('checkAndInstallOfficialMarketplace', () => {
     expect(fetchOfficialMarketplaceFromGcs).not.toHaveBeenCalled()
     expect(config.officialMarketplaceAutoInstallAttempted).toBe(true)
     expect(config.officialMarketplaceAutoInstalled).toBe(true)
+  })
+})
+
+describe('checkAndInstallVerbooMarketplace', () => {
+  test('installs Verboo for an existing Claude marketplace user', async () => {
+    knownMarketplaces = {
+      'claude-plugins-official': {
+        installLocation: '/tmp/verboo-marketplaces/claude-plugins-official',
+      },
+    }
+    config = {
+      officialMarketplaceAutoInstallAttempted: true,
+      officialMarketplaceAutoInstalled: true,
+    }
+
+    const result = await checkAndInstallVerbooMarketplace()
+
+    expect(result).toEqual({ installed: true, skipped: false })
+    expect(addMarketplaceSource).toHaveBeenCalledWith({
+      source: 'url',
+      url: 'https://code.verboo.ai/api/plugins/marketplace.json',
+    })
+    expect(config.nativeMarketplaceAutoInstall?.['verboo-plugins']).toMatchObject({
+      attempted: true,
+      installed: true,
+    })
+  })
+
+  test('uses known marketplaces as the Verboo installed source of truth', async () => {
+    knownMarketplaces = {
+      'verboo-plugins': {
+        installLocation: '/tmp/verboo-marketplaces/verboo-plugins.json',
+      },
+    }
+
+    const result = await checkAndInstallVerbooMarketplace()
+
+    expect(result).toEqual({
+      installed: false,
+      skipped: true,
+      reason: 'already_installed',
+    })
+    expect(addMarketplaceSource).not.toHaveBeenCalled()
+  })
+
+  test('keeps installing Claude when the Verboo request fails', async () => {
+    addMarketplaceSource.mockImplementationOnce(async () => {
+      throw new Error('Verboo endpoint unavailable')
+    })
+
+    const result = await checkAndInstallNativeMarketplaces()
+
+    expect(result.verboo).toMatchObject({
+      installed: false,
+      skipped: true,
+      reason: 'unknown',
+    })
+    expect(result.claude).toEqual({ installed: true, skipped: false })
+    expect(fetchOfficialMarketplaceFromGcs).toHaveBeenCalled()
   })
 })

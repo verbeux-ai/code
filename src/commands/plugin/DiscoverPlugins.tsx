@@ -20,7 +20,7 @@ import { formatInstallCount, getInstallCounts } from '../../utils/plugins/instal
 import { isPluginGloballyInstalled } from '../../utils/plugins/installedPluginsManager.js';
 import { createPluginId, detectEmptyMarketplaceReason, type EmptyMarketplaceReason, formatFailureDetails, formatMarketplaceLoadingErrors, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js';
-import { OFFICIAL_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js';
+import { CLAUDE_MARKETPLACE_NAME, nativeMarketplacePriority } from '../../utils/plugins/officialMarketplace.js';
 import { installPluginFromMarketplace } from '../../utils/plugins/pluginInstallationHelpers.js';
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy.js';
 import { plural } from '../../utils/stringUtils.js';
@@ -161,21 +161,35 @@ export function DiscoverPlugins({
           const counts = await getInstallCounts();
           setInstallCounts(counts);
           if (counts) {
-            // Sort by install count (descending), then alphabetically
+            // Keep Verboo first, followed by the native Anthropic marketplace.
+            // Within each marketplace, sort by install count then name.
             uninstalledPlugins.sort((a_0, b_0) => {
+              const priorityA = nativeMarketplacePriority(a_0.marketplaceName);
+              const priorityB = nativeMarketplacePriority(b_0.marketplaceName);
+              if (priorityA !== priorityB) return priorityA - priorityB;
               const countA = counts.get(a_0.pluginId) ?? 0;
               const countB = counts.get(b_0.pluginId) ?? 0;
               if (countA !== countB) return countB - countA;
               return a_0.entry.name.localeCompare(b_0.entry.name);
             });
           } else {
-            // No counts available - sort alphabetically
-            uninstalledPlugins.sort((a_1, b_1) => a_1.entry.name.localeCompare(b_1.entry.name));
+            // No counts available - keep the same marketplace priority.
+            uninstalledPlugins.sort((a_1, b_1) => {
+              const priorityA = nativeMarketplacePriority(a_1.marketplaceName);
+              const priorityB = nativeMarketplacePriority(b_1.marketplaceName);
+              if (priorityA !== priorityB) return priorityA - priorityB;
+              return a_1.entry.name.localeCompare(b_1.entry.name);
+            });
           }
         } catch (error_0) {
           // Log the error, then gracefully degrade to alphabetical sort
           logForDebugging(`Failed to fetch install counts: ${errorMessage(error_0)}`);
-          uninstalledPlugins.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
+          uninstalledPlugins.sort((a, b) => {
+            const priorityA = nativeMarketplacePriority(a.marketplaceName);
+            const priorityB = nativeMarketplacePriority(b.marketplaceName);
+            if (priorityA !== priorityB) return priorityA - priorityB;
+            return a.entry.name.localeCompare(b.entry.name);
+          });
         }
         setAvailablePlugins(uninstalledPlugins);
 
@@ -618,7 +632,7 @@ export function DiscoverPlugins({
                 {plugin_5.entry.name}
                 <Text dimColor> · {plugin_5.marketplaceName}</Text>
                 {plugin_5.entry.tags?.includes('community-managed') && <Text dimColor> [Community Managed]</Text>}
-                {installCounts && plugin_5.marketplaceName === OFFICIAL_MARKETPLACE_NAME && <Text dimColor>
+                {installCounts && plugin_5.marketplaceName === CLAUDE_MARKETPLACE_NAME && <Text dimColor>
                       {' · '}
                       {formatInstallCount(installCounts.get(plugin_5.pluginId) ?? 0)}{' '}
                       installs

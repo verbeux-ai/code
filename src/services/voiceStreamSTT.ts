@@ -23,6 +23,11 @@ const KEEPALIVE_MSG = '{"type":"keepalive"}'
 const END_STREAM_MSG = '{"type":"end"}'
 const KEEPALIVE_INTERVAL_MS = 8_000
 
+// Keep this in sync with the router's hard session cap. The hook stops the
+// microphone and lets the final transcript flush before the router's safety
+// limit needs to intervene.
+export const VOICE_SESSION_LIMIT_MS = 180_000
+
 // The router configures AssemblyAI for 16 kHz, 16-bit, mono PCM. Its
 // streaming endpoint accepts input frames from 50 ms through 1 s; native
 // capture commonly emits 32 ms chunks, so they must be coalesced here.

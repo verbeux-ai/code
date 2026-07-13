@@ -16,6 +16,7 @@ import { errorMessage } from '../../utils/errors.js';
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js';
 import { createPluginId, formatMarketplaceLoadingErrors, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { loadKnownMarketplacesConfig, refreshMarketplace, removeMarketplaceSource, setMarketplaceAutoUpdate } from '../../utils/plugins/marketplaceManager.js';
+import { nativeMarketplacePriority, VERBOO_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js';
 import { updatePluginsForMarketplaces } from '../../utils/plugins/pluginAutoupdate.js';
 import { loadAllPlugins } from '../../utils/plugins/pluginLoader.js';
 import { isMarketplaceAutoUpdate } from '../../utils/plugins/schemas.js';
@@ -104,8 +105,11 @@ export function ManageMarketplaces({
           });
         }
 
-        // Sort: claude-plugin-directory first, then alphabetically
+        // Keep native marketplaces first, with Verboo as the primary source.
         states.sort((a, b) => {
+          const priorityA = nativeMarketplacePriority(a.name);
+          const priorityB = nativeMarketplacePriority(b.name);
+          if (priorityA !== priorityB) return priorityA - priorityB;
           if (a.name === 'claude-plugin-directory') return -1;
           if (b.name === 'claude-plugin-directory') return 1;
           return a.name.localeCompare(b.name);
@@ -286,8 +290,11 @@ export function ManageMarketplaces({
         });
       }
 
-      // Sort: claude-plugin-directory first, then alphabetically
+      // Keep native marketplaces first, with Verboo as the primary source.
       newStates.sort((a, b) => {
+        const priorityA = nativeMarketplacePriority(a.name);
+        const priorityB = nativeMarketplacePriority(b.name);
+        if (priorityA !== priorityB) return priorityA - priorityB;
         if (a.name === 'claude-plugin-directory') return -1;
         if (b.name === 'claude-plugin-directory') return 1;
         return a.name.localeCompare(b.name);
@@ -711,9 +718,9 @@ export function ManageMarketplaces({
               <Box flexDirection="column" flexGrow={1}>
                 <Box flexDirection="row" gap={1}>
                   <Text bold strikethrough={state.pendingRemove} dimColor={state.pendingRemove}>
-                    {state.name === 'claude-plugins-official' && <Text color="claude">✻ </Text>}
+                    {state.name === VERBOO_MARKETPLACE_NAME && <Text color="suggestion">✻ </Text>}
                     {state.name}
-                    {state.name === 'claude-plugins-official' && <Text color="claude"> ✻</Text>}
+                    {state.name === VERBOO_MARKETPLACE_NAME && <Text color="suggestion"> ✻</Text>}
                   </Text>
                   {indicators.length > 0 && <Text color="warning">[{indicators.join(', ')}]</Text>}
                 </Box>

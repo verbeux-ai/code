@@ -1,7 +1,7 @@
 import { join } from 'path'
 import type { LocalCommandResult } from '../../commands.js'
 import { loadInstalledPluginsV2 } from '../../utils/plugins/installedPluginsManager.js'
-import { OFFICIAL_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
+import { CLAUDE_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
 import { playAnimation } from '../thinkback/thinkback.js'
 
 const INTERNAL_MARKETPLACE_NAME = 'claude-code-marketplace'
@@ -11,7 +11,7 @@ function getPluginId(): string {
   const marketplaceName =
     process.env.USER_TYPE === 'ant'
       ? INTERNAL_MARKETPLACE_NAME
-      : OFFICIAL_MARKETPLACE_NAME
+      : CLAUDE_MARKETPLACE_NAME
   return `thinkback@${marketplaceName}`
 }
 

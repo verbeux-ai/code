@@ -25,6 +25,7 @@ import {
   ALLOWED_OFFICIAL_MARKETPLACE_NAMES,
   type PluginMarketplaceEntry,
 } from './schemas.js'
+import { nativeMarketplacePriority } from './officialMarketplace.js'
 
 /**
  * LSP plugin recommendation returned to the caller
@@ -225,9 +226,12 @@ function normalizeExtension(ext: string): string {
 }
 
 function sortCandidates(
-  a: Pick<LspPluginCandidate, 'isOfficial'>,
-  b: Pick<LspPluginCandidate, 'isOfficial'>,
+  a: Pick<LspPluginCandidate, 'isOfficial' | 'marketplaceName'>,
+  b: Pick<LspPluginCandidate, 'isOfficial' | 'marketplaceName'>,
 ): number {
+  const priorityA = nativeMarketplacePriority(a.marketplaceName)
+  const priorityB = nativeMarketplacePriority(b.marketplaceName)
+  if (priorityA !== priorityB) return priorityA - priorityB
   if (a.isOfficial && !b.isOfficial) return -1
   if (!a.isOfficial && b.isOfficial) return 1
   return 0
@@ -296,7 +300,7 @@ export async function listLspPluginCandidates(
  * 3. Are not already installed
  * 4. Are not in the user's "never suggest" list
  *
- * Results are sorted with official marketplace plugins first.
+ * Results are sorted with Verboo plugins first, then other native sources.
  *
  * @param filePath - Path to the file to find LSP plugins for
  * @returns Array of matching plugin recommendations (empty if none or disabled)

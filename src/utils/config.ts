@@ -512,7 +512,26 @@ export type GlobalConfig = {
 
   // Skill usage tracking for autocomplete ranking
   skillUsage?: Record<string, { usageCount: number; lastUsedAt: number }>
-  // Official marketplace auto-install tracking
+  // Native marketplace auto-install tracking. The legacy officialMarketplace*
+  // fields below remain for the Claude marketplace so existing installs retain
+  // their retry state during the migration to Verboo Code.
+  nativeMarketplaceAutoInstall?: Record<
+    string,
+    {
+      attempted?: boolean
+      installed?: boolean
+      failReason?:
+        | 'policy_blocked'
+        | 'git_unavailable'
+        | 'gcs_unavailable'
+        | 'unknown'
+      retryCount?: number
+      lastAttemptTime?: number
+      nextRetryTime?: number
+    }
+  >
+
+  // Legacy Anthropic marketplace auto-install tracking
   officialMarketplaceAutoInstallAttempted?: boolean // Whether auto-install was attempted
   officialMarketplaceAutoInstalled?: boolean // Whether auto-install succeeded
   officialMarketplaceAutoInstallFailReason?:

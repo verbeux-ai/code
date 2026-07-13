@@ -16,7 +16,10 @@ import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS as SafeString,
 } from '../../services/analytics/index.js'
-import { OFFICIAL_MARKETPLACE_NAME } from './officialMarketplace.js'
+import {
+  CLAUDE_MARKETPLACE_NAME,
+  VERBOO_MARKETPLACE_URL,
+} from './officialMarketplace.js'
 
 export type PluginFetchSource =
   | 'install_counts'
@@ -68,12 +71,14 @@ function extractHost(urlOrSpec: string): string {
 }
 
 /**
- * True if the URL/spec points at anthropics/claude-plugins-official — the
- * repo GitHub complained about. Lets the dashboard separate "our problem"
- * traffic from user-configured marketplaces.
+ * True if the URL/spec points at one of the native marketplaces. Lets the
+ * dashboard separate first-party traffic from user-configured marketplaces.
  */
 function isOfficialRepo(urlOrSpec: string): boolean {
-  return urlOrSpec.includes(`anthropics/${OFFICIAL_MARKETPLACE_NAME}`)
+  return (
+    urlOrSpec.includes(`anthropics/${CLAUDE_MARKETPLACE_NAME}`) ||
+    urlOrSpec === VERBOO_MARKETPLACE_URL
+  )
 }
 
 export function logPluginFetch(

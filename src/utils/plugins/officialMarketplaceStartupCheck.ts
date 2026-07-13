@@ -25,8 +25,10 @@ import {
   saveKnownMarketplacesConfig,
 } from './marketplaceManager.js'
 import {
-  OFFICIAL_MARKETPLACE_NAME,
-  OFFICIAL_MARKETPLACE_SOURCE,
+  CLAUDE_MARKETPLACE_NAME,
+  CLAUDE_MARKETPLACE_SOURCE,
+  VERBOO_MARKETPLACE_NAME,
+  VERBOO_MARKETPLACE_SOURCE,
 } from './officialMarketplace.js'
 import { fetchOfficialMarketplaceFromGcs } from './officialMarketplaceGcs.js'
 
@@ -125,6 +127,161 @@ export type OfficialMarketplaceCheckResult = {
   configSaveFailed?: boolean
 }
 
+type NativeMarketplaceAutoInstallState = {
+  attempted?: boolean
+  installed?: boolean
+  failReason?: Exclude<OfficialMarketplaceSkipReason, 'already_attempted' | 'already_installed'>
+  retryCount?: number
+  lastAttemptTime?: number
+  nextRetryTime?: number
+}
+
+function shouldRetryNativeMarketplaceInstallation(
+  state: NativeMarketplaceAutoInstallState | undefined,
+): boolean {
+  if (!state?.attempted) return true
+  if ((state.retryCount ?? 0) >= RETRY_CONFIG.MAX_ATTEMPTS) return false
+  if (state.failReason === 'policy_blocked') return false
+  if (state.nextRetryTime && Date.now() < state.nextRetryTime) return false
+  return true
+}
+
+function saveNativeMarketplaceAutoInstallState(
+  name: string,
+  update: NativeMarketplaceAutoInstallState,
+): void {
+  saveGlobalConfig(current => ({
+    ...current,
+    nativeMarketplaceAutoInstall: {
+      ...current.nativeMarketplaceAutoInstall,
+      [name]: {
+        ...current.nativeMarketplaceAutoInstall?.[name],
+        ...update,
+      },
+    },
+  }))
+}
+
+/**
+ * Installs Verboo's primary marketplace without requiring Git. Its manifest is
+ * fetched from the canonical Verboo endpoint and retry state is independent
+ * from the legacy Anthropic marketplace setup state.
+ */
+export async function checkAndInstallVerbooMarketplace(): Promise<OfficialMarketplaceCheckResult> {
+  const config = getGlobalConfig()
+  const state = config.nativeMarketplaceAutoInstall?.[
+    VERBOO_MARKETPLACE_NAME
+  ] as NativeMarketplaceAutoInstallState | undefined
+
+  try {
+    const knownMarketplaces = await loadKnownMarketplacesConfig()
+    if (knownMarketplaces[VERBOO_MARKETPLACE_NAME]) {
+      saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
+        attempted: true,
+        installed: true,
+        failReason: undefined,
+        retryCount: undefined,
+        lastAttemptTime: undefined,
+        nextRetryTime: undefined,
+      })
+      return { installed: false, skipped: true, reason: 'already_installed' }
+    }
+
+    if (!shouldRetryNativeMarketplaceInstallation(state)) {
+      return {
+        installed: false,
+        skipped: true,
+        reason: state?.failReason ?? 'already_attempted',
+      }
+    }
+
+    if (isOfficialMarketplaceAutoInstallDisabled()) {
+      saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
+        attempted: true,
+        installed: false,
+        failReason: 'policy_blocked',
+      })
+      return { installed: false, skipped: true, reason: 'policy_blocked' }
+    }
+
+    if (!isSourceAllowedByPolicy(VERBOO_MARKETPLACE_SOURCE)) {
+      saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
+        attempted: true,
+        installed: false,
+        failReason: 'policy_blocked',
+      })
+      return { installed: false, skipped: true, reason: 'policy_blocked' }
+    }
+
+    logForDebugging('Attempting to auto-install Verboo marketplace')
+    await addMarketplaceSource(VERBOO_MARKETPLACE_SOURCE)
+    saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
+      attempted: true,
+      installed: true,
+      failReason: undefined,
+      retryCount: undefined,
+      lastAttemptTime: undefined,
+      nextRetryTime: undefined,
+    })
+    logEvent('tengu_official_marketplace_auto_install', {
+      installed: true,
+      skipped: false,
+      verboo_marketplace: true,
+    })
+    return { installed: true, skipped: false }
+  } catch (error) {
+    const retryCount = (state?.retryCount ?? 0) + 1
+    const now = Date.now()
+    let configSaveFailed = false
+    try {
+      saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
+        attempted: true,
+        installed: false,
+        failReason: 'unknown',
+        retryCount,
+        lastAttemptTime: now,
+        nextRetryTime: now + calculateNextRetryDelay(retryCount),
+      })
+    } catch (saveError) {
+      configSaveFailed = true
+      logError(toError(saveError))
+    }
+    logForDebugging(
+      `Failed to auto-install Verboo marketplace: ${error instanceof Error ? error.message : String(error)}`,
+      { level: 'error' },
+    )
+    logError(toError(error))
+    logEvent('tengu_official_marketplace_auto_install', {
+      installed: false,
+      skipped: true,
+      failed: true,
+      verboo_marketplace: true,
+      retry_count: retryCount,
+    })
+    return {
+      installed: false,
+      skipped: true,
+      reason: 'unknown',
+      configSaveFailed,
+    }
+  }
+}
+
+export type NativeMarketplaceCheckResults = {
+  verboo: OfficialMarketplaceCheckResult
+  claude: OfficialMarketplaceCheckResult
+}
+
+/**
+ * Ensures both native sources are available. Verboo is deliberately checked
+ * first so a Claude failure can never prevent the primary marketplace.
+ */
+export async function checkAndInstallNativeMarketplaces(): Promise<NativeMarketplaceCheckResults> {
+  const verboo = await checkAndInstallVerbooMarketplace()
+  const claude = await checkAndInstallOfficialMarketplace()
+  return { verboo, claude }
+}
+
 /**
  * Check and install the official marketplace on startup.
  *
@@ -147,9 +304,9 @@ export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMark
     // Retry state lives in global config; known_marketplaces.json is the actual
     // source of truth for whether recommendation/setup code can read it.
     const knownMarketplaces = await loadKnownMarketplacesConfig()
-    if (knownMarketplaces[OFFICIAL_MARKETPLACE_NAME]) {
+    if (knownMarketplaces[CLAUDE_MARKETPLACE_NAME]) {
       logForDebugging(
-        `Official marketplace '${OFFICIAL_MARKETPLACE_NAME}' already installed, skipping`,
+        `Official marketplace '${CLAUDE_MARKETPLACE_NAME}' already installed, skipping`,
       )
       // Mark as attempted so we don't check again
       saveGlobalConfig(current => ({
@@ -192,7 +349,7 @@ export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMark
     }
 
     // Check enterprise policy restrictions
-    if (!isSourceAllowedByPolicy(OFFICIAL_MARKETPLACE_SOURCE)) {
+    if (!isSourceAllowedByPolicy(CLAUDE_MARKETPLACE_SOURCE)) {
       logForDebugging(
         'Official marketplace blocked by enterprise policy, skipping',
       )
@@ -216,15 +373,15 @@ export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMark
     // with source:'github' (still true — GCS is a mirror) and skip git
     // entirely.
     const cacheDir = getMarketplacesCacheDir()
-    const installLocation = join(cacheDir, OFFICIAL_MARKETPLACE_NAME)
+    const installLocation = join(cacheDir, CLAUDE_MARKETPLACE_NAME)
     const gcsSha = await fetchOfficialMarketplaceFromGcs(
       installLocation,
       cacheDir,
     )
     if (gcsSha !== null) {
       const known = await loadKnownMarketplacesConfig()
-      known[OFFICIAL_MARKETPLACE_NAME] = {
-        source: OFFICIAL_MARKETPLACE_SOURCE,
+      known[CLAUDE_MARKETPLACE_NAME] = {
+        source: CLAUDE_MARKETPLACE_SOURCE,
         installLocation,
         lastUpdated: new Date().toISOString(),
       }
@@ -331,7 +488,7 @@ export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMark
 
     // Attempt installation
     logForDebugging('Attempting to auto-install official marketplace')
-    await addMarketplaceSource(OFFICIAL_MARKETPLACE_SOURCE)
+    await addMarketplaceSource(CLAUDE_MARKETPLACE_SOURCE)
 
     // Success
     logForDebugging('Successfully auto-installed official marketplace')

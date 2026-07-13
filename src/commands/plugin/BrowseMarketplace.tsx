@@ -15,7 +15,7 @@ import { formatInstallCount, getInstallCounts } from '../../utils/plugins/instal
 import { isPluginGloballyInstalled, isPluginInstalled } from '../../utils/plugins/installedPluginsManager.js';
 import { createPluginId, formatFailureDetails, formatMarketplaceLoadingErrors, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { getMarketplace, loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js';
-import { OFFICIAL_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js';
+import { CLAUDE_MARKETPLACE_NAME, nativeMarketplacePriority } from '../../utils/plugins/officialMarketplace.js';
 import { installPluginFromMarketplace } from '../../utils/plugins/pluginInstallationHelpers.js';
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy.js';
 import { plural } from '../../utils/stringUtils.js';
@@ -150,11 +150,15 @@ export function BrowseMarketplace({
           }
         }
 
-        // Sort so claude-plugin-directory is always first
+        // Native marketplaces are always presented first, with Verboo before
+        // the bundled Anthropic marketplace.
         marketplaceInfos.sort((a, b) => {
+          const priorityA = nativeMarketplacePriority(a.name);
+          const priorityB = nativeMarketplacePriority(b.name);
+          if (priorityA !== priorityB) return priorityA - priorityB;
           if (a.name === 'claude-plugin-directory') return -1;
           if (b.name === 'claude-plugin-directory') return 1;
-          return 0;
+          return a.name.localeCompare(b.name);
         });
         setMarketplaces(marketplaceInfos);
 
@@ -768,7 +772,7 @@ export function BrowseMarketplace({
                 {plugin_6.entry.category && <Text dimColor> [{plugin_6.entry.category}]</Text>}
                 {plugin_6.entry.tags?.includes('community-managed') && <Text dimColor> [Community Managed]</Text>}
                 {plugin_6.isInstalled && <Text dimColor> (installed)</Text>}
-                {installCounts && selectedMarketplace === OFFICIAL_MARKETPLACE_NAME && <Text dimColor>
+                {installCounts && selectedMarketplace === CLAUDE_MARKETPLACE_NAME && <Text dimColor>
                       {' · '}
                       {formatInstallCount(installCounts.get(plugin_6.pluginId) ?? 0)}{' '}
                       installs

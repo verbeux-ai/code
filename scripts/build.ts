@@ -453,6 +453,21 @@ if (!result.success) {
   process.exitCode = 1
 } else {
   console.log(`✓ Built verboo v${version} → dist/cli.mjs`) // VERBOO-BRAND
+
+  // Bun can report a successful bundle even when an interrupted/corrupted
+  // artifact would fail to load under the Node runtime used by npm installs.
+  // Parse the exact distributable before continuing to the publishable SDK.
+  console.log('Validating CLI bundle syntax...')
+  const syntaxCheck = Bun.spawnSync(['node', '--check', './dist/cli.mjs'], {
+    stdout: 'ignore',
+    stderr: 'inherit',
+  })
+  if (syntaxCheck.exitCode !== 0) {
+    console.error('CLI bundle syntax validation failed.')
+    process.exitCode = 1
+  } else {
+    console.log('✓ CLI bundle: Node.js syntax check passed')
+  }
 }
 
 // ── SDK Bundle Build ──────────────────────────────────────────────────────

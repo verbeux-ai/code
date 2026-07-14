@@ -65,6 +65,7 @@ jobs:
         run: |
           bun test --max-concurrency=1 \
             src/commands/effort/effort.verboo.test.ts \
+            src/commands/logout/logoutState.test.ts \
             src/services/api/openaiShim.test.ts \
             src/services/api/verbooCheckout.test.ts \
             src/services/api/verbooModels.test.ts \

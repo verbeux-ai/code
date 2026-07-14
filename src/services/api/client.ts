@@ -5,6 +5,7 @@ import {
   getAnthropicApiKey,
   getApiKeyFromApiKeyHelper,
   getClaudeAIOAuthTokens,
+  handleOAuth401Error,
   isClaudeAISubscriber,
   refreshAndGetAwsCredentials,
   refreshGcpCredentialsIfNeeded,
@@ -116,7 +117,7 @@ function isMiniMaxModelName(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase()
   return Boolean(
     normalized &&
-      (normalized.startsWith('minimax-') || normalized.startsWith('minimax/')),
+    (normalized.startsWith('minimax-') || normalized.startsWith('minimax/')),
   )
 }
 
@@ -124,7 +125,7 @@ function isXaiModelName(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase()
   return Boolean(
     normalized &&
-      (normalized.startsWith('grok-') || normalized.startsWith('xai/')),
+    (normalized.startsWith('grok-') || normalized.startsWith('xai/')),
   )
 }
 
@@ -132,7 +133,7 @@ function isXiaomiMimoModelName(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase()
   return Boolean(
     normalized &&
-      (normalized.startsWith('mimo-') || normalized.startsWith('mimo/')),
+    (normalized.startsWith('mimo-') || normalized.startsWith('mimo/')),
   )
 }
 
@@ -147,8 +148,7 @@ function applyMiniMaxEnvOnlyDefaults(): void {
   process.env.OPENAI_MODEL =
     (hasMiniMaxBaseOverride || isMiniMaxModelName(modelOverride)
       ? modelOverride
-      : undefined) ??
-    getRouteDefaultModel('minimax')
+      : undefined) ?? getRouteDefaultModel('minimax')
   process.env.OPENAI_API_KEY = process.env.MINIMAX_API_KEY
   delete process.env.OPENAI_API_FORMAT
   delete process.env.OPENAI_AUTH_HEADER
@@ -167,8 +167,7 @@ function applyXiaomiMimoEnvOnlyDefaults(): void {
   process.env.OPENAI_MODEL =
     (hasBaseOverride || isXiaomiMimoModelName(modelOverride)
       ? modelOverride
-      : undefined) ??
-    getRouteDefaultModel('xiaomi-mimo')
+      : undefined) ?? getRouteDefaultModel('xiaomi-mimo')
   process.env.OPENAI_API_KEY = process.env.MIMO_API_KEY
   delete process.env.OPENAI_API_FORMAT
   delete process.env.OPENAI_AUTH_HEADER
@@ -182,13 +181,11 @@ function applyXaiEnvOnlyDefaults(): void {
   const modelOverride = process.env.OPENAI_MODEL?.trim() || undefined
 
   process.env.CLAUDE_CODE_USE_OPENAI = '1'
-  process.env.OPENAI_BASE_URL =
-    baseUrlOverride ?? getRouteDefaultBaseUrl('xai')
+  process.env.OPENAI_BASE_URL = baseUrlOverride ?? getRouteDefaultBaseUrl('xai')
   process.env.OPENAI_MODEL =
     (hasXaiBaseOverride || isXaiModelName(modelOverride)
       ? modelOverride
-      : undefined) ??
-    getRouteDefaultModel('xai')
+      : undefined) ?? getRouteDefaultModel('xai')
   process.env.OPENAI_API_KEY = process.env.XAI_API_KEY
   delete process.env.OPENAI_API_FORMAT
   delete process.env.OPENAI_AUTH_HEADER
@@ -256,14 +253,13 @@ export async function getAnthropicClient({
   const shouldUseFirstPartyAuth =
     shouldUseFirstPartyAnthropicAuth(providerOverride)
 
-  if (shouldUseFirstPartyAuth) {
+  if (shouldUseFirstPartyAuth || isVerbooMode()) {
     logForDebugging('[API:auth] OAuth token check starting')
     await checkAndRefreshOAuthTokenIfNeeded()
     logForDebugging('[API:auth] OAuth token check complete')
   }
 
-  const isClaudeAiSubscriber =
-    shouldUseFirstPartyAuth && isClaudeAISubscriber()
+  const isClaudeAiSubscriber = shouldUseFirstPartyAuth && isClaudeAISubscriber()
 
   if (shouldUseFirstPartyAuth && !isClaudeAiSubscriber) {
     await configureApiKeyHeaders(defaultHeaders, getIsNonInteractiveSession())
@@ -318,6 +314,13 @@ export async function getAnthropicClient({
         model: safeVerbooModel,
         baseURL: VERBOO_ROUTER_URL,
         apiKey: accessToken ?? '',
+        getApiKey: () => getClaudeAIOAuthTokens()?.accessToken ?? '',
+        refreshApiKey: async (failedAccessToken) => {
+          const recovered = await handleOAuth401Error(failedAccessToken)
+          return recovered
+            ? (getClaudeAIOAuthTokens()?.accessToken ?? null)
+            : null
+        },
       },
     }) as unknown as Anthropic
   }
@@ -330,7 +333,12 @@ export async function getAnthropicClient({
     const safeHeaders: Record<string, string> = {}
     for (const [k, v] of Object.entries(defaultHeaders)) {
       const lower = k.toLowerCase()
-      if (lower === 'authorization' || lower === 'x-api-key' || lower === 'api-key') continue
+      if (
+        lower === 'authorization' ||
+        lower === 'x-api-key' ||
+        lower === 'api-key'
+      )
+        continue
       safeHeaders[k] = v
     }
     return createOpenAIShimClient({
@@ -349,8 +357,7 @@ export async function getAnthropicClient({
     const githubBaseUrl =
       process.env.OPENAI_BASE_URL?.replace(/\/$/, '') ??
       'https://api.githubcopilot.com'
-    const githubToken =
-      process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''
+    const githubToken = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''
     const nativeArgs: ConstructorParameters<typeof Anthropic>[0] = {
       ...ARGS,
       baseURL: githubBaseUrl,
@@ -638,9 +645,7 @@ function buildFetch(
           redactedHeaders[key] = value
         }
       })
-      logForDebugging(
-        `[API REQUEST HEADERS] ${jsonStringify(redactedHeaders)}`,
-      )
+      logForDebugging(`[API REQUEST HEADERS] ${jsonStringify(redactedHeaders)}`)
       const rawBody = init?.body
       if (typeof rawBody === 'string' && rawBody.length > 0) {
         logForDebugging(`[API REQUEST BODY] ${summarizeBody(rawBody)}`)
@@ -651,7 +656,7 @@ function buildFetch(
     const startedAt = Date.now()
     const promise = inner(input, { ...init, headers })
     promise
-      .then(res => {
+      .then((res) => {
         try {
           const elapsed = Date.now() - startedAt
           const msg = `[API RESPONSE] ${res.status} ${res.statusText} (${elapsed}ms) ${res.url}`
@@ -663,7 +668,7 @@ function buildFetch(
           // ignore
         }
       })
-      .catch(err => {
+      .catch((err) => {
         try {
           const elapsed = Date.now() - startedAt
           const msg = `[API RESPONSE ERROR] (${elapsed}ms) ${(err as Error)?.message ?? String(err)}`
@@ -697,7 +702,7 @@ function summarizeBody(raw: string): string {
         content?: unknown
       }>
       summary.messages = `<${msgs.length} messages: ${msgs
-        .map(m => String(m.role ?? '?'))
+        .map((m) => String(m.role ?? '?'))
         .join(',')}>`
     }
     if (Array.isArray(parsed.system)) {

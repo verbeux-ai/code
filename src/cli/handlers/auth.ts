@@ -50,7 +50,11 @@ import {
   buildAccountProperties,
   buildAPIProviderProperties,
 } from '../../utils/status.js'
-import { getActiveScopes, getOauthConfig, isVerbooMode } from '../../constants/oauth.js'
+import {
+  getActiveScopes,
+  getOauthConfig,
+  isVerbooMode,
+} from '../../constants/oauth.js'
 import {
   generateCodeChallenge,
   generateCodeVerifier,
@@ -103,14 +107,14 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
 
   // Roles and first-token-date may fail for limited-scope tokens (e.g.
   // inference-only from setup-token). They're not required for core auth.
-  await fetchAndStoreUserRoles(tokens.accessToken).catch(err =>
+  await fetchAndStoreUserRoles(tokens.accessToken).catch((err) =>
     logForDebugging(String(err), { level: 'error' }),
   )
 
   const isVerbooOAuth = isVerbooMode()
 
   if (!isVerbooOAuth && shouldUseClaudeAIAuth(tokens.scopes)) {
-    await fetchAndStoreClaudeCodeFirstTokenDate().catch(err =>
+    await fetchAndStoreClaudeCodeFirstTokenDate().catch((err) =>
       logForDebugging(String(err), { level: 'error' }),
     )
   } else if (!isVerbooOAuth) {
@@ -156,7 +160,7 @@ export async function runOAuthLoginFlow(
     })
 
     return await oauthService.startOAuthFlow(
-      async url => {
+      async (url) => {
         if (opts.onAuthUrl) {
           await opts.onAuthUrl(url)
         } else {
@@ -232,7 +236,7 @@ export async function authLogin({
 
       // Mark onboarding complete — interactive paths handle this via
       // the Onboarding component, but the env var path skips it.
-      saveGlobalConfig(current => {
+      saveGlobalConfig((current) => {
         if (current.hasCompletedOnboarding) return current
         return { ...current, hasCompletedOnboarding: true }
       })
@@ -394,14 +398,26 @@ export async function authStatus(opts: {
 }
 
 export async function authLogout(): Promise<void> {
+  let result
   try {
-    await performLogout({ clearOnboarding: false })
+    result = await performLogout({ clearOnboarding: false })
   } catch {
     process.stderr.write('Failed to log out.\n')
     process.exit(1)
   }
-  // VERBOO-BRAND
-  process.stdout.write('Successfully logged out from your Verboo account.\n')
+  process.stdout.write(
+    'Successfully logged out from your Verboo account locally.\n',
+  )
+  if (result.remoteRevocation === 'unconfirmed') {
+    process.stderr.write(
+      'Could not confirm server-side session revocation. Your local credentials were removed.\n',
+    )
+  }
+  if (result.externalTokenSource) {
+    process.stderr.write(
+      `A credential from ${result.externalTokenSource} is still active in this shell. Remove it before starting Verboo again.\n`,
+    )
+  }
   process.exit(0)
 }
 
@@ -412,25 +428,27 @@ const HEADLESS_REDIRECT_URI = 'https://code.verboo.ai/pt/cli-auth/manual'
 export async function authLoginHeadless(): Promise<void> {
   const config = getOauthConfig()
 
-  const codeVerifier  = generateCodeVerifier()
+  const codeVerifier = generateCodeVerifier()
   const codeChallenge = await generateCodeChallenge(codeVerifier)
-  const state         = generateState()
+  const state = generateState()
 
   const params = new URLSearchParams({
-    client_id:             config.CLIENT_ID,
-    redirect_uri:          HEADLESS_REDIRECT_URI,
-    response_type:         'code',
-    code_challenge:        codeChallenge,
+    client_id: config.CLIENT_ID,
+    redirect_uri: HEADLESS_REDIRECT_URI,
+    response_type: 'code',
+    code_challenge: codeChallenge,
     code_challenge_method: 'S256',
     state,
-    scope:                 getActiveScopes().join(' '),
+    scope: getActiveScopes().join(' '),
   })
 
   const url = `${config.CONSOLE_AUTHORIZE_URL}?${params}`
 
   process.stdout.write('\nAbra este link em qualquer navegador:\n\n')
   process.stdout.write(`  ${url}\n\n`)
-  process.stdout.write('Após autorizar, cole o código exibido e pressione Enter: ')
+  process.stdout.write(
+    'Após autorizar, cole o código exibido e pressione Enter: ',
+  )
 
   const code = (await readOneLine()).trim()
   if (!code) {
@@ -439,14 +457,18 @@ export async function authLoginHeadless(): Promise<void> {
   }
 
   try {
-    const tokenResponse = await exchangeCodeForTokensWithUri(code, codeVerifier, HEADLESS_REDIRECT_URI)
+    const tokenResponse = await exchangeCodeForTokensWithUri(
+      code,
+      codeVerifier,
+      HEADLESS_REDIRECT_URI,
+    )
     const tokens: OAuthTokens = {
-      accessToken:      tokenResponse.access_token,
-      refreshToken:     tokenResponse.refresh_token ?? null,
-      expiresAt:        Date.now() + (tokenResponse.expires_in ?? 900) * 1000,
-      scopes:           tokenResponse.scope?.split(' ').filter(Boolean) ?? [],
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token ?? null,
+      expiresAt: Date.now() + (tokenResponse.expires_in ?? 900) * 1000,
+      scopes: tokenResponse.scope?.split(' ').filter(Boolean) ?? [],
       subscriptionType: null,
-      rateLimitTier:    null,
+      rateLimitTier: null,
     }
     await installOAuthTokens(tokens)
     process.stdout.write('Login realizado com sucesso.\n')
@@ -458,8 +480,14 @@ export async function authLoginHeadless(): Promise<void> {
 }
 
 function readOneLine(): Promise<string> {
-  return new Promise(resolve => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    rl.once('line', line => { rl.close(); resolve(line) })
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+    rl.once('line', (line) => {
+      rl.close()
+      resolve(line)
+    })
   })
 }

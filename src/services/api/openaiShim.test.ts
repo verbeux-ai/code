@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { acquireSharedMutationLock, releaseSharedMutationLock } from '../../test/sharedMutationLock.js'
+import {
+  acquireSharedMutationLock,
+  releaseSharedMutationLock,
+} from '../../test/sharedMutationLock.js'
 import { registerGateway } from '../../integrations/index.ts'
 import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { createOpenAIShimClient } from './openaiShim.ts'
@@ -59,7 +62,9 @@ type OpenAIShimClient = {
         params: Record<string, unknown>,
         options?: Record<string, unknown>,
       ) => Promise<unknown> & {
-        withResponse: () => Promise<{ data: AsyncIterable<Record<string, unknown>> }>
+        withResponse: () => Promise<{
+          data: AsyncIterable<Record<string, unknown>>
+        }>
       }
     }
   }
@@ -86,7 +91,7 @@ function makeSseResponse(lines: string[]): Response {
 
 function makeStreamChunks(chunks: unknown[]): string[] {
   return [
-    ...chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`),
+    ...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`),
     'data: [DONE]\n\n',
   ]
 }
@@ -286,7 +291,9 @@ test('adds Verboo session header only for Verboo router requests', async () => {
     'custom-session-should-not-win',
   )
   expect(capturedHeaders?.get('x-claude-code-session-id')).toBeNull()
-  expect(capturedHeaders?.get('user-agent')).toMatch(/^verboo-code\/(?:[\w.-]+)$/)
+  expect(capturedHeaders?.get('user-agent')).toMatch(
+    /^verboo-code\/(?:[\w.-]+)$/,
+  )
 })
 
 test('captures router rate limit headers from successful Verboo router responses', async () => {
@@ -398,7 +405,10 @@ test('Verboo router preserves downloaded reasoning_content for generic model ali
         id: 'chatcmpl-router-reasoning-ok',
         model: 'verboo-default',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
       }),
       { headers: { 'Content-Type': 'application/json' } },
@@ -421,7 +431,10 @@ test('Verboo router preserves downloaded reasoning_content for generic model ali
       {
         role: 'assistant',
         content: [
-          { type: 'thinking', thinking: 'Need to inspect files before answering.' },
+          {
+            type: 'thinking',
+            thinking: 'Need to inspect files before answering.',
+          },
           { type: 'text', text: 'Vou ler os arquivos.' },
           {
             type: 'tool_use',
@@ -448,11 +461,106 @@ test('Verboo router preserves downloaded reasoning_content for generic model ali
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    message => message.role === 'assistant' && Array.isArray(message.tool_calls),
+    (message) =>
+      message.role === 'assistant' && Array.isArray(message.tool_calls),
   )
   expect(assistantWithToolCall?.reasoning_content).toBe(
     'Need to inspect files before answering.',
   )
+})
+
+test('Verboo router refreshes a rejected access token and retries once', async () => {
+  let currentToken = 'expired-token'
+  const authorizations: string[] = []
+  let refreshCalls = 0
+
+  globalThis.fetch = (async (_input, init) => {
+    authorizations.push(new Headers(init?.headers).get('authorization') ?? '')
+    if (authorizations.length === 1) {
+      return new Response(
+        JSON.stringify({ error: 'invalid or expired token' }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      )
+    }
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-refreshed',
+        model: 'verboo-default',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    providerOverride: {
+      model: 'verboo-default',
+      baseURL: VERBOO_ROUTER_URL,
+      apiKey: currentToken,
+      getApiKey: () => currentToken,
+      refreshApiKey: async (failedToken) => {
+        expect(failedToken).toBe('expired-token')
+        refreshCalls++
+        currentToken = 'fresh-token'
+        return currentToken
+      },
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'ignored-by-provider-override',
+    messages: [{ role: 'user', content: 'hello' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(refreshCalls).toBe(1)
+  expect(authorizations).toEqual(['Bearer expired-token', 'Bearer fresh-token'])
+})
+
+test('non-Verboo providers do not retry a 401 through the Verboo refresh hook', async () => {
+  let refreshCalls = 0
+  let fetchCalls = 0
+  globalThis.fetch = (async () => {
+    fetchCalls++
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    providerOverride: {
+      model: 'external-model',
+      baseURL: 'https://provider.example/v1',
+      apiKey: 'external-key',
+      refreshApiKey: async () => {
+        refreshCalls++
+        return 'new-external-key'
+      },
+    },
+  }) as OpenAIShimClient
+
+  await expect(
+    client.beta.messages.create({
+      model: 'external-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: false,
+    }),
+  ).rejects.toThrow()
+
+  expect(fetchCalls).toBe(1)
+  expect(refreshCalls).toBe(0)
 })
 
 test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses', async () => {
@@ -489,7 +597,9 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-5.4',
@@ -543,7 +653,9 @@ test('strips store from strict OpenAI-compatible responses providers', async () 
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'kimi-k2.5',
@@ -651,7 +763,9 @@ test('uses custom OpenAI-compatible auth header value when configured', async ()
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-4o',
@@ -685,7 +799,9 @@ test('uses Hicap api-key auth header for the Hicap route', async () => {
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'claude-opus-4.7',
@@ -719,7 +835,9 @@ test('defaults Authorization custom auth header to bearer scheme', async () => {
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-4o',
@@ -753,7 +871,9 @@ test('honors bearer scheme for custom OpenAI-compatible auth headers', async () 
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-4o',
@@ -762,7 +882,9 @@ test('honors bearer scheme for custom OpenAI-compatible auth headers', async () 
     stream: false,
   })
 
-  expect(capturedHeaders?.get('x-custom-authorization')).toBe('Bearer custom-key')
+  expect(capturedHeaders?.get('x-custom-authorization')).toBe(
+    'Bearer custom-key',
+  )
   expect(capturedHeaders?.get('authorization')).toBeNull()
 })
 
@@ -787,7 +909,9 @@ test('ignores custom auth header value when no custom header is configured', asy
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-4o',
@@ -984,7 +1108,9 @@ test('strips Anthropic-specific headers on GitHub Codex transport requests', asy
   expect(capturedHeaders?.get('x-anthropic-additional-protection')).toBeNull()
   expect(capturedHeaders?.get('x-safe-header')).toBe('keep-me')
   expect(capturedHeaders?.get('authorization')).toBe('Bearer github-test-key')
-  expect(capturedHeaders?.get('editor-plugin-version')).toBe('copilot-chat/0.26.7')
+  expect(capturedHeaders?.get('editor-plugin-version')).toBe(
+    'copilot-chat/0.26.7',
+  )
 })
 
 test('strips Anthropic-specific headers on GitHub Codex transport with providerOverride API key', async () => {
@@ -1034,8 +1160,12 @@ test('strips Anthropic-specific headers on GitHub Codex transport with providerO
   expect(capturedHeaders?.get('anthropic-version')).toBeNull()
   expect(capturedHeaders?.get('x-claude-remote-session-id')).toBeNull()
   expect(capturedHeaders?.get('x-safe-header')).toBe('keep-me')
-  expect(capturedHeaders?.get('authorization')).toBe('Bearer provider-override-key')
-  expect(capturedHeaders?.get('editor-plugin-version')).toBe('copilot-chat/0.26.7')
+  expect(capturedHeaders?.get('authorization')).toBe(
+    'Bearer provider-override-key',
+  )
+  expect(capturedHeaders?.get('editor-plugin-version')).toBe(
+    'copilot-chat/0.26.7',
+  )
 })
 
 test('preserves usage from final OpenAI stream chunk with empty choices', async () => {
@@ -1106,7 +1236,10 @@ test('preserves usage from final OpenAI stream chunk with empty choices', async 
   }
 
   const usageEvent = events.find(
-    event => event.type === 'message_delta' && typeof event.usage === 'object' && event.usage !== null,
+    (event) =>
+      event.type === 'message_delta' &&
+      typeof event.usage === 'object' &&
+      event.usage !== null,
   ) as { usage?: { input_tokens?: number; output_tokens?: number } } | undefined
 
   expect(usageEvent).toBeDefined()
@@ -1172,16 +1305,17 @@ test('streaming: Crof-style empty stop chunk with tools completes without visibl
   }
 
   const textDeltas = events.filter(
-    event => (event as { delta?: { type?: string } }).delta?.type === 'text_delta',
+    (event) =>
+      (event as { delta?: { type?: string } }).delta?.type === 'text_delta',
   )
   const thinkingDeltas = events.filter(
-    event => (event as { delta?: { type?: string } }).delta?.type === 'thinking_delta',
+    (event) =>
+      (event as { delta?: { type?: string } }).delta?.type === 'thinking_delta',
   )
-  const stopEvent = events.find(
-    event => event.type === 'message_delta',
-  ) as { delta?: { stop_reason?: string } } | undefined
+  const stopEvent = events.find((event) => event.type === 'message_delta') as
+    { delta?: { stop_reason?: string } } | undefined
 
-  expect(events.map(event => event.type)).toEqual([
+  expect(events.map((event) => event.type)).toEqual([
     'message_start',
     'message_delta',
     'message_stop',
@@ -1403,9 +1537,10 @@ test('preserves Gemini tool call extra_content in follow-up requests', async () 
     stream: false,
   })
 
-  const assistantWithToolCall = (requestBody?.messages as Array<Record<string, unknown>>).find(
-    message => Array.isArray(message.tool_calls),
-  ) as { tool_calls?: Array<Record<string, unknown>> } | undefined
+  const assistantWithToolCall = (
+    requestBody?.messages as Array<Record<string, unknown>>
+  ).find((message) => Array.isArray(message.tool_calls)) as
+    { tool_calls?: Array<Record<string, unknown>> } | undefined
 
   expect(assistantWithToolCall?.tool_calls?.[0]).toMatchObject({
     id: 'call_1',
@@ -1481,11 +1616,22 @@ test('preserves Grep tool pattern field in OpenAI-compatible schemas', async () 
   })
 
   const tools = requestBody?.tools as Array<Record<string, unknown>> | undefined
-  const grepTool = tools?.find(tool => (tool.function as Record<string, unknown>)?.name === 'Grep') as
-    | { function?: { parameters?: { properties?: Record<string, unknown>; required?: string[] } } }
+  const grepTool = tools?.find(
+    (tool) => (tool.function as Record<string, unknown>)?.name === 'Grep',
+  ) as
+    | {
+        function?: {
+          parameters?: {
+            properties?: Record<string, unknown>
+            required?: string[]
+          }
+        }
+      }
     | undefined
 
-  expect(Object.keys(grepTool?.function?.parameters?.properties ?? {})).toContain('pattern')
+  expect(
+    Object.keys(grepTool?.function?.parameters?.properties ?? {}),
+  ).toContain('pattern')
   expect(grepTool?.function?.parameters?.required).toContain('pattern')
 })
 
@@ -1616,15 +1762,19 @@ test('preserves image tool results as placeholders in follow-up requests', async
     stream: false,
   })
 
-  const toolMessage = (requestBody?.messages as Array<Record<string, unknown>>).find(
-    message => message.role === 'tool',
-  ) as {
-    content?: Array<{
-      type: string
-      text?: string
-      image_url?: { url: string }
-    }> | string
-  } | undefined
+  const toolMessage = (
+    requestBody?.messages as Array<Record<string, unknown>>
+  ).find((message) => message.role === 'tool') as
+    | {
+        content?:
+          | Array<{
+              type: string
+              text?: string
+              image_url?: { url: string }
+            }>
+          | string
+      }
+    | undefined
 
   expect(Array.isArray(toolMessage?.content)).toBe(true)
   const parts = toolMessage?.content as Array<{
@@ -1632,7 +1782,7 @@ test('preserves image tool results as placeholders in follow-up requests', async
     text?: string
     image_url?: { url: string }
   }>
-  const imagePart = parts.find(part => part.type === 'image_url')
+  const imagePart = parts.find((part) => part.type === 'image_url')
   expect(imagePart?.image_url?.url).toBe('data:image/png;base64,ZmFrZQ==')
 })
 
@@ -1712,15 +1862,17 @@ test('preserves mixed text and image tool results as multipart content', async (
     stream: false,
   })
 
-  const toolMessage = (requestBody?.messages as Array<Record<string, unknown>>).find(
-    message => message.role === 'tool',
-  ) as {
-    content?: Array<{
-      type: string
-      text?: string
-      image_url?: { url: string }
-    }>
-  } | undefined
+  const toolMessage = (
+    requestBody?.messages as Array<Record<string, unknown>>
+  ).find((message) => message.role === 'tool') as
+    | {
+        content?: Array<{
+          type: string
+          text?: string
+          image_url?: { url: string }
+        }>
+      }
+    | undefined
 
   expect(Array.isArray(toolMessage?.content)).toBe(true)
   const parts = toolMessage?.content ?? []
@@ -2122,7 +2274,7 @@ test('preserves Gemini tool call extra_content from streaming chunks', async () 
   }
 
   const toolStart = events.find(
-    event =>
+    (event) =>
       event.type === 'content_block_start' &&
       typeof event.content_block === 'object' &&
       event.content_block !== null &&
@@ -2181,13 +2333,13 @@ test('normalizes plain string Bash tool arguments from OpenAI-compatible respons
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use Bash' }],
     max_tokens: 64,
     stream: false,
-  }) as {
+  })) as {
     stop_reason?: string
     content?: Array<Record<string, unknown>>
   }
@@ -2243,13 +2395,13 @@ test('normalizes Bash tool arguments that are valid JSON strings', async () => {
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use Bash' }],
     max_tokens: 64,
     stream: false,
-  }) as {
+  })) as {
     content?: Array<Record<string, unknown>>
   }
 
@@ -2309,13 +2461,13 @@ test.each([
 
     const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-    const message = await client.beta.messages.create({
+    const message = (await client.beta.messages.create({
       model: 'google/gemini-3.1-pro-preview',
       system: 'test system',
       messages: [{ role: 'user', content: 'Use Bash' }],
       max_tokens: 64,
       stream: false,
-    }) as {
+    })) as {
       content?: Array<Record<string, unknown>>
     }
 
@@ -2370,13 +2522,13 @@ test('keeps terminal empty Bash tool arguments invalid in non-streaming response
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use Bash' }],
     max_tokens: 64,
     stream: false,
-  }) as {
+  })) as {
     content?: Array<Record<string, unknown>>
   }
 
@@ -2454,13 +2606,13 @@ test('normalizes plain string Bash tool arguments in streaming responses', async
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":"pwd"}')
@@ -2552,13 +2704,13 @@ test('normalizes plain string Bash tool arguments when streaming starts with an 
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":"pwd"}')
@@ -2650,13 +2802,13 @@ test('normalizes plain string Bash tool arguments when streaming starts with whi
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":" pwd"}')
@@ -2726,13 +2878,13 @@ test('keeps terminal whitespace-only Bash arguments invalid in streaming respons
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{}')
@@ -2802,13 +2954,13 @@ test('normalizes streaming Bash arguments that begin with bracket syntax', async
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":"[ -f package.json ] && pwd"}')
@@ -2900,13 +3052,13 @@ test('normalizes streaming Bash arguments when the first chunk is only an openin
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":"{ pwd; }"}')
@@ -2976,13 +3128,13 @@ test('repairs truncated structured Bash JSON in streaming responses', async () =
 
   const normalizedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(normalizedInput).toBe('{"command":"pwd"}')
@@ -3052,13 +3204,13 @@ test('does not normalize incomplete streamed Bash commands when finish_reason is
 
   const streamedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(streamedInput).toBe('rg --fi')
@@ -3128,13 +3280,13 @@ test('repairs truncated JSON objects even without command field', async () => {
 
   const streamedInput = events
     .filter(
-      event =>
+      (event) =>
         event.type === 'content_block_delta' &&
         typeof event.delta === 'object' &&
         event.delta !== null &&
         (event.delta as Record<string, unknown>).type === 'input_json_delta',
     )
-    .map(event => (event.delta as Record<string, unknown>).partial_json)
+    .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
   expect(streamedInput).toBe('{"cwd":"/tmp"}')
@@ -3180,13 +3332,13 @@ test('preserves raw input for unknown plain string tool arguments', async () => 
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use tool' }],
     max_tokens: 64,
     stream: false,
-  }) as {
+  })) as {
     content?: Array<Record<string, unknown>>
   }
 
@@ -3240,13 +3392,13 @@ test('preserves parsed string input for unknown JSON string tool arguments', asy
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use tool' }],
     max_tokens: 64,
     stream: false,
-  }) as {
+  })) as {
     content?: Array<Record<string, unknown>>
   }
 
@@ -3321,7 +3473,9 @@ test('sanitizes malformed MCP tool schemas before sending them to OpenAI', async
   })
 
   const parameters = (
-    requestBody?.tools as Array<{ function?: { parameters?: Record<string, unknown> } }>
+    requestBody?.tools as Array<{
+      function?: { parameters?: Record<string, unknown> }
+    }>
   )?.[0]?.function?.parameters
   const properties = parameters?.properties as
     | Record<string, { default?: unknown; enum?: unknown[]; type?: string }>
@@ -3347,7 +3501,12 @@ test('optional tool properties are not added to required[] — fixes Groq/Azure 
       JSON.stringify({
         id: 'chatcmpl-4',
         model: 'gpt-4o',
-        choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
         usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
       }),
       { headers: { 'Content-Type': 'application/json' } },
@@ -3380,7 +3539,9 @@ test('optional tool properties are not added to required[] — fixes Groq/Azure 
   })
 
   const parameters = (
-    requestBody?.tools as Array<{ function?: { parameters?: Record<string, unknown> } }>
+    requestBody?.tools as Array<{
+      function?: { parameters?: Record<string, unknown> }
+    }>
   )?.[0]?.function?.parameters
 
   expect(parameters?.required).toEqual(['file_path'])
@@ -3401,7 +3562,9 @@ function makeNonStreamResponse(content = 'ok'): Response {
     JSON.stringify({
       id: 'chatcmpl-test',
       model: 'test-model',
-      choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }],
+      choices: [
+        { message: { role: 'assistant', content }, finish_reason: 'stop' },
+      ],
       usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
     }),
     { headers: { 'Content-Type': 'application/json' } },
@@ -3411,7 +3574,10 @@ function makeNonStreamResponse(content = 'ok'): Response {
 test('coalesces consecutive user messages to avoid alternation errors (issue #202)', async () => {
   let sentMessages: Array<{ role: string; content: unknown }> | undefined
 
-  globalThis.fetch = (async (_input: unknown, init: RequestInit | undefined) => {
+  globalThis.fetch = (async (
+    _input: unknown,
+    init: RequestInit | undefined,
+  ) => {
     sentMessages = JSON.parse(String(init?.body)).messages
     return makeNonStreamResponse()
   }) as FetchType
@@ -3438,9 +3604,14 @@ test('coalesces consecutive user messages to avoid alternation errors (issue #20
 })
 
 test('coalesces consecutive assistant messages preserving tool_calls (issue #202)', async () => {
-  let sentMessages: Array<{ role: string; content: unknown; tool_calls?: unknown[] }> | undefined
+  let sentMessages:
+    | Array<{ role: string; content: unknown; tool_calls?: unknown[] }>
+    | undefined
 
-  globalThis.fetch = (async (_input: unknown, init: RequestInit | undefined) => {
+  globalThis.fetch = (async (
+    _input: unknown,
+    init: RequestInit | undefined,
+  ) => {
     sentMessages = JSON.parse(String(init?.body)).messages
     return makeNonStreamResponse()
   }) as FetchType
@@ -3455,15 +3626,27 @@ test('coalesces consecutive assistant messages preserving tool_calls (issue #202
       { role: 'assistant', content: 'thinking...' },
       {
         role: 'assistant',
-        content: [{ type: 'tool_use', id: 'call_1', name: 'Bash', input: { command: 'ls' } }],
+        content: [
+          {
+            type: 'tool_use',
+            id: 'call_1',
+            name: 'Bash',
+            input: { command: 'ls' },
+          },
+        ],
       },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file.txt' }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: 'file.txt' },
+        ],
+      },
     ],
     max_tokens: 64,
     stream: false,
   })
 
-  const assistantMsgs = sentMessages?.filter(m => m.role === 'assistant')
+  const assistantMsgs = sentMessages?.filter((m) => m.role === 'assistant')
   expect(assistantMsgs?.length).toBe(1)
   expect(assistantMsgs?.[0]?.tool_calls?.length).toBeGreaterThan(0)
 })
@@ -3717,7 +3900,7 @@ test('streaming: thinking block closed before tool call', async () => {
     events.push(event)
   }
 
-  const types = events.map(e => e.type)
+  const types = events.map((e) => e.type)
 
   const thinkingStartIdx = types.indexOf('content_block_start')
   const firstStopIdx = types.indexOf('content_block_stop')
@@ -3946,12 +4129,13 @@ test('streaming: content made only of <think> tags yields no visible text', asyn
   }
 
   const textDeltas = events
-    .map(event => (event as { delta?: { type?: string; text?: string } }).delta)
-    .filter(delta => delta?.type === 'text_delta')
+    .map(
+      (event) => (event as { delta?: { type?: string; text?: string } }).delta,
+    )
+    .filter((delta) => delta?.type === 'text_delta')
 
-  const stopEvent = events.find(
-    event => event.type === 'message_delta',
-  ) as { delta?: { stop_reason?: string } } | undefined
+  const stopEvent = events.find((event) => event.type === 'message_delta') as
+    { delta?: { stop_reason?: string } } | undefined
 
   expect(textDeltas).toHaveLength(0)
   expect(stopEvent?.delta?.stop_reason).toBe('end_turn')
@@ -4113,7 +4297,11 @@ test('transport failures are not labeled with HTTP status 503', async () => {
   }
 
   expect(caught).toBeDefined()
-  const err = caught as { status?: number; message: string; constructor: { name: string } }
+  const err = caught as {
+    status?: number
+    message: string
+    constructor: { name: string }
+  }
   expect(err.constructor.name).toBe('APIConnectionError')
   expect(err.status).toBeUndefined()
   expect(err.message).not.toMatch(/^503\b/)
@@ -4125,7 +4313,10 @@ test('transport failures are not labeled with HTTP status 503', async () => {
 test('propagates AbortError without wrapping it as transport failure', async () => {
   process.env.OPENAI_BASE_URL = 'http://localhost:11434/v1'
 
-  const abortError = new DOMException('The operation was aborted.', 'AbortError')
+  const abortError = new DOMException(
+    'The operation was aborted.',
+    'AbortError',
+  )
   globalThis.fetch = (async () => {
     throw abortError
   }) as FetchType
@@ -4295,7 +4486,10 @@ test('self-heals tool-call incompatibility by retrying local Ollama requests wit
 
   const requestBodies: Array<Record<string, unknown>> = []
   globalThis.fetch = (async (_input, init) => {
-    const requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+    const requestBody = JSON.parse(String(init?.body)) as Record<
+      string,
+      unknown
+    >
     requestBodies.push(requestBody)
 
     if (requestBodies.length === 1) {
@@ -4364,7 +4558,8 @@ test('self-heals tool-call incompatibility by retrying local Ollama requests wit
   expect(requestBodies[0]?.tool_choice).toBeUndefined()
   expect(
     requestBodies[1]?.tools === undefined ||
-      (Array.isArray(requestBodies[1]?.tools) && requestBodies[1]?.tools.length === 0),
+      (Array.isArray(requestBodies[1]?.tools) &&
+        requestBodies[1]?.tools.length === 0),
   ).toBe(true)
   expect(requestBodies[1]?.tool_choice).toBeUndefined()
 })
@@ -4449,20 +4644,26 @@ test('preserves valid tool_result and drops orphan tool_result', async () => {
   // Should have: system, user, assistant (tool_use), tool (valid_call_1), user
   // Should NOT have: tool (orphan_call_2)
 
-  const toolMessages = messages.filter(m => m.role === 'tool')
+  const toolMessages = messages.filter((m) => m.role === 'tool')
   expect(toolMessages.length).toBe(1)
   expect(toolMessages[0].tool_call_id).toBe('valid_call_1')
 
-  const orphanMessage = toolMessages.find(m => m.tool_call_id === 'orphan_call_2')
+  const orphanMessage = toolMessages.find(
+    (m) => m.tool_call_id === 'orphan_call_2',
+  )
   expect(orphanMessage).toBeUndefined()
-  
-  // Actually, the semantic message IS injected here because the user block with orphan 
+
+  // Actually, the semantic message IS injected here because the user block with orphan
   // tool result is converted to:
   // 1. Tool result (valid_call_1) -> role 'tool'
   // 2. User content ("What happened?") -> role 'user'
   // This triggers the tool -> assistant injection.
-  const assistantMessages = messages.filter(m => m.role === 'assistant')
-  expect(assistantMessages.some(m => m.content === '[Tool execution interrupted by user]')).toBe(true)
+  const assistantMessages = messages.filter((m) => m.role === 'assistant')
+  expect(
+    assistantMessages.some(
+      (m) => m.content === '[Tool execution interrupted by user]',
+    ),
+  ).toBe(true)
 })
 
 test('drops empty assistant message when only thinking block was present and stripped', async () => {
@@ -4470,14 +4671,22 @@ test('drops empty assistant message when only thinking block was present and str
 
   globalThis.fetch = (async (_input, init) => {
     requestBody = JSON.parse(String(init?.body))
-    return new Response(JSON.stringify({
-      id: 'chatcmpl-1',
-      object: 'chat.completion',
-      created: 123456789,
-      model: 'mistral-large-latest',
-      choices: [{ message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
-    }), { headers: { 'Content-Type': 'application/json' } })
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        object: 'chat.completion',
+        created: 123456789,
+        model: 'mistral-large-latest',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'hi' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
   }) as FetchType
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
@@ -4486,7 +4695,12 @@ test('drops empty assistant message when only thinking block was present and str
     model: 'mistral-large-latest',
     messages: [
       { role: 'user', content: 'Initial' },
-      { role: 'assistant', content: [{ type: 'thinking', thinking: 'I am thinking...', signature: 'sig' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'I am thinking...', signature: 'sig' },
+        ],
+      },
       { role: 'user', content: 'Interrupting query' },
     ],
     max_tokens: 64,
@@ -4507,14 +4721,22 @@ test('injects semantic assistant message when tool result is followed by user me
 
   globalThis.fetch = (async (_input, init) => {
     requestBody = JSON.parse(String(init?.body))
-    return new Response(JSON.stringify({
-      id: 'chatcmpl-2',
-      object: 'chat.completion',
-      created: 123456789,
-      model: 'mistral-large-latest',
-      choices: [{ message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
-    }), { headers: { 'Content-Type': 'application/json' } })
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-2',
+        object: 'chat.completion',
+        created: 123456789,
+        model: 'mistral-large-latest',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'hi' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
   }) as FetchType
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
@@ -4522,15 +4744,17 @@ test('injects semantic assistant message when tool result is followed by user me
   await client.beta.messages.create({
     model: 'mistral-large-latest',
     messages: [
-      { 
-        role: 'assistant', 
-        content: [{ type: 'tool_use', id: 'call_1', name: 'search', input: {} }] 
-      },
-      { 
-        role: 'user', 
+      {
+        role: 'assistant',
         content: [
-          { type: 'tool_result', tool_use_id: 'call_1', content: 'Result' }
-        ] 
+          { type: 'tool_use', id: 'call_1', name: 'search', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: 'Result' },
+        ],
       },
       { role: 'user', content: 'Next user query' },
     ],
@@ -4540,9 +4764,9 @@ test('injects semantic assistant message when tool result is followed by user me
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   // Roles should be: assistant (tool_calls) -> tool -> assistant (semantic) -> user
-  const roles = messages.map(m => m.role)
+  const roles = messages.map((m) => m.role)
   expect(roles).toEqual(['assistant', 'tool', 'assistant', 'user'])
-  
+
   const semanticMsg = messages[2]
   expect(semanticMsg.role).toBe('assistant')
   expect(semanticMsg.content).toBe('[Tool execution interrupted by user]')
@@ -4560,7 +4784,10 @@ test('Moonshot: uses max_tokens (not max_completion_tokens) and strips store', a
         id: 'chatcmpl-1',
         model: 'kimi-k2.6',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4594,7 +4821,10 @@ test('Cerebras: strips unsupported store on chat_completions (#1023)', async () 
         id: 'chatcmpl-1',
         model: 'llama3.1-8b',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4626,7 +4856,10 @@ test('Local provider (vLLM/Ollama/etc.): strips unsupported store on chat_comple
         id: 'chatcmpl-1',
         model: 'qwen-3.5-27b',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4658,7 +4891,10 @@ test('Groq: keeps max_completion_tokens and strips unsupported store', async () 
         id: 'chatcmpl-1',
         model: 'llama-3.3-70b-versatile',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4697,7 +4933,10 @@ test('Moonshot: echoes reasoning_content on assistant tool-call messages', async
         id: 'chatcmpl-1',
         model: 'kimi-k2.6',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4744,7 +4983,7 @@ test('Moonshot: echoes reasoning_content on assistant tool-call messages', async
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    m => m.role === 'assistant' && Array.isArray(m.tool_calls),
+    (m) => m.role === 'assistant' && Array.isArray(m.tool_calls),
   )
   expect(assistantWithToolCall).toBeDefined()
   expect(assistantWithToolCall?.reasoning_content).toBe(
@@ -4764,7 +5003,10 @@ test('DeepSeek echoes reasoning_content on assistant tool-call messages', async 
         id: 'chatcmpl-1',
         model: 'deepseek-v4-flash',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4804,7 +5046,7 @@ test('DeepSeek echoes reasoning_content on assistant tool-call messages', async 
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    m => m.role === 'assistant' && Array.isArray(m.tool_calls),
+    (m) => m.role === 'assistant' && Array.isArray(m.tool_calls),
   )
   expect(assistantWithToolCall).toBeDefined()
   expect(assistantWithToolCall?.reasoning_content).toBe('thought')
@@ -4822,7 +5064,10 @@ test('generic OpenAI-compatible providers do not echo reasoning_content on assis
         id: 'chatcmpl-1',
         model: 'gpt-4o',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4862,7 +5107,7 @@ test('generic OpenAI-compatible providers do not echo reasoning_content on assis
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    m => m.role === 'assistant' && Array.isArray(m.tool_calls),
+    (m) => m.role === 'assistant' && Array.isArray(m.tool_calls),
   )
   expect(assistantWithToolCall).toBeDefined()
   expect(assistantWithToolCall?.reasoning_content).toBeUndefined()
@@ -4881,7 +5126,10 @@ test('gateway-routed DeepSeek models inherit descriptor-backed reasoning and tok
         id: 'chatcmpl-1',
         model: 'deepseek/deepseek-reasoner',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4924,7 +5172,8 @@ test('gateway-routed DeepSeek models inherit descriptor-backed reasoning and tok
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    message => message.role === 'assistant' && Array.isArray(message.tool_calls),
+    (message) =>
+      message.role === 'assistant' && Array.isArray(message.tool_calls),
   )
 
   expect(assistantWithToolCall?.reasoning_content).toBe('thought')
@@ -4947,7 +5196,10 @@ test('Moonshot: cn host is also detected', async () => {
         id: 'chatcmpl-1',
         model: 'kimi-k2.6',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -4979,7 +5231,10 @@ test('Kimi Code endpoint inherits Moonshot max_tokens/store compatibility', asyn
         id: 'chatcmpl-1',
         model: 'kimi-for-coding',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5013,7 +5268,10 @@ test('Kimi Code endpoint echoes reasoning_content on assistant tool-call message
         id: 'chatcmpl-1',
         model: 'kimi-for-coding',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5060,7 +5318,7 @@ test('Kimi Code endpoint echoes reasoning_content on assistant tool-call message
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
   const assistantWithToolCall = messages.find(
-    m => m.role === 'assistant' && Array.isArray(m.tool_calls),
+    (m) => m.role === 'assistant' && Array.isArray(m.tool_calls),
   )
   expect(assistantWithToolCall).toBeDefined()
   expect(assistantWithToolCall?.reasoning_content).toBe(
@@ -5080,7 +5338,10 @@ test('DeepSeek sends thinking toggle and normalized reasoning effort', async () 
         id: 'chatcmpl-1',
         model: 'deepseek-v4-pro',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5119,7 +5380,10 @@ test('DeepSeek omits thinking controls when the Anthropic-side request does not 
         id: 'chatcmpl-1',
         model: 'deepseek-v4-flash',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5152,7 +5416,10 @@ test('DeepSeek forwards an explicit thinking disable toggle for V4 models', asyn
         id: 'chatcmpl-1',
         model: 'deepseek-v4-flash',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5173,7 +5440,6 @@ test('DeepSeek forwards an explicit thinking disable toggle for V4 models', asyn
   expect(requestBody?.thinking).toEqual({ type: 'disabled' })
   expect(requestBody?.reasoning_effort).toBeUndefined()
 })
-
 
 test('collapses multiple text blocks in tool_result to string for DeepSeek compatibility (issue #774)', async () => {
   let requestBody: Record<string, unknown> | undefined
@@ -5245,7 +5511,7 @@ test('collapses multiple text blocks in tool_result to string for DeepSeek compa
   })
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
-  const toolMessages = messages.filter(m => m.role === 'tool')
+  const toolMessages = messages.filter((m) => m.role === 'tool')
   expect(toolMessages.length).toBe(1)
   expect(toolMessages[0].tool_call_id).toBe('call_1')
   expect(typeof toolMessages[0].content).toBe('string')
@@ -5387,7 +5653,7 @@ test('preserves mixed text and image tool results as multipart content', async (
   })
 
   const messages = requestBody?.messages as Array<Record<string, unknown>>
-  const toolMessages = messages.filter(m => m.role === 'tool')
+  const toolMessages = messages.filter((m) => m.role === 'tool')
   expect(toolMessages.length).toBe(1)
   expect(Array.isArray(toolMessages[0].content)).toBe(true)
   const content = toolMessages[0].content as Array<Record<string, unknown>>
@@ -5531,7 +5797,10 @@ test('Z.AI: uses max_tokens (not max_completion_tokens) and strips store', async
         id: 'chatcmpl-1',
         model: 'GLM-5.1',
         choices: [
-          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
         ],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }),
@@ -5590,7 +5859,9 @@ test('Z.AI: thinking mode enabled when requested', async () => {
     thinking: { type: 'enabled', budget_tokens: 1024 },
   })
 
-  expect((requestBody?.thinking as Record<string, string>)?.type).toBe('enabled')
+  expect((requestBody?.thinking as Record<string, string>)?.type).toBe(
+    'enabled',
+  )
   expect(requestBody?.max_completion_tokens).toBeUndefined()
   expect(requestBody?.max_tokens).toBe(1024)
 })
@@ -5636,8 +5907,11 @@ test('strips Anthropic attribution header block from chat-completions system pro
     stream: false,
   })
 
-  const messages = capturedBody?.messages as Array<{ role: string; content: string }>
-  const sysMsg = messages.find(m => m.role === 'system')
+  const messages = capturedBody?.messages as Array<{
+    role: string
+    content: string
+  }>
+  const sysMsg = messages.find((m) => m.role === 'system')
   expect(sysMsg).toBeDefined()
   expect(sysMsg?.content).not.toContain('x-anthropic-billing-header')
   expect(sysMsg?.content).not.toContain('cc_version=')
@@ -5669,7 +5943,9 @@ test('strips Anthropic attribution header block from responses-API instructions 
     )
   }) as FetchType
 
-  const client = createOpenAIShimClient({ defaultHeaders: {} }) as OpenAIShimClient
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+  }) as OpenAIShimClient
 
   await client.beta.messages.create({
     model: 'gpt-5.4',

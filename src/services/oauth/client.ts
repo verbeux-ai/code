@@ -73,10 +73,7 @@ export function buildAuthUrl({
   authUrl.searchParams.append('code', 'true') // this tells the login page to show Claude Max upsell
   authUrl.searchParams.append('client_id', getOauthConfig().CLIENT_ID)
   authUrl.searchParams.append('response_type', 'code')
-  authUrl.searchParams.append(
-    'redirect_uri',
-    getOAuthRedirectUri(port),
-  )
+  authUrl.searchParams.append('redirect_uri', getOAuthRedirectUri(port))
   const scopesToUse = inferenceOnly
     ? [CLAUDE_AI_INFERENCE_SCOPE] // Long-lived inference-only tokens
     : getActiveScopes()
@@ -256,7 +253,7 @@ export async function refreshOAuthToken(
         updates.subscriptionCreatedAt = profileInfo.subscriptionCreatedAt
       }
       if (Object.keys(updates).length > 0) {
-        saveGlobalConfig(current => ({
+        saveGlobalConfig((current) => ({
           ...current,
           oauthAccount: current.oauthAccount
             ? { ...current.oauthAccount, ...updates }
@@ -300,6 +297,32 @@ export async function refreshOAuthToken(
   }
 }
 
+/**
+ * Best-effort RFC 7009 refresh-token revocation for native Verboo sessions.
+ * The caller deliberately continues its local logout when the network is down.
+ */
+export async function revokeVerbooRefreshToken(
+  refreshToken: string,
+): Promise<boolean> {
+  const form = new URLSearchParams({
+    token: refreshToken,
+    token_type_hint: 'refresh_token',
+    client_id: getOauthConfig().CLIENT_ID,
+  })
+
+  try {
+    await axios.post(`${getOauthConfig().BASE_API_URL}/oauth/revoke`, form, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 5000,
+    })
+    logEvent('verboo_oauth_refresh_token_revocation_success', {})
+    return true
+  } catch {
+    logEvent('verboo_oauth_refresh_token_revocation_unconfirmed', {})
+    return false
+  }
+}
+
 export async function fetchAndStoreUserRoles(
   accessToken: string,
 ): Promise<void> {
@@ -321,7 +344,7 @@ export async function fetchAndStoreUserRoles(
     throw new Error('OAuth account information not found in config')
   }
 
-  saveGlobalConfig(current => ({
+  saveGlobalConfig((current) => ({
     ...current,
     oauthAccount: current.oauthAccount
       ? {
@@ -487,9 +510,9 @@ function hasCompleteOAuthAccountInfo(): boolean {
   const oauthAccount = getGlobalConfig().oauthAccount
   return Boolean(
     oauthAccount &&
-      oauthAccount.billingType !== undefined &&
-      oauthAccount.accountCreatedAt !== undefined &&
-      oauthAccount.subscriptionCreatedAt !== undefined,
+    oauthAccount.billingType !== undefined &&
+    oauthAccount.accountCreatedAt !== undefined &&
+    oauthAccount.subscriptionCreatedAt !== undefined,
   )
 }
 
@@ -603,7 +626,7 @@ export function storeOAuthAccountInfo({
   if (displayName) {
     accountInfo.displayName = displayName
   }
-  saveGlobalConfig(current => {
+  saveGlobalConfig((current) => {
     // For oauthAccount we need to compare content since it's an object
     if (
       current.oauthAccount?.accountUuid === accountInfo.accountUuid &&

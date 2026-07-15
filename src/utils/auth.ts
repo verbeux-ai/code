@@ -176,6 +176,14 @@ export function getAuthTokenSource() {
     return { source: 'none' as const, hasToken: false }
   }
 
+  // In native Verboo mode, a completed interactive login writes a renewable
+  // session to secure storage. It must take precedence over credentials
+  // inherited from the parent shell: otherwise `/login` can succeed while
+  // inference still sends an old CLAUDE_CODE_OAUTH_TOKEN.
+  if (isVerbooMode() && getStoredVerbooOAuthTokens()) {
+    return { source: 'claude.ai' as const, hasToken: true }
+  }
+
   if (process.env.ANTHROPIC_AUTH_TOKEN && !isManagedOAuthContext()) {
     return { source: 'ANTHROPIC_AUTH_TOKEN' as const, hasToken: true }
   }
@@ -1276,9 +1284,37 @@ export function saveOAuthTokensIfNeeded(tokens: OAuthTokens): {
   }
 }
 
+function getStoredVerbooOAuthTokens(): OAuthTokens | null {
+  try {
+    const oauthData = getSecureStorage().read()?.verbooOauth
+    return oauthData?.accessToken ? oauthData : null
+  } catch (error) {
+    logError(error)
+    return null
+  }
+}
+
+async function getStoredVerbooOAuthTokensAsync(): Promise<OAuthTokens | null> {
+  try {
+    const oauthData = (await getSecureStorage().readAsync())?.verbooOauth
+    return oauthData?.accessToken ? oauthData : null
+  } catch (error) {
+    logError(error)
+    return null
+  }
+}
+
 export const getClaudeAIOAuthTokens = memoize((): OAuthTokens | null => {
   // --bare: API-key-only. No OAuth env tokens, no keychain, no credentials file.
   if (isBareMode()) return null
+
+  // Verboo's own interactive login is authoritative. A shell can inherit an
+  // unrelated inference-only OAuth token (for example from another CLI), but
+  // that token must not override the renewable Verboo session we just saved.
+  if (isVerbooMode()) {
+    const storedTokens = getStoredVerbooOAuthTokens()
+    if (storedTokens) return storedTokens
+  }
 
   // Check for force-set OAuth token from environment variable
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
@@ -1307,20 +1343,7 @@ export const getClaudeAIOAuthTokens = memoize((): OAuthTokens | null => {
     }
   }
 
-  try {
-    const secureStorage = getSecureStorage()
-    const storageData = secureStorage.read()
-    const oauthData = storageData?.verbooOauth
-
-    if (!oauthData?.accessToken) {
-      return null
-    }
-
-    return oauthData
-  } catch (error) {
-    logError(error)
-    return null
-  }
+  return getStoredVerbooOAuthTokens()
 })
 
 /**
@@ -1423,6 +1446,13 @@ async function handleOAuth401ErrorImpl(
 export async function getClaudeAIOAuthTokensAsync(): Promise<OAuthTokens | null> {
   if (isBareMode()) return null
 
+  // Mirror the synchronous lookup above. This path is used at startup, so it
+  // must make the same decision as the request path below.
+  if (isVerbooMode()) {
+    const storedTokens = await getStoredVerbooOAuthTokensAsync()
+    if (storedTokens) return storedTokens
+  }
+
   // Env var and FD tokens are sync and don't hit the keychain
   if (
     process.env.CLAUDE_CODE_OAUTH_TOKEN ||
@@ -1431,18 +1461,7 @@ export async function getClaudeAIOAuthTokensAsync(): Promise<OAuthTokens | null>
     return getClaudeAIOAuthTokens()
   }
 
-  try {
-    const secureStorage = getSecureStorage()
-    const storageData = await secureStorage.readAsync()
-    const oauthData = storageData?.verbooOauth
-    if (!oauthData?.accessToken) {
-      return null
-    }
-    return oauthData
-  } catch (error) {
-    logError(error)
-    return null
-  }
+  return getStoredVerbooOAuthTokensAsync()
 }
 
 // In-flight promise for deduplicating concurrent calls

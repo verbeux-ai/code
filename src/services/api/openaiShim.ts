@@ -2153,9 +2153,17 @@ class OpenAIShimMessages {
       routeCredential ??
       process.env.OPENAI_API_KEY ??
       ''
-    const configuredAuthHeaderValue =
-      process.env.OPENAI_AUTH_HEADER_VALUE?.trim()
-    const customAuthHeader = process.env.OPENAI_AUTH_HEADER?.trim()
+    // The Verboo router always authenticates with its OAuth/API token in
+    // Authorization. Parent shells may carry OpenAI gateway settings; letting
+    // those overwrite this header makes a successful Verboo login appear to
+    // fail only when the first chat request is sent.
+    const usesVerbooRouter = isVerbooRouterUrl(request.baseUrl)
+    const configuredAuthHeaderValue = usesVerbooRouter
+      ? undefined
+      : process.env.OPENAI_AUTH_HEADER_VALUE?.trim()
+    const customAuthHeader = usesVerbooRouter
+      ? undefined
+      : process.env.OPENAI_AUTH_HEADER?.trim()
     const hasCustomAuthHeader = Boolean(
       customAuthHeader &&
       /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(customAuthHeader),

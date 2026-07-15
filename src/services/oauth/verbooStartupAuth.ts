@@ -325,7 +325,12 @@ export async function ensureVerbooAuthenticated(
   })
 
   await installVerbooOAuthTokens(tokens)
-  await validateVerbooSession()
+  const confirmedSession = await validateVerbooSession()
+  if (confirmedSession.kind === 'unauthenticated') {
+    throw new Error(
+      'A sessão recém-autenticada foi rejeitada pelo Verboo. Feche variáveis de credencial herdadas do terminal e tente `verboo /login` novamente.',
+    )
+  }
   process.stdout.write('\n✓ Autenticação concluída.\n\n')
 
   saveGlobalConfig(current =>
@@ -334,7 +339,13 @@ export async function ensureVerbooAuthenticated(
       : { ...current, hasCompletedOnboarding: true },
   )
 
+  // In a transient `/api/me` outage, the freshly returned OAuth token can
+  // still be valid for inference. The model check below is the authoritative
+  // router check and must finish before we mark the session as validated.
+  await loadAndCheckModels(
+    confirmedSession.kind === 'ok'
+      ? confirmedSession.tokens.accessToken
+      : tokens.accessToken,
+  )
   validated = true
-
-  await loadAndCheckModels(tokens.accessToken)
 }

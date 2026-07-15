@@ -527,6 +527,48 @@ test('Verboo router refreshes a rejected access token and retries once', async (
   expect(authorizations).toEqual(['Bearer expired-token', 'Bearer fresh-token'])
 })
 
+test('Verboo router ignores inherited OpenAI custom authentication settings', async () => {
+  process.env.OPENAI_AUTH_HEADER = 'Authorization'
+  process.env.OPENAI_AUTH_HEADER_VALUE = 'stale-parent-shell-token'
+  process.env.OPENAI_AUTH_SCHEME = 'raw'
+  let authorization = ''
+
+  globalThis.fetch = (async (_input, init) => {
+    authorization = new Headers(init?.headers).get('authorization') ?? ''
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-verboo-auth',
+        model: 'verboo-default',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    providerOverride: {
+      model: 'verboo-default',
+      baseURL: VERBOO_ROUTER_URL,
+      apiKey: 'fresh-verboo-oauth-token',
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'ignored-by-provider-override',
+    messages: [{ role: 'user', content: 'hello' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(authorization).toBe('Bearer fresh-verboo-oauth-token')
+})
+
 test('non-Verboo providers do not retry a 401 through the Verboo refresh hook', async () => {
   let refreshCalls = 0
   let fetchCalls = 0

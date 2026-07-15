@@ -30,7 +30,7 @@ export function clearMarketplaceCache(): void {
 }
 
 export async function fetchMarketplaceGroups(
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<MarketplaceGroup[]> {
   if (!opts.force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.groups
@@ -40,6 +40,7 @@ export async function fetchMarketplaceGroups(
   try {
     const response = await axios.get<{ data: MarketplaceGroup[] }>(endpoint, {
       timeout: 10_000,
+      signal: opts.signal,
     })
     const groups = response.data?.data ?? []
     cache = { fetchedAt: Date.now(), groups }
@@ -48,10 +49,20 @@ export async function fetchMarketplaceGroups(
     )
     return groups
   } catch (error) {
+    // Cancelamentos vêm da UI (Esc durante o loading) e não são uma falha
+    // operacional a ser mostrada ou convertida em "sem planos".
+    if (opts.signal?.aborted || axios.isCancel(error)) {
+      throw error
+    }
     logError(error as Error)
     const msg = `[Marketplace] Erro ao buscar planos: ${(error as Error).message ?? String(error)}`
     logForDebugging(msg)
     process.stderr.write(msg + '\n')
-    return cache?.groups ?? []
+    // Só aproveita cache que realmente permite seguir no fluxo. Um cache vazio
+    // não pode mascarar uma indisponibilidade temporária como falta de planos.
+    if (cache && cache.groups.length > 0) {
+      return cache.groups
+    }
+    throw error
   }
 }

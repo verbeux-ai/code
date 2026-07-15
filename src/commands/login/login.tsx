@@ -6,6 +6,7 @@ import { isVerbooMode } from '../../constants/oauth.js'
 import {
   checkVerbooModels,
   getNoVerbooModelsMessage,
+  getVerbooModelsUnavailableMessage,
   markVerbooSessionValidated,
   preflightVerbooLogin,
 } from '../../services/oauth/verbooStartupAuth.js'
@@ -46,6 +47,10 @@ type LoginCompletion =
       type: 'ready'
       refreshed: boolean
     }
+  | {
+      type: 'unavailable'
+      reason: string
+    }
 
 export async function call(
   onDone: LocalJSXCommandOnDone,
@@ -64,6 +69,13 @@ export async function call(
           return
         }
 
+        if (result.type === 'unavailable') {
+          onDone(getVerbooModelsUnavailableMessage(result.reason), {
+            display: 'system',
+          })
+          return
+        }
+
         const authChanged = result.type !== 'ready' || result.refreshed
 
         if (!authChanged) {
@@ -71,13 +83,19 @@ export async function call(
             markVerbooSessionValidated()
             const storedTokens = await getClaudeAIOAuthTokensAsync()
             if (storedTokens?.accessToken) {
-              const models = await checkVerbooModels(storedTokens.accessToken)
-              const [firstModel] = models
+              const modelsResult = await checkVerbooModels(storedTokens.accessToken)
+              const [firstModel] = modelsResult.models
               if (firstModel) {
                 context.setAppState(prev => ({
                   ...prev,
                   mainLoopModelOverride: firstModel.id,
                 }))
+              }
+              if (modelsResult.kind === 'unavailable') {
+                onDone(getVerbooModelsUnavailableMessage(modelsResult.reason), {
+                  display: 'system',
+                })
+                return
               }
             }
           }
@@ -130,12 +148,19 @@ export async function call(
 
           const storedTokens = await getClaudeAIOAuthTokensAsync()
           if (storedTokens?.accessToken) {
-            const models = await checkVerbooModels(storedTokens.accessToken)
-            if (models.length === 0) {
+            const modelsResult = await checkVerbooModels(storedTokens.accessToken)
+            if (modelsResult.kind === 'unavailable') {
+              onDone(
+                `Login concluído. ${getVerbooModelsUnavailableMessage(modelsResult.reason)}`,
+                { display: 'system' },
+              )
+              return
+            }
+            if (modelsResult.kind === 'empty') {
               onDone(getNoVerbooModelsMessage().trim(), { display: 'system' })
               return
             }
-            const [firstModel] = models
+            const [firstModel] = modelsResult.models
             context.setAppState(prev => ({
               ...prev,
               mainLoopModelOverride: firstModel.id,
@@ -170,6 +195,13 @@ export function Login(props: {
           )
           return
         }
+        if (result.kind === 'degraded') {
+          props.onDone(
+            { type: 'unavailable', reason: result.reason },
+            mainLoopModel,
+          )
+          return
+        }
         setPreflightDone(true)
       })
       .catch(() => {
@@ -191,8 +223,15 @@ export function Login(props: {
         markVerbooSessionValidated()
         const storedTokens = await getClaudeAIOAuthTokensAsync()
         if (storedTokens?.accessToken) {
-          const models = await checkVerbooModels(storedTokens.accessToken)
-          if (models.length === 0) {
+          const modelsResult = await checkVerbooModels(storedTokens.accessToken)
+          if (modelsResult.kind === 'unavailable') {
+            props.onDone(
+              { type: 'unavailable', reason: modelsResult.reason },
+              mainLoopModel,
+            )
+            return
+          }
+          if (modelsResult.kind === 'empty') {
             setPostLoginToken(storedTokens.accessToken)
             return
           }
@@ -207,8 +246,15 @@ export function Login(props: {
   const handlePurchaseDone = React.useCallback(
     async (success: boolean) => {
       if (success && postLoginToken) {
-        const models = await checkVerbooModels(postLoginToken)
-        if (models.length > 0) {
+        const modelsResult = await checkVerbooModels(postLoginToken)
+        if (modelsResult.kind === 'unavailable') {
+          props.onDone(
+            { type: 'unavailable', reason: modelsResult.reason },
+            mainLoopModel,
+          )
+          return
+        }
+        if (modelsResult.kind === 'available') {
           props.onDone({ type: 'ready', refreshed: true }, mainLoopModel)
           return
         }

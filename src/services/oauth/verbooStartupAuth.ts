@@ -38,6 +38,11 @@ export type VerbooLoginPreflightResult =
   | { kind: 'needs-oauth'; reason: 'unauthenticated' | 'no-models' }
   | { kind: 'degraded'; reason: string }
 
+export type VerbooModelsCheckResult =
+  | { kind: 'available'; models: VerbooModel[] }
+  | { kind: 'empty'; models: [] }
+  | { kind: 'unavailable'; reason: string; models: [] }
+
 let validated = false
 
 export function isVerbooSessionValidated(): boolean {
@@ -158,18 +163,35 @@ export type EnsureAuthOpts = {
 
 export async function checkVerbooModels(
   accessToken: string,
-): Promise<VerbooModel[]> {
-  return fetchVerbooModels(accessToken, { force: true }).catch(err => {
-    process.stderr.write(
-      `[Verboo] Falha ao carregar modelos: ${(err as Error).message ?? String(err)}\n`,
-    )
-    return []
-  })
+): Promise<VerbooModelsCheckResult> {
+  try {
+    const models = await fetchVerbooModels(accessToken, { force: true })
+    if (models.length > 0) {
+      return { kind: 'available', models }
+    }
+    return { kind: 'empty', models: [] }
+  } catch (err) {
+    return {
+      kind: 'unavailable',
+      reason: errorMessage(err),
+      models: [],
+    }
+  }
+}
+
+export function getVerbooModelsUnavailableMessage(reason: string): string {
+  return (
+    `Não foi possível verificar os modelos do Verboo: ${reason}.\n` +
+    'Sua sessão local foi preservada. Tente novamente em alguns instantes.'
+  )
 }
 
 async function loadAndCheckModels(accessToken: string): Promise<void> {
-  const models = await checkVerbooModels(accessToken)
-  if (models.length > 0) return
+  const result = await checkVerbooModels(accessToken)
+  if (result.kind === 'available') return
+  if (result.kind === 'unavailable') {
+    throw new Error(getVerbooModelsUnavailableMessage(result.reason))
+  }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
       'Nenhum modelo disponível nesta conta. Execute `verboo /login` em um terminal interativo para escolher um plano.',
@@ -179,7 +201,10 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
   if (ok) {
     // Re-check models after purchase flow
     const refreshed = await checkVerbooModels(accessToken)
-    if (refreshed.length > 0) return
+    if (refreshed.kind === 'available') return
+    if (refreshed.kind === 'unavailable') {
+      throw new Error(getVerbooModelsUnavailableMessage(refreshed.reason))
+    }
   }
   process.stdout.write(
     '\n  Para trocar de conta, execute: verboo logout\n\n',
@@ -226,14 +251,17 @@ export async function preflightVerbooLogin(): Promise<VerbooLoginPreflightResult
   }
 
   const models = await checkVerbooModels(session.tokens.accessToken)
-  if (models.length === 0) {
+  if (models.kind === 'unavailable') {
+    return { kind: 'degraded', reason: models.reason }
+  }
+  if (models.kind === 'empty') {
     return { kind: 'needs-oauth', reason: 'no-models' }
   }
 
   return {
     kind: 'ready',
     tokens: session.tokens,
-    models,
+    models: models.models,
     refreshed: session.refreshed,
   }
 }
@@ -254,8 +282,8 @@ export async function ensureVerbooAuthenticated(
   const session = await validateVerbooSession()
 
   if (session.kind === 'ok') {
-    validated = true
     await loadAndCheckModels(session.tokens.accessToken)
+    validated = true
     await showPastDueNotice(session.tokens.accessToken)
     return
   }
@@ -264,11 +292,11 @@ export async function ensureVerbooAuthenticated(
     const degradedMsg = `[Verboo] Sessão degradada: ${session.reason}. Continuando com token armazenado.`
     logForDebugging(degradedMsg)
     process.stderr.write(degradedMsg + '\n')
-    validated = true
     // Tenta atualizar o cache de modelos mesmo em modo degradado.
     const stored = await getClaudeAIOAuthTokensAsync()
     if (stored?.accessToken) {
       await loadAndCheckModels(stored.accessToken)
+      validated = true
     }
     return
   }

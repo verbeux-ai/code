@@ -149,8 +149,13 @@ export async function fetchVerbooModels(
       const msg = `[Verboo] Erro ao buscar modelos de ${endpoint}: ${(error as Error).message ?? String(error)}`
       logForDebugging(msg)
       process.stderr.write(msg + '\n')
-      // Em caso de falha, devolve cache stale se houver, ou lista vazia.
-      return cache?.models ?? []
+      // Um cache com modelos ainda permite que uma sessão em andamento continue.
+      // Nunca converta uma falha de rede em uma lista vazia: no startup isso era
+      // interpretado como "conta sem modelos" e abria o fluxo de compra.
+      if (cache && cache.models.length > 0) {
+        return cache.models
+      }
+      throw error
     } finally {
       inflight = null
     }

@@ -83,3 +83,13 @@ test('does not advertise reasoning when the router response is incomplete', asyn
 
   expect(getVerbooModelReasoning('verboo/no-reasoning')).toBeUndefined()
 })
+
+test('surfaces a model lookup failure instead of treating it as no models', async () => {
+  axios.get = mock(async () => {
+    throw new Error('timeout of 10000ms exceeded')
+  }) as typeof axios.get
+
+  await expect(fetchVerbooModels('access-token', { force: true })).rejects.toThrow(
+    'timeout of 10000ms exceeded',
+  )
+})

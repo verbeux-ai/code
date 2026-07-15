@@ -6,6 +6,7 @@ import { Spinner } from '../../components/Spinner.js'
 import TextInput from '../../components/TextInput.js'
 import { Box, render, Text, useInput } from '../../ink.js'
 import { openBrowser } from '../../utils/browser.js'
+import { errorMessage } from '../../utils/errors.js'
 import { fetchVerbooModels } from '../api/verbooModels.js'
 import {
   createCheckoutSession,
@@ -14,7 +15,6 @@ import {
   type WooviCheckoutData,
 } from '../api/verbooCheckout.js'
 import {
-  clearMarketplaceCache,
   fetchMarketplaceGroups,
   type MarketplaceGroup,
 } from '../api/verbooMarketplace.js'
@@ -304,17 +304,51 @@ export function PurchaseFlowView({
     qrCode: string
     subscriptionId: string
   } | null>(null)
+  const plansRequestRef = React.useRef<AbortController | null>(null)
+
+  const cancelPlansLoading = useCallback(() => {
+    plansRequestRef.current?.abort()
+    plansRequestRef.current = null
+    setStep('splash')
+  }, [])
+
+  React.useEffect(
+    () => () => {
+      plansRequestRef.current?.abort()
+    },
+    [],
+  )
 
   const fetchPlans = useCallback(async () => {
+    plansRequestRef.current?.abort()
+    const controller = new AbortController()
+    plansRequestRef.current = controller
+    setErrorMsg(null)
     setStep('loading-plans')
-    clearMarketplaceCache()
-    const groups = await fetchMarketplaceGroups({ force: true })
-    if (groups.length === 0) {
-      setStep('splash')
-    } else {
+    try {
+      const groups = await fetchMarketplaceGroups({
+        force: true,
+        signal: controller.signal,
+      })
+      if (plansRequestRef.current !== controller) return
+      if (groups.length === 0) {
+        setErrorMsg('Nenhum plano está disponível no momento. Tente novamente mais tarde.')
+        setStep('error')
+        return
+      }
       setPlans(groups)
       setFocusIndex(0)
       setStep('plans')
+    } catch (error) {
+      if (controller.signal.aborted || plansRequestRef.current !== controller) {
+        return
+      }
+      setErrorMsg(`Não foi possível carregar os planos: ${errorMessage(error)}`)
+      setStep('error')
+    } finally {
+      if (plansRequestRef.current === controller) {
+        plansRequestRef.current = null
+      }
     }
   }, [])
 
@@ -329,8 +363,12 @@ export function PurchaseFlowView({
           setTimeout(() => onDone(true), 1_500)
           return
         }
-      } catch {
-        // O checkout Stripe pode estar aguardando ação no navegador.
+      } catch (error) {
+        setErrorMsg(
+          `Não foi possível verificar a liberação dos modelos: ${errorMessage(error)}`,
+        )
+        setStep('error')
+        return
       }
     }
     setErrorMsg('O pagamento ainda não foi confirmado. Verifique o checkout e tente novamente.')
@@ -384,18 +422,29 @@ export function PurchaseFlowView({
   }
 
   const handleWooviConfirmed = useCallback(async () => {
-    const models = await fetchVerbooModels(accessToken, { force: true })
-    if (models.length === 0) {
-      setErrorMsg('Pagamento confirmado, mas os modelos ainda não foram liberados. Aguarde alguns segundos e execute o Verboo novamente.')
+    try {
+      const models = await fetchVerbooModels(accessToken, { force: true })
+      if (models.length === 0) {
+        setErrorMsg('Pagamento confirmado, mas os modelos ainda não foram liberados. Aguarde alguns segundos e execute o Verboo novamente.')
+        setStep('error')
+        return
+      }
+      setStep('success')
+      setTimeout(() => onDone(true), 1_500)
+    } catch (error) {
+      setErrorMsg(
+        `Pagamento confirmado, mas não foi possível verificar os modelos: ${errorMessage(error)}`,
+      )
       setStep('error')
-      return
     }
-    setStep('success')
-    setTimeout(() => onDone(true), 1_500)
   }, [accessToken, onDone])
 
   useInput(
     (_input, key) => {
+      if (step === 'loading-plans') {
+        if (key.escape) cancelPlansLoading()
+        return
+      }
       if (step !== 'plans' || plans.length === 0) return
       if (key.leftArrow) setFocusIndex(index => Math.max(0, index - 1))
       else if (key.rightArrow) setFocusIndex(index => Math.min(plans.length - 1, index + 1))
@@ -409,7 +458,7 @@ export function PurchaseFlowView({
         }
       } else if (key.escape) setStep('splash')
     },
-    { isActive: step === 'plans' },
+    { isActive: step === 'plans' || step === 'loading-plans' },
   )
 
   switch (step) {
@@ -435,6 +484,7 @@ export function PurchaseFlowView({
         <Box flexDirection="column" gap={1}>
           <Text>Buscando planos disponíveis…</Text>
           <Spinner />
+          <Text dimColor>Esc para cancelar</Text>
         </Box>
       )
 
@@ -581,7 +631,7 @@ export function PurchaseFlowView({
           <Text color="red">Erro: {errorMsg}</Text>
           <Select
             options={[
-              { label: 'Ver planos', value: 'retry' },
+              { label: 'Tentar novamente', value: 'retry' },
               { label: 'Fechar', value: 'fechar' },
             ]}
             onChange={(value: string) => {

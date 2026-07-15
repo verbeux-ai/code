@@ -13,6 +13,7 @@ import { fetchAndStoreClaudeCodeFirstTokenDate } from '../../services/api/firstT
 import {
   checkVerbooModels,
   getNoVerbooModelsMessage,
+  getVerbooModelsUnavailableMessage,
   installVerbooOAuthTokens,
   preflightVerbooLogin,
 } from '../../services/oauth/verbooStartupAuth.js'
@@ -267,6 +268,12 @@ export async function authLogin({
         )
         process.exit(0)
       }
+      if (preflight.kind === 'degraded') {
+        process.stderr.write(
+          getVerbooModelsUnavailableMessage(preflight.reason) + '\n',
+        )
+        process.exit(1)
+      }
     }
 
     const result = await runOAuthLoginFlow({
@@ -279,7 +286,13 @@ export async function authLogin({
     if (isVerbooMode()) {
       await installVerbooOAuthTokens(result)
       const models = await checkVerbooModels(result.accessToken)
-      if (models.length === 0) {
+      if (models.kind === 'unavailable') {
+        process.stderr.write(
+          getVerbooModelsUnavailableMessage(models.reason) + '\n',
+        )
+        process.exit(1)
+      }
+      if (models.kind === 'empty') {
         const ok = await showNoModelsFlow(result.accessToken)
         if (!ok) process.exit(1)
       }

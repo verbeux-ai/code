@@ -1615,7 +1615,7 @@ export const KnownMarketplaceSchema = lazySchema(() =>
       .boolean()
       .optional()
       .describe(
-        'Whether to automatically update this marketplace and its installed plugins on startup',
+        'Whether to automatically refresh this marketplace on startup',
       ),
   }),
 )

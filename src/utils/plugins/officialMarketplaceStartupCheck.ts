@@ -22,6 +22,7 @@ import {
   addMarketplaceSource,
   getMarketplacesCacheDir,
   loadKnownMarketplacesConfig,
+  refreshMarketplace,
   saveKnownMarketplacesConfig,
 } from './marketplaceManager.js'
 import {
@@ -136,6 +137,30 @@ type NativeMarketplaceAutoInstallState = {
   nextRetryTime?: number
 }
 
+// The marketplace notification hook and the background updater can both run
+// during startup. Coalesce their automatic setup work so a first launch does
+// not fetch the native manifest twice or race while writing its config.
+let verbooMarketplaceAutoInstallPromise:
+  Promise<OfficialMarketplaceCheckResult> | undefined
+
+/**
+ * Native marketplaces default to auto-update in the schema, but persisting
+ * that default for Verboo makes the state durable and visible to every CLI
+ * path (including non-interactive `plugin install`). An explicit false is a
+ * user opt-out and must never be overwritten here.
+ */
+async function persistVerbooMarketplaceAutoUpdateDefault(): Promise<void> {
+  const knownMarketplaces = await loadKnownMarketplacesConfig()
+  const entry = knownMarketplaces[VERBOO_MARKETPLACE_NAME]
+  if (!entry || entry.autoUpdate !== undefined) return
+
+  knownMarketplaces[VERBOO_MARKETPLACE_NAME] = {
+    ...entry,
+    autoUpdate: true,
+  }
+  await saveKnownMarketplacesConfig(knownMarketplaces)
+}
+
 function shouldRetryNativeMarketplaceInstallation(
   state: NativeMarketplaceAutoInstallState | undefined,
 ): boolean {
@@ -167,7 +192,28 @@ function saveNativeMarketplaceAutoInstallState(
  * fetched from the canonical Verboo endpoint and retry state is independent
  * from the legacy Anthropic marketplace setup state.
  */
-export async function checkAndInstallVerbooMarketplace(): Promise<OfficialMarketplaceCheckResult> {
+export function checkAndInstallVerbooMarketplace(): Promise<OfficialMarketplaceCheckResult> {
+  if (!verbooMarketplaceAutoInstallPromise) {
+    const promise = checkAndInstallVerbooMarketplaceImpl()
+    verbooMarketplaceAutoInstallPromise = promise
+    void promise.then(
+      () => {
+        if (verbooMarketplaceAutoInstallPromise === promise) {
+          verbooMarketplaceAutoInstallPromise = undefined
+        }
+      },
+      () => {
+        if (verbooMarketplaceAutoInstallPromise === promise) {
+          verbooMarketplaceAutoInstallPromise = undefined
+        }
+      },
+    )
+  }
+
+  return verbooMarketplaceAutoInstallPromise
+}
+
+async function checkAndInstallVerbooMarketplaceImpl(): Promise<OfficialMarketplaceCheckResult> {
   const config = getGlobalConfig()
   const state = config.nativeMarketplaceAutoInstall?.[
     VERBOO_MARKETPLACE_NAME
@@ -176,6 +222,7 @@ export async function checkAndInstallVerbooMarketplace(): Promise<OfficialMarket
   try {
     const knownMarketplaces = await loadKnownMarketplacesConfig()
     if (knownMarketplaces[VERBOO_MARKETPLACE_NAME]) {
+      await persistVerbooMarketplaceAutoUpdateDefault()
       saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
         attempted: true,
         installed: true,
@@ -215,6 +262,7 @@ export async function checkAndInstallVerbooMarketplace(): Promise<OfficialMarket
 
     logForDebugging('Attempting to auto-install Verboo marketplace')
     await addMarketplaceSource(VERBOO_MARKETPLACE_SOURCE)
+    await persistVerbooMarketplaceAutoUpdateDefault()
     saveNativeMarketplaceAutoInstallState(VERBOO_MARKETPLACE_NAME, {
       attempted: true,
       installed: true,
@@ -265,6 +313,30 @@ export async function checkAndInstallVerbooMarketplace(): Promise<OfficialMarket
       configSaveFailed,
     }
   }
+}
+
+/**
+ * Prepare the Verboo marketplace for an explicit plugin install.
+ *
+ * Automatic setup honours the retry state and the auto-install kill switch.
+ * An explicit `verboo plugin install foo@verboo-plugins` is a user-requested
+ * action, so it retries a missing marketplace immediately, while preserving
+ * all source-policy and seed-managed protections in marketplaceManager.
+ *
+ * The manifest is refreshed synchronously. This prevents the CLI command
+ * from resolving a plugin against an old cached manifest and then exiting
+ * before the background updater has a chance to run.
+ */
+export async function prepareVerbooMarketplaceForExplicitInstall(): Promise<void> {
+  await checkAndInstallVerbooMarketplace()
+
+  const knownMarketplaces = await loadKnownMarketplacesConfig()
+  if (!knownMarketplaces[VERBOO_MARKETPLACE_NAME]) {
+    await addMarketplaceSource(VERBOO_MARKETPLACE_SOURCE)
+  }
+
+  await persistVerbooMarketplaceAutoUpdateDefault()
+  await refreshMarketplace(VERBOO_MARKETPLACE_NAME)
 }
 
 export type NativeMarketplaceCheckResults = {

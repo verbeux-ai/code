@@ -2577,8 +2577,8 @@ export async function refreshMarketplace(
 /**
  * Set the autoUpdate flag for a marketplace
  *
- * When autoUpdate is enabled, the marketplace and its installed plugins
- * will be automatically updated on startup.
+ * When autoUpdate is enabled, the marketplace will be automatically
+ * refreshed on startup.
  *
  * @param name - The name of the marketplace to update
  * @param autoUpdate - Whether to enable auto-update

@@ -15,7 +15,7 @@ import { dirname, join } from 'path'
 import { getOriginalCwd } from '../../bootstrap/state.js'
 import { isBuiltinPluginId } from '../../plugins/builtinPlugins.js'
 import type { LoadedPlugin, PluginManifest } from '../../types/plugin.js'
-import { isENOENT, toError } from '../../utils/errors.js'
+import { errorMessage, isENOENT, toError } from '../../utils/errors.js'
 import { getFsImplementation } from '../../utils/fsOperations.js'
 import { logError } from '../../utils/log.js'
 import {
@@ -37,6 +37,8 @@ import {
   getPluginById,
   loadKnownMarketplacesConfig,
 } from '../../utils/plugins/marketplaceManager.js'
+import { VERBOO_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
+import { prepareVerbooMarketplaceForExplicitInstall } from '../../utils/plugins/officialMarketplaceStartupCheck.js'
 import { deletePluginDataDir } from '../../utils/plugins/pluginDirectories.js'
 import {
   parsePluginIdentifier,
@@ -326,6 +328,22 @@ export async function installPluginOp(
 
   const { name: pluginName, marketplace: marketplaceName } =
     parsePluginIdentifier(plugin)
+
+  // A native Verboo plugin install is an explicit request for the latest
+  // manifest. Unlike the normal background updater, this path must complete
+  // before the CLI resolves the plugin and exits.
+  if (marketplaceName?.toLowerCase() === VERBOO_MARKETPLACE_NAME) {
+    try {
+      await prepareVerbooMarketplaceForExplicitInstall()
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          `Could not refresh Verboo marketplace before installing "${pluginName}": ` +
+          errorMessage(error),
+      }
+    }
+  }
 
   // ── Search materialized marketplaces for the plugin ──
   let foundPlugin: PluginMarketplaceEntry | undefined

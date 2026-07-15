@@ -1,13 +1,12 @@
 /**
- * Background plugin autoupdate functionality
+ * Background marketplace and plugin autoupdate functionality
  *
  * At startup, this module:
- * 1. First updates marketplaces that have autoUpdate enabled
- * 2. Then checks all installed plugins from those marketplaces and updates them
+ * 1. First refreshes marketplaces that have autoUpdate enabled
+ * 2. Then updates installed plugins for eligible marketplaces
  *
- * Updates are non-inplace (disk-only), requiring a restart to take effect.
- * Official Anthropic marketplaces have autoUpdate enabled by default,
- * but users can disable it per-marketplace.
+ * The native Verboo marketplace intentionally refreshes its catalog only:
+ * installed Verboo plugins change only through an explicit plugin action.
  */
 
 import { updatePluginOp } from '../../services/plugins/pluginOperations.js'
@@ -26,6 +25,8 @@ import {
   loadKnownMarketplacesConfig,
   refreshMarketplace,
 } from './marketplaceManager.js'
+import { VERBOO_MARKETPLACE_NAME } from './officialMarketplace.js'
+import { checkAndInstallVerbooMarketplace } from './officialMarketplaceStartupCheck.js'
 import { parsePluginIdentifier } from './pluginIdentifier.js'
 import { isMarketplaceAutoUpdate, type PluginScope } from './schemas.js'
 
@@ -148,7 +149,8 @@ async function updatePlugin(
  *
  * Called by:
  * - updatePlugins() below — background autoupdate path (autoUpdate-enabled
- *   marketplaces only; third-party marketplaces default autoUpdate: false)
+ *   eligible marketplaces only; Verboo refreshes its catalog without changing
+ *   installed plugins)
  * - ManageMarketplaces.tsx applyChanges() — user-initiated /plugin marketplace
  *   update. Before #29512 this path only called refreshMarketplace() (git
  *   pull on the marketplace clone), so the loader would create the new
@@ -161,6 +163,18 @@ async function updatePlugin(
 export async function updatePluginsForMarketplaces(
   marketplaceNames: Set<string>,
 ): Promise<string[]> {
+  // Verboo's native autoupdate keeps the marketplace manifest current; it
+  // must not implicitly bump, reinstall, or otherwise change installed
+  // plugins. This also applies to an explicit "Update marketplace" action.
+  const pluginUpdateMarketplaces = new Set(
+    Array.from(marketplaceNames).filter(
+      name => name.toLowerCase() !== VERBOO_MARKETPLACE_NAME,
+    ),
+  )
+  if (pluginUpdateMarketplaces.size === 0) {
+    return []
+  }
+
   const installedPlugins = loadInstalledPluginsFromDisk()
   const pluginIds = Object.keys(installedPlugins.plugins)
 
@@ -171,7 +185,10 @@ export async function updatePluginsForMarketplaces(
   const results = await Promise.allSettled(
     pluginIds.map(async pluginId => {
       const { marketplace } = parsePluginIdentifier(pluginId)
-      if (!marketplace || !marketplaceNames.has(marketplace.toLowerCase())) {
+      if (
+        !marketplace ||
+        !pluginUpdateMarketplaces.has(marketplace.toLowerCase())
+      ) {
         return null
       }
 
@@ -200,7 +217,9 @@ export async function updatePluginsForMarketplaces(
 }
 
 /**
- * Update plugins from marketplaces that have autoUpdate enabled.
+ * Update eligible installed plugins from marketplaces that have autoUpdate
+ * enabled. The native Verboo marketplace is deliberately excluded: its
+ * autoupdate refreshes the marketplace catalog only.
  * Returns the list of plugin IDs that were updated.
  */
 async function updatePlugins(
@@ -210,12 +229,13 @@ async function updatePlugins(
 }
 
 /**
- * Auto-update marketplaces and plugins in the background.
+ * Refresh auto-update marketplaces in the background and update eligible
+ * installed plugins.
  *
  * This function:
  * 1. Checks which marketplaces have autoUpdate enabled
  * 2. Refreshes only those marketplaces (git pull/re-download)
- * 3. Updates installed plugins from those marketplaces
+ * 3. Updates installed plugins from eligible marketplaces (not Verboo)
  * 4. If any plugins were updated, notifies via the registered callback
  *
  * Official Anthropic marketplaces have autoUpdate enabled by default,
@@ -232,6 +252,22 @@ export function autoUpdateMarketplacesAndPluginsInBackground(): void {
     }
 
     try {
+      // The REPL notification hook also installs native marketplaces, but it
+      // mounts after this background job can start. Prepare Verboo first so a
+      // fresh installation participates in this very startup's update cycle.
+      // checkAndInstallVerbooMarketplace is single-flight, so both callers
+      // safely share the same initial fetch.
+      let verbooInstalledThisRun = false
+      try {
+        const result = await checkAndInstallVerbooMarketplace()
+        verbooInstalledThisRun = result.installed
+      } catch (error) {
+        logForDebugging(
+          `Plugin autoupdate: failed to prepare Verboo marketplace: ${errorMessage(error)}`,
+          { level: 'warn' },
+        )
+      }
+
       // Get marketplaces with autoUpdate enabled
       const autoUpdateEnabledMarketplaces =
         await getAutoUpdateEnabledMarketplaces()
@@ -242,18 +278,29 @@ export function autoUpdateMarketplacesAndPluginsInBackground(): void {
 
       // Refresh only marketplaces with autoUpdate enabled
       const refreshResults = await Promise.allSettled(
-        Array.from(autoUpdateEnabledMarketplaces).map(async name => {
-          try {
-            await refreshMarketplace(name, undefined, {
-              disableCredentialHelper: true,
-            })
-          } catch (error) {
-            logForDebugging(
-              `Plugin autoupdate: failed to refresh marketplace ${name}: ${errorMessage(error)}`,
-              { level: 'warn' },
-            )
-          }
-        }),
+        Array.from(autoUpdateEnabledMarketplaces)
+          // A just-added URL marketplace was fetched while materializing it.
+          // Avoid an immediate second request. Eligible non-Verboo plugin
+          // version updates still run below against their refreshed manifests.
+          .filter(
+            name =>
+              !(
+                verbooInstalledThisRun &&
+                name.toLowerCase() === VERBOO_MARKETPLACE_NAME
+              ),
+          )
+          .map(async name => {
+            try {
+              await refreshMarketplace(name, undefined, {
+                disableCredentialHelper: true,
+              })
+            } catch (error) {
+              logForDebugging(
+                `Plugin autoupdate: failed to refresh marketplace ${name}: ${errorMessage(error)}`,
+                { level: 'warn' },
+              )
+            }
+          }),
       )
 
       // Log any refresh failures
@@ -265,7 +312,9 @@ export function autoUpdateMarketplacesAndPluginsInBackground(): void {
         )
       }
 
-      logForDebugging('Plugin autoupdate: checking installed plugins')
+      logForDebugging(
+        'Plugin autoupdate: checking eligible installed plugins',
+      )
       const updatedPlugins = await updatePlugins(autoUpdateEnabledMarketplaces)
 
       if (updatedPlugins.length > 0) {

@@ -240,7 +240,8 @@ export function ManageMarketplaces({
       }
 
       // After marketplace clones are refreshed, bump installed plugins from
-      // those marketplaces to the new version. Without this, the loader's
+      // eligible marketplaces to the new version. Verboo's native marketplace
+      // intentionally refreshes its catalog only. Without this, the loader's
       // cache-on-miss (copyPluginToVersionedCache) creates the new version
       // dir on the next loadAllPlugins() call, but installed_plugins.json
       // stays on the old version — so cleanupOrphanedPluginVersionsInBackground
@@ -665,8 +666,7 @@ export function ManageMarketplaces({
         {/* Show explanatory text at the bottom when auto-update is enabled */}
         {!isUpdating && !shouldSkipPluginAutoupdate() && selectedMarketplace.autoUpdate && <Box marginTop={1}>
               <Text dimColor>
-                Auto-update enabled. Claude Code will automatically update this
-                marketplace and its installed plugins.
+                {selectedMarketplace.name === VERBOO_MARKETPLACE_NAME ? 'Auto-update enabled. Verboo Code will automatically update this marketplace.' : 'Auto-update enabled. Verboo Code will automatically update this marketplace and its installed plugins.'}
               </Text>
             </Box>}
 

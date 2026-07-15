@@ -8,6 +8,7 @@ import {
 } from '../../constants/oauth.js'
 import { clearVerbooModelsCache, fetchVerbooModels, type VerbooModel } from '../api/verbooModels.js'
 import {
+  checkAndRefreshOAuthTokenIfNeeded,
   clearOAuthTokenCache,
   getClaudeAIOAuthTokensAsync,
   getOauthAccountInfo,
@@ -106,6 +107,13 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
   if (!isVerbooMode()) {
     return { kind: 'degraded', reason: 'not in verboo mode' }
   }
+
+  // The startup flow used to validate the access token first and only then
+  // attempt a refresh. That leaves every user with an expired access token
+  // exposed to a transient /api/me failure, after which /v1/models receives
+  // the same stale token. Refresh proactively (the helper is lock-safe across
+  // concurrent CLI processes) before making either authenticated request.
+  await checkAndRefreshOAuthTokenIfNeeded()
 
   const tokens = await getClaudeAIOAuthTokensAsync()
   if (!tokens?.accessToken) {
@@ -289,15 +297,25 @@ export async function ensureVerbooAuthenticated(
   }
 
   if (session.kind === 'degraded') {
-    const degradedMsg = `[Verboo] Sessão degradada: ${session.reason}. Continuando com token armazenado.`
-    logForDebugging(degradedMsg)
-    process.stderr.write(degradedMsg + '\n')
-    // Tenta atualizar o cache de modelos mesmo em modo degradado.
+    // A temporary /api/me or router failure must not turn into a startup error
+    // for an otherwise valid local session. Keep the diagnostic in the debug
+    // log, but never surface it to the user or open the purchase flow.
+    logForDebugging(
+      `[VerbooStartup] Sessão degradada: ${session.reason}. Preservando sessão local.`,
+    )
+
+    // Best effort only: warm the cache if the router is reachable, but do not
+    // block the CLI or report a transient verification failure to the user.
     const stored = await getClaudeAIOAuthTokensAsync()
     if (stored?.accessToken) {
-      await loadAndCheckModels(stored.accessToken)
-      validated = true
+      const models = await checkVerbooModels(stored.accessToken)
+      if (models.kind === 'unavailable') {
+        logForDebugging(
+          `[VerbooStartup] Modelos indisponíveis durante sessão degradada: ${models.reason}`,
+        )
+      }
     }
+    validated = true
     return
   }
 

@@ -74,3 +74,18 @@ test('maps tool_call_incompatible category markers to model/tool guidance', () =
   expect(text).toContain('rejected tool-calling payloads')
   expect(text).toContain('/model')
 })
+
+test('maps Verboo terms-required markers to the acceptance command', () => {
+  const error = APIError.generate(
+    428,
+    undefined,
+    'OpenAI API error 428: terms_acceptance_required [openai_category=terms_required,host=code.verboo.ai]',
+    new Headers(),
+  )
+
+  const message = getAssistantMessageFromError(error, 'verboo-model')
+  const text = getFirstText(message)
+
+  expect(text).toContain('Termos de Uso')
+  expect(text).toContain('/terms')
+})

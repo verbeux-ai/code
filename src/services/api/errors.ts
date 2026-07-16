@@ -125,6 +125,14 @@ function mapOpenAICompatibilityFailureToAssistantMessage(options: {
       })
     }
 
+    case 'terms_required':
+      return createAssistantAPIErrorMessage({
+        content: getIsNonInteractiveSession()
+          ? 'É necessário aceitar os Termos de Uso. Execute `verboo` em um terminal interativo e use `/terms`; o modo headless nunca aceita automaticamente.'
+          : 'É necessário aceitar os Termos de Uso para continuar. Execute /terms.',
+        error: 'invalid_request',
+      })
+
     case 'rate_limited':
       return createAssistantAPIErrorMessage({
         content: `${API_ERROR_MESSAGE_PREFIX}: Provider rate limit reached. Retry in a few seconds.`,

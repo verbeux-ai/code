@@ -18,6 +18,7 @@ export type MarketplaceGroup = {
   memberCount?: number
   subscriberLimit?: number | null
   trialDays?: number | null
+  trialPaymentMethodRequired?: boolean
   maxTokensPerSec?: number | null
   paymentProvider: 'stripe' | 'woovi' | 'both'
 }

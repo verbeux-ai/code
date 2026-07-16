@@ -1,5 +1,11 @@
 import { toString as qrToString } from 'qrcode'
 import React, { useCallback, useState } from 'react'
+import {
+  getCountries,
+  getCountryCallingCode,
+  parsePhoneNumberFromString,
+  type CountryCode,
+} from 'libphonenumber-js'
 
 import { Select } from '../../components/CustomSelect/select.js'
 import { Spinner } from '../../components/Spinner.js'
@@ -10,8 +16,15 @@ import { errorMessage } from '../../utils/errors.js'
 import { fetchVerbooModels } from '../api/verbooModels.js'
 import {
   createCheckoutSession,
+  confirmCardlessTrial,
+  getWhatsAppProfile,
+  isGroupSubscriptionActive,
   isWooviSubscriptionActive,
+  resendCardlessTrialCode,
+  startCardlessTrial,
+  type CardlessTrialResult,
   type PaymentMethod,
+  type WhatsAppProfile,
   type WooviCheckoutData,
 } from '../api/verbooCheckout.js'
 import {
@@ -71,8 +84,9 @@ function getSlotsInfo(group: MarketplaceGroup): string {
   return `${current} assinantes`
 }
 
-function paymentProviderLabel(provider: MarketplaceGroup['paymentProvider']): string {
-  switch (provider) {
+function paymentProviderLabel(group: MarketplaceGroup): string {
+  if (supportsCardlessTrial(group)) return 'Trial via WhatsApp'
+  switch (group.paymentProvider) {
     case 'woovi':
       return 'Pix Automático'
     case 'both':
@@ -80,6 +94,147 @@ function paymentProviderLabel(provider: MarketplaceGroup['paymentProvider']): st
     default:
       return 'Cartão'
   }
+}
+
+function supportsCardlessTrial(group: MarketplaceGroup): boolean {
+  return Boolean(
+    group.trialDays && group.trialDays > 0 &&
+    group.trialPaymentMethodRequired === false &&
+    group.paymentProvider !== 'woovi',
+  )
+}
+
+type CardlessPhoneFormProps = {
+  initialCountry?: string
+  onCancel: () => void
+  onSubmit: (phone: string, country: CountryCode) => void
+}
+
+function CardlessPhoneForm({ initialCountry, onCancel, onSubmit }: CardlessPhoneFormProps): React.ReactNode {
+  const initial = getCountries().includes(initialCountry as CountryCode) ? initialCountry as CountryCode : 'BR'
+  const [country, setCountry] = useState<CountryCode>(initial)
+  const [choosingCountry, setChoosingCountry] = useState(true)
+  const [phone, setPhone] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [cursorOffset, setCursorOffset] = useState(0)
+  const names = React.useMemo(() => new Intl.DisplayNames(['pt-BR'], { type: 'region' }), [])
+  const countries = React.useMemo(
+    () => getCountries()
+      .map(value => ({
+        value,
+        label: `${names.of(value) ?? value} (+${getCountryCallingCode(value)})`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+    [names],
+  )
+
+  if (choosingCountry) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>País do WhatsApp</Text>
+        <Select
+          options={countries}
+          defaultFocusValue={country}
+          visibleOptionCount={8}
+          onCancel={onCancel}
+          onChange={(value: CountryCode) => {
+            setCountry(value)
+            setChoosingCountry(false)
+          }}
+        />
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Confirme seu WhatsApp para iniciar o trial sem cartão</Text>
+      <Text dimColor>{names.of(country)} (+{getCountryCallingCode(country)})</Text>
+      <TextInput
+        value={phone}
+        cursorOffset={cursorOffset}
+        onChangeCursorOffset={setCursorOffset}
+        onChange={value => { setPhone(value); setError(null) }}
+        onSubmit={value => {
+          const parsed = parsePhoneNumberFromString(value, country)
+          if (!parsed?.isValid()) {
+            setError('Informe um número de WhatsApp válido.')
+            return
+          }
+          onSubmit(parsed.number, country)
+        }}
+        onExit={() => setChoosingCountry(true)}
+        columns={INPUT_COLUMNS}
+        placeholder="Número com DDD"
+        focus
+        showCursor
+        multiline={false}
+      />
+      {error ? <Text color="red">{error}</Text> : null}
+      <Text dimColor>Enter para enviar o código · Esc para trocar o país</Text>
+    </Box>
+  )
+}
+
+type CardlessCodeFormProps = {
+  verification: CardlessTrialResult
+  onConfirm: (code: string) => void
+  onResend: () => void
+}
+
+function CardlessCodeForm({ verification, onConfirm, onResend }: CardlessCodeFormProps): React.ReactNode {
+  const [code, setCode] = useState('')
+  const [actions, setActions] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [cursorOffset, setCursorOffset] = useState(0)
+
+  if (actions) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Opções da verificação</Text>
+        <Select
+          options={[
+            { label: 'Digitar o código', value: 'code' },
+            { label: 'Reenviar código', value: 'resend' },
+          ]}
+          onCancel={() => setActions(false)}
+          onChange={(value: string) => {
+            if (value === 'resend') onResend()
+            else setActions(false)
+          }}
+        />
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Código de verificação</Text>
+      <Text dimColor>Enviamos 6 dígitos para {verification.maskedPhone ?? 'seu WhatsApp'}.</Text>
+      <TextInput
+        value={code}
+        cursorOffset={cursorOffset}
+        onChangeCursorOffset={setCursorOffset}
+        onChange={value => { setCode(onlyDigits(value).slice(0, 6)); setError(null) }}
+        onSubmit={value => {
+          const normalized = onlyDigits(value)
+          if (normalized.length !== 6) {
+            setError('Digite os 6 dígitos do código.')
+            return
+          }
+          onConfirm(normalized)
+        }}
+        onExit={() => setActions(true)}
+        columns={INPUT_COLUMNS}
+        placeholder="123456"
+        focus
+        showCursor
+        multiline={false}
+      />
+      {error ? <Text color="red">{error}</Text> : null}
+      <Text dimColor>Enter para confirmar · Esc para reenviar ou usar cartão</Text>
+    </Box>
+  )
 }
 
 type WooviPayerFormProps = {
@@ -92,6 +247,8 @@ function WooviPayerForm({ onCancel, onSubmit }: WooviPayerFormProps): React.Reac
   const [cpf, setCPF] = useState('')
   const [phone, setPhone] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [cpfCursorOffset, setCPFCursorOffset] = useState(0)
+  const [phoneCursorOffset, setPhoneCursorOffset] = useState(0)
 
   const submitCPF = (value: string) => {
     const formatted = formatCPF(value)
@@ -126,6 +283,8 @@ function WooviPayerForm({ onCancel, onSubmit }: WooviPayerFormProps): React.Reac
           <Text>CPF</Text>
           <TextInput
             value={cpf}
+            cursorOffset={cpfCursorOffset}
+            onChangeCursorOffset={setCPFCursorOffset}
             onChange={value => {
               setError(null)
               setCPF(formatCPF(value))
@@ -144,6 +303,8 @@ function WooviPayerForm({ onCancel, onSubmit }: WooviPayerFormProps): React.Reac
           <Text>Celular com DDD</Text>
           <TextInput
             value={phone}
+            cursorOffset={phoneCursorOffset}
+            onChangeCursorOffset={setPhoneCursorOffset}
             onChange={value => {
               setError(null)
               setPhone(formatPhone(value))
@@ -282,6 +443,11 @@ type Step =
   | 'plan-detail'
   | 'payment-method'
   | 'woovi-form'
+  | 'whatsapp-choice'
+  | 'whatsapp-phone'
+  | 'whatsapp-code'
+  | 'cardless-activating'
+  | 'cardless-polling'
   | 'checkout'
   | 'polling'
   | 'woovi-qr'
@@ -304,6 +470,8 @@ export function PurchaseFlowView({
     qrCode: string
     subscriptionId: string
   } | null>(null)
+  const [whatsappProfile, setWhatsAppProfile] = useState<WhatsAppProfile | null>(null)
+  const [cardlessVerification, setCardlessVerification] = useState<CardlessTrialResult | null>(null)
   const plansRequestRef = React.useRef<AbortController | null>(null)
 
   const cancelPlansLoading = useCallback(() => {
@@ -375,6 +543,99 @@ export function PurchaseFlowView({
     setStep('error')
   }, [accessToken, onDone])
 
+  const startCardlessPolling = useCallback(async (groupId: string) => {
+    const startTime = Date.now()
+    setStep('cardless-polling')
+    while (Date.now() - startTime < POLL_TIMEOUT_MS) {
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+      try {
+        if (!(await isGroupSubscriptionActive(accessToken, groupId))) continue
+        const models = await fetchVerbooModels(accessToken, { force: true })
+        if (models.length > 0) {
+          setStep('success')
+          setTimeout(() => onDone(true), 1_500)
+          return
+        }
+      } catch {
+        // Stripe e o router são atualizados por webhook; continua até o timeout.
+      }
+    }
+    setErrorMsg('O trial foi ativado, mas os modelos ainda não foram liberados. Execute o Verboo novamente em instantes.')
+    setStep('error')
+  }, [accessToken, onDone])
+
+  const prepareCardlessTrial = useCallback(async (group: MarketplaceGroup) => {
+    setSelectedPlan(group)
+    setErrorMsg(null)
+    setStep('cardless-activating')
+    try {
+      const profile = await getWhatsAppProfile(accessToken)
+      setWhatsAppProfile(profile)
+    } catch {
+      // O usuário ainda pode informar um número novo.
+      setWhatsAppProfile(null)
+    }
+    setStep('whatsapp-choice')
+  }, [accessToken])
+
+  const handleCardlessStart = useCallback(async (
+    group: MarketplaceGroup,
+    useVerifiedPhone: boolean,
+    phone?: string,
+    countryCode?: CountryCode,
+  ) => {
+    setErrorMsg(null)
+    setStep('cardless-activating')
+    try {
+      const result = await startCardlessTrial(accessToken, group.id, {
+        useVerifiedPhone,
+        phone,
+        countryCode,
+      })
+      if (result.mode === 'verification_required') {
+        setCardlessVerification(result)
+        setStep('whatsapp-code')
+      } else {
+        void startCardlessPolling(group.id)
+      }
+    } catch (error) {
+      setErrorMsg(`Não foi possível iniciar sem cartão: ${errorMessage(error)}`)
+      setStep('whatsapp-choice')
+    }
+  }, [accessToken, startCardlessPolling])
+
+  const handleCardlessConfirm = useCallback(async (group: MarketplaceGroup, code: string) => {
+    if (!cardlessVerification?.verificationId) return
+    setErrorMsg(null)
+    setStep('cardless-activating')
+    try {
+      const result = await confirmCardlessTrial(accessToken, cardlessVerification.verificationId, code)
+      if (result.mode === 'trial_activated') {
+        void startCardlessPolling(group.id)
+      } else {
+        setCardlessVerification(result)
+        setStep('whatsapp-code')
+      }
+    } catch (error) {
+      setErrorMsg(`Não foi possível confirmar o código: ${errorMessage(error)}`)
+      setStep('whatsapp-code')
+    }
+  }, [accessToken, cardlessVerification, startCardlessPolling])
+
+  const handleCardlessResend = useCallback(async () => {
+    if (!cardlessVerification?.verificationId) return
+    setErrorMsg(null)
+    setStep('cardless-activating')
+    try {
+      const result = await resendCardlessTrialCode(accessToken, cardlessVerification.verificationId)
+      setCardlessVerification(result)
+      setStep('whatsapp-code')
+    } catch (error) {
+      setErrorMsg(`Não foi possível reenviar o código: ${errorMessage(error)}`)
+      setStep('whatsapp-code')
+    }
+  }, [accessToken, cardlessVerification])
+
   const handleCheckout = useCallback(
     async (
       group: MarketplaceGroup,
@@ -412,7 +673,9 @@ export function PurchaseFlowView({
   )
 
   const startPlanCheckout = (group: MarketplaceGroup) => {
-    if (group.paymentProvider === 'both') {
+    if (supportsCardlessTrial(group)) {
+      void prepareCardlessTrial(group)
+    } else if (group.paymentProvider === 'both') {
       setStep('payment-method')
     } else if (group.paymentProvider === 'woovi') {
       setStep('woovi-form')
@@ -519,9 +782,11 @@ export function PurchaseFlowView({
                       <Text>{formatPrice(plan.priceCents, plan.currency)}{formatInterval(plan.billingInterval)}</Text>
                       <Text dimColor wrap="truncate" title={getModelNames(plan)}>{getModelNames(plan)}</Text>
                       <Text dimColor>{getSlotsInfo(plan)}</Text>
-                      <Text dimColor>{paymentProviderLabel(plan.paymentProvider)}</Text>
+                      <Text dimColor>{paymentProviderLabel(plan)}</Text>
                       {plan.trialDays && plan.trialDays > 0 && plan.paymentProvider !== 'woovi' ? (
-                        <Text color="success">{plan.trialDays} dias de trial</Text>
+                        <Text color="success">
+                          {plan.trialDays} dias de trial{plan.trialPaymentMethodRequired === false ? ' · sem cartão' : ''}
+                        </Text>
                       ) : null}
                     </Box>
                   )
@@ -547,9 +812,11 @@ export function PurchaseFlowView({
             <Text>{formatPrice(plan.priceCents, plan.currency)}{formatInterval(plan.billingInterval)}</Text>
             <Text dimColor>Modelos: {getModelNames(plan)}</Text>
             <Text dimColor>Assinantes: {getSlotsInfo(plan)}</Text>
-            <Text dimColor>Pagamento: {paymentProviderLabel(plan.paymentProvider)}</Text>
+            <Text dimColor>Pagamento: {paymentProviderLabel(plan)}</Text>
             {plan.trialDays && plan.trialDays > 0 && plan.paymentProvider !== 'woovi' ? (
-              <Text color="success">Trial: {plan.trialDays} dias</Text>
+              <Text color="success">
+                Trial: {plan.trialDays} dias{plan.trialPaymentMethodRequired === false ? ' · sem cartão' : ''}
+              </Text>
             ) : null}
           </Box>
           <Select
@@ -595,6 +862,77 @@ export function PurchaseFlowView({
         />
       )
 
+    case 'whatsapp-choice': {
+      const plan = selectedPlan!
+      const options = [
+        ...(whatsappProfile?.verified
+          ? [{
+              label: `Usar WhatsApp verificado (${whatsappProfile.maskedPhone ?? 'número salvo'})`,
+              value: 'verified',
+              description: 'Ativa sem enviar um novo código',
+            }]
+          : []),
+        { label: 'Verificar um número de WhatsApp', value: 'new', description: 'Receba um código de 6 dígitos' },
+        { label: 'Voltar', value: 'back' },
+      ]
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Trial de {plan.trialDays} dias sem cartão</Text>
+          <Text dimColor>
+            A assinatura será criada na Stripe e cancelada no fim do trial se você não adicionar um cartão.
+          </Text>
+          {errorMsg ? <Text color="red">{errorMsg}</Text> : null}
+          <Select
+            options={options}
+            onChange={(value: string) => {
+              if (value === 'verified') void handleCardlessStart(plan, true)
+              else if (value === 'new') setStep('whatsapp-phone')
+              else setStep('plan-detail')
+            }}
+          />
+        </Box>
+      )
+    }
+
+    case 'whatsapp-phone':
+      return (
+        <CardlessPhoneForm
+          initialCountry={whatsappProfile?.countryCode}
+          onCancel={() => setStep('whatsapp-choice')}
+          onSubmit={(phone, country) => {
+            if (selectedPlan) void handleCardlessStart(selectedPlan, false, phone, country)
+          }}
+        />
+      )
+
+    case 'whatsapp-code':
+      return cardlessVerification && selectedPlan ? (
+        <Box flexDirection="column" gap={1}>
+          {errorMsg ? <Text color="red">{errorMsg}</Text> : null}
+          <CardlessCodeForm
+            verification={cardlessVerification}
+            onConfirm={code => void handleCardlessConfirm(selectedPlan, code)}
+            onResend={() => void handleCardlessResend()}
+          />
+        </Box>
+      ) : null
+
+    case 'cardless-activating':
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text>Preparando o trial sem cartão…</Text>
+          <Spinner />
+        </Box>
+      )
+
+    case 'cardless-polling':
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text>Trial ativado. Aguardando a liberação dos modelos…</Text>
+          <Spinner />
+        </Box>
+      )
+
     case 'checkout':
       return (
         <Box flexDirection="column" gap={1}>
@@ -623,7 +961,7 @@ export function PurchaseFlowView({
       ) : null
 
     case 'success':
-      return <Text color="success">Pagamento confirmado! Modelos disponíveis.</Text>
+      return <Text color="success">Assinatura confirmada! Modelos disponíveis.</Text>
 
     case 'error':
       return (

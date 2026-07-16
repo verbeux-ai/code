@@ -27,6 +27,9 @@ export const COMMON_EXTERNALS: string[] = [
   // Orama search engine
   '@orama/orama',
   '@orama/plugin-data-persistence',
+  // International phone metadata is sizeable and ships as a normal runtime
+  // dependency; keep it outside both bundles.
+  'libphonenumber-js',
   // VERBOO-BRAND: telemetry stack (kept external — see no-telemetry-plugin.ts)
   '@growthbook/growthbook',
   '@opentelemetry/api',

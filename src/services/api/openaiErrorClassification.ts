@@ -4,6 +4,7 @@ export type OpenAICompatibilityFailureCategory =
   | 'request_timeout'
   | 'network_error'
   | 'auth_invalid'
+  | 'terms_required'
   | 'rate_limited'
   | 'model_not_found'
   | 'endpoint_not_found'
@@ -35,6 +36,7 @@ const OPENAI_COMPATIBILITY_FAILURE_CATEGORIES: ReadonlySet<OpenAICompatibilityFa
     'request_timeout',
     'network_error',
     'auth_invalid',
+    'terms_required',
     'rate_limited',
     'model_not_found',
     'endpoint_not_found',
@@ -288,6 +290,20 @@ export function classifyOpenAIHttpFailure(options: {
       hint: isExpiredOAuthToken
         ? 'OAuth token expired. Re-authenticate with /onboard-github (GitHub Models) or /login (Codex / Claude) and try again.'
         : 'Authentication failed. Verify API key, token source, and endpoint-specific auth headers.',
+    }
+  }
+
+  if (
+    options.status === 428 &&
+    (body.includes('terms_acceptance_required') || body.includes('acceptUrl'))
+  ) {
+    return {
+      source: 'http',
+      category: 'terms_required',
+      retryable: false,
+      status: options.status,
+      message: body,
+      hint: 'The current Terms of Use require explicit acceptance before product access.',
     }
   }
 

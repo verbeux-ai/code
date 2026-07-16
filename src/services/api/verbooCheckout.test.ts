@@ -2,8 +2,11 @@ import { afterEach, expect, mock, test } from 'bun:test'
 import axios from 'axios'
 
 import {
+  confirmCardlessTrial,
   createCheckoutSession,
+  getWhatsAppProfile,
   isWooviSubscriptionActive,
+  startCardlessTrial,
 } from './verbooCheckout.js'
 
 const originalPost = axios.post
@@ -66,4 +69,49 @@ test('confirms only the Woovi subscription that became active', async () => {
     data: { data: [{ wooviSubscriptionId: 'expected', status: 'active' }] },
   })
   await expect(isWooviSubscriptionActive('access-token', 'expected')).resolves.toBe(true)
+})
+
+test('starts a cardless trial with an international WhatsApp number', async () => {
+  const post = mock(async () => ({
+    data: { data: { mode: 'verification_required', verificationId: 'verification-id', maskedPhone: '+55 ••••••1234' } },
+  }))
+  axios.post = post as typeof axios.post
+
+  await expect(startCardlessTrial('access-token', 'group-id', {
+    useVerifiedPhone: false,
+    phone: '+5585999991234',
+    countryCode: 'BR',
+  })).resolves.toEqual({
+    mode: 'verification_required',
+    verificationId: 'verification-id',
+    maskedPhone: '+55 ••••••1234',
+  })
+
+  expect(post).toHaveBeenCalledWith(
+    'https://code.verboo.ai/api/me/groups/group-id/cardless-trial',
+    {
+      useVerifiedPhone: false,
+      phone: '+5585999991234',
+      countryCode: 'BR',
+    },
+    expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
+  )
+})
+
+test('loads a verified profile and confirms its six-digit code', async () => {
+  const get = mock(async () => ({ data: { data: { verified: true, maskedPhone: '+55 ••••••1234', countryCode: 'BR' } } }))
+  const post = mock(async () => ({ data: { data: { mode: 'trial_activated', groupId: 'group-id', status: 'trialing' } } }))
+  axios.get = get as typeof axios.get
+  axios.post = post as typeof axios.post
+
+  await expect(getWhatsAppProfile('access-token')).resolves.toMatchObject({ verified: true, countryCode: 'BR' })
+  await expect(confirmCardlessTrial('access-token', 'verification-id', '123456')).resolves.toMatchObject({
+    mode: 'trial_activated',
+    status: 'trialing',
+  })
+  expect(post).toHaveBeenCalledWith(
+    'https://code.verboo.ai/api/me/cardless-trial-verifications/verification-id/confirm',
+    { code: '123456' },
+    expect.anything(),
+  )
 })

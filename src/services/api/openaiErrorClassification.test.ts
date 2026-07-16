@@ -93,6 +93,20 @@ test('401 without expired-token signal keeps the generic API-key hint', () => {
   expect(failure.hint).not.toContain('/onboard-github')
 })
 
+test('classifies mandatory Terms of Use separately from generic failures', () => {
+  const failure = classifyOpenAIHttpFailure({
+    status: 428,
+    body: JSON.stringify({
+      error: 'terms_acceptance_required',
+      version: 3,
+      acceptUrl: 'https://code.verboo.ai/pt/terms/accept?version=3',
+    }),
+  })
+
+  expect(failure.category).toBe('terms_required')
+  expect(failure.retryable).toBe(false)
+})
+
 test('classifies tool compatibility failures', () => {
   const failure = classifyOpenAIHttpFailure({
     status: 400,

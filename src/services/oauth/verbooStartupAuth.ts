@@ -23,6 +23,13 @@ import { refreshOAuthToken, storeOAuthAccountInfo } from './client.js'
 import type { OAuthTokens } from './types.js'
 import { showNoModelsFlow } from './purchaseFlow.js'
 import { showPastDueNotice } from './pastDueFlow.js'
+import { showVerbooTermsAcceptance } from '../../components/VerbooTermsAcceptance.js'
+import {
+  fetchVerbooTermsStatus,
+  formatTermsDeadline,
+  getHeadlessTermsRequiredMessage,
+  getPublicTermsURL,
+} from './verbooTerms.js'
 
 export type VerbooSessionResult =
   | { kind: 'ok'; tokens: OAuthTokens; refreshed: boolean }
@@ -221,6 +228,54 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
   process.exit(1)
 }
 
+async function ensureVerbooTermsAccepted(accessToken: string): Promise<void> {
+  const result = await fetchVerbooTermsStatus(accessToken)
+  if (result.kind === 'unauthorized') {
+    throw new Error(
+      'Sua sessão expirou durante a verificação dos Termos de Uso. Execute `verboo /login` e tente novamente.',
+    )
+  }
+  if (result.kind === 'unavailable') {
+    throw new Error(
+      `Não foi possível verificar o aceite dos Termos de Uso: ${result.reason}. ` +
+        'Por segurança, o acesso não será liberado sem essa verificação.',
+    )
+  }
+
+  const { status } = result
+  if (!status.configured) return
+  if (!status.current) {
+    throw new Error(
+      'O servidor informou que existem Termos de Uso, mas não retornou a versão vigente.',
+    )
+  }
+
+  if (status.mustAccept) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error(getHeadlessTermsRequiredMessage(status))
+    }
+    const acceptance = await showVerbooTermsAcceptance(accessToken, status)
+    if (acceptance.kind !== 'accepted') {
+      throw new Error(
+        'Os Termos de Uso não foram aceitos. O acesso ao produto permanece bloqueado.',
+      )
+    }
+    process.stdout.write(
+      `\n✓ Termos de Uso versão ${status.current.version} aceitos e registrados pelo servidor.\n\n`,
+    )
+    return
+  }
+
+  if (status.pendingReacceptance) {
+    const deadline = formatTermsDeadline(status.current.enforcementAt)
+    process.stderr.write(
+      `\n⚠ Os Termos de Uso versão ${status.current.version} foram atualizados.` +
+        `${deadline ? ` O aceite será obrigatório em ${deadline} (horário de Fortaleza).` : ''}` +
+        `\nLeia em ${getPublicTermsURL(status)} e execute /terms para aceitar.\n\n`,
+    )
+  }
+}
+
 export function getNoVerbooModelsMessage(): string {
   return (
     '\nNenhum modelo disponivel na sua conta.\n' +
@@ -258,6 +313,20 @@ export async function preflightVerbooLogin(): Promise<VerbooLoginPreflightResult
     return { kind: 'degraded', reason: session.reason }
   }
 
+  const terms = await fetchVerbooTermsStatus(session.tokens.accessToken)
+  if (terms.kind === 'unauthorized') {
+    return { kind: 'needs-oauth', reason: 'unauthenticated' }
+  }
+  if (terms.kind === 'unavailable') {
+    return { kind: 'degraded', reason: `verificação dos termos: ${terms.reason}` }
+  }
+  if (terms.status.mustAccept) {
+    return {
+      kind: 'degraded',
+      reason: `${getHeadlessTermsRequiredMessage(terms.status)} Execute /terms para aceitar diretamente no CLI.`,
+    }
+  }
+
   const models = await checkVerbooModels(session.tokens.accessToken)
   if (models.kind === 'unavailable') {
     return { kind: 'degraded', reason: models.reason }
@@ -290,6 +359,7 @@ export async function ensureVerbooAuthenticated(
   const session = await validateVerbooSession()
 
   if (session.kind === 'ok') {
+    await ensureVerbooTermsAccepted(session.tokens.accessToken)
     await loadAndCheckModels(session.tokens.accessToken)
     validated = true
     await showPastDueNotice(session.tokens.accessToken)
@@ -297,24 +367,16 @@ export async function ensureVerbooAuthenticated(
   }
 
   if (session.kind === 'degraded') {
-    // A temporary /api/me or router failure must not turn into a startup error
-    // for an otherwise valid local session. Keep the diagnostic in the debug
-    // log, but never surface it to the user or open the purchase flow.
     logForDebugging(
-      `[VerbooStartup] Sessão degradada: ${session.reason}. Preservando sessão local.`,
+      `[VerbooStartup] Sessão degradada: ${session.reason}. Validando termos e roteador antes de liberar.`,
     )
 
-    // Best effort only: warm the cache if the router is reachable, but do not
-    // block the CLI or report a transient verification failure to the user.
     const stored = await getClaudeAIOAuthTokensAsync()
-    if (stored?.accessToken) {
-      const models = await checkVerbooModels(stored.accessToken)
-      if (models.kind === 'unavailable') {
-        logForDebugging(
-          `[VerbooStartup] Modelos indisponíveis durante sessão degradada: ${models.reason}`,
-        )
-      }
+    if (!stored?.accessToken) {
+      throw new Error('Não foi possível validar a sessão local do Verboo.')
     }
+    await ensureVerbooTermsAccepted(stored.accessToken)
+    await loadAndCheckModels(stored.accessToken)
     validated = true
     return
   }
@@ -358,12 +420,13 @@ export async function ensureVerbooAuthenticated(
   )
 
   // In a transient `/api/me` outage, the freshly returned OAuth token can
-  // still be valid for inference. The model check below is the authoritative
-  // router check and must finish before we mark the session as validated.
-  await loadAndCheckModels(
+  // still be valid, but terms and the router must both confirm access before
+  // we mark the session as validated.
+  const accessToken =
     confirmedSession.kind === 'ok'
       ? confirmedSession.tokens.accessToken
-      : tokens.accessToken,
-  )
+      : tokens.accessToken
+  await ensureVerbooTermsAccepted(accessToken)
+  await loadAndCheckModels(accessToken)
   validated = true
 }

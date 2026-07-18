@@ -56,6 +56,14 @@ import { buildAnthropicUsageFromRawUsage } from './cacheMetrics.js'
 import { compressToolHistory } from './compressToolHistory.js'
 import { fetchWithProxyRetry } from './fetchWithProxyRetry.js'
 import {
+  delegateImagesInMessages,
+  isVisionDelegationEnabled,
+  messagesContainImages,
+  modelSupportsVision,
+  pickVisionModel,
+  stripResidualImageParts,
+} from './visionDelegate.js'
+import {
   getLocalFastPathConfig,
   getLocalProviderRetryBaseUrls,
   getGithubEndpointType,
@@ -1708,6 +1716,93 @@ class OpenAIShimMessages {
     this.suppressReasoningEffort = suppressReasoningEffort
   }
 
+  /**
+   * Pre-pass for models without vision: replace every image block with a
+   * text analysis produced by a vision-capable router model (one nested,
+   * non-streaming create per unique image group; results are cached).
+   * No-op when delegation is disabled, a provider override is active (local
+   * backends route every model id to the override), the target model has
+   * vision, or there are no images.
+   */
+  private async _maybeDelegateVision(
+    messages: Array<{
+      role: string
+      message?: { role?: string; content?: unknown }
+      content?: unknown
+    }>,
+    resolvedModel: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<
+    Array<{
+      role: string
+      message?: { role?: string; content?: unknown }
+      content?: unknown
+    }>
+  > {
+    if (!isVisionDelegationEnabled()) return messages
+    // Only the Verboo router path can reach the vision-capable router
+    // models — skip for external providers (per-agent local backends, etc.)
+    // and let the belt-and-suspenders strip protect the request.
+    const routerOverride = this.providerOverride
+    if (!routerOverride || !isVerbooRouterUrl(routerOverride.baseURL)) {
+      return messages
+    }
+    // modelSupportsVision returns undefined when the model is not in the
+    // catalog — keep images inline until the catalog is fetched.
+    if (modelSupportsVision(resolvedModel) !== false) return messages
+    if (!messagesContainImages(messages)) return messages
+
+    const visionModel = pickVisionModel()
+    if (!visionModel) {
+      return delegateImagesInMessages(messages, undefined, undefined)
+    }
+
+    const self = new OpenAIShimMessages(this.defaultHeaders, undefined, {
+      ...routerOverride,
+      model: visionModel,
+    })
+    return delegateImagesInMessages(
+      messages,
+      visionModel,
+      async ({ model, images, prompt }) => {
+        const result = await (self.create(
+              {
+                model,
+                max_tokens: 2048,
+                stream: false,
+                messages: [
+                  {
+                    role: 'user',
+                    content: [{ type: 'text', text: prompt }, ...images],
+                  },
+                ],
+              } as ShimCreateParams,
+              { signal: options?.signal },
+            ) as Promise<{ content?: Array<{ type?: string; text?: string }> }>)
+            const text = Array.isArray(result?.content)
+              ? result.content
+                  .filter(block => block?.type === 'text')
+                  .map(block => block.text ?? '')
+                  .join('\n')
+                  .trim()
+              : ''
+            if (!text) {
+              throw new Error(
+                `vision model ${model} returned an empty analysis`,
+              )
+            }
+            return text
+          }
+        : undefined,
+    ) as Promise<
+      Array<{
+        role: string
+        message?: { role?: string; content?: unknown }
+        content?: unknown
+      }>
+    >
+  }
+
   create(
     params: ShimCreateParams,
     options?: { signal?: AbortSignal; headers?: Record<string, string> },
@@ -1921,6 +2016,29 @@ class OpenAIShimMessages {
     const compressedMessages = fastPath.skipToolHistoryCompression
       ? rawMessages
       : compressToolHistory(rawMessages, request.resolvedModel)
+
+    // Vision delegation: if the target model cannot see images, analyze them
+    // once with a vision-capable router model and substitute the text — an
+    // image block sent to a blind model 400s every request from then on
+    // (history is resent each turn). Covers every source: pasted images,
+    // FileRead of images, MCP tool results (browser screenshots), agents.
+    const visionSafeMessages = await this._maybeDelegateVision(
+      compressedMessages,
+      request.resolvedModel,
+      options,
+    )
+    // The `responses` transport serializes from the raw (uncompressed)
+    // messages — delegate those too when that transport is active. The
+    // analysis cache makes the second pass free for already-seen images.
+    const visionSafeRawMessages =
+      request.transport === 'responses'
+        ? await this._maybeDelegateVision(
+            rawMessages,
+            request.resolvedModel,
+            options,
+          )
+        : rawMessages
+
     const runtimeShimContext = resolveOpenAIShimRuntimeContext({
       processEnv: process.env,
       baseUrl: request.baseUrl,
@@ -1928,14 +2046,26 @@ class OpenAIShimMessages {
       treatAsLocal: isLocalProviderUrl(request.baseUrl),
     })
     const shimConfig = runtimeShimContext.openaiShimConfig
-    const openaiMessages = convertMessages(compressedMessages, params.system, {
+    const openaiMessages = convertMessages(visionSafeMessages, params.system, {
       preserveReasoningContent: shimConfig.preserveReasoningContent,
       reasoningContentFallback: shimConfig.reasoningContentFallback,
     })
 
+    // Belt-and-suspenders: if the target model has NO vision, strip any
+    // image_url that might have survived the delegation pre-pass (a sign
+    // that some code path escaped the rewrite). Only on the Verboo router
+    // path — a non-Verboo provider with a coincidental model id must not
+    // be affected.
+    const shouldStrip =
+      isVerbooRouterUrl(request.baseUrl) &&
+      modelSupportsVision(request.resolvedModel) === false
+    const { messages: strippedMessages } = shouldStrip
+      ? stripResidualImageParts(openaiMessages)
+      : { messages: openaiMessages }
+
     const body: Record<string, unknown> = {
       model: request.resolvedModel,
-      messages: openaiMessages,
+      messages: strippedMessages,
       stream: params.stream ?? false,
       store: false,
     }
@@ -2072,7 +2202,7 @@ class OpenAIShimMessages {
       const responsesBody: Record<string, unknown> = {
         model: request.resolvedModel,
         input: convertAnthropicMessagesToResponsesInput(
-          params.messages as Array<{
+          visionSafeRawMessages as Array<{
             role?: string
             message?: { role?: string; content?: unknown }
             content?: unknown

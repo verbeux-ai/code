@@ -18,6 +18,7 @@ import {
   maybeResizeAndDownsampleImageBuffer,
 } from './imageResizer.js'
 import { logError } from './log.js'
+import { getPlatform } from './platform.js'
 
 // Native NSPasteboard reader. GrowthBook gate tengu_collage_kaleidoscope is
 // a kill switch (default on). Falls through to osascript when off.
@@ -25,6 +26,38 @@ import { logError } from './log.js'
 // — module-scope helpers are NOT tree-shaken (see docs/feature-gating.md).
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32'
+// WSL is process.platform === 'linux' but the clipboard lives on the Windows
+// side, so it gets its own command set (powershell.exe interop).
+type EffectivePlatform = SupportedPlatform | 'wsl'
+
+/**
+ * PowerShell binary reachable from WSL. Prefer PATH (`powershell.exe` works
+ * when Windows interop is enabled), fall back to the canonical System32 path.
+ */
+export function getWslPowershellBin(): string {
+  const canonical =
+    '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+  try {
+    if (getFsImplementation().existsSync(canonical)) {
+      return canonical
+    }
+  } catch {
+    // fall through to PATH lookup
+  }
+  return 'powershell.exe'
+}
+
+/**
+ * Convert a Windows path (C:\Users\... or C:/Users/...) to its WSL mount
+ * (/mnt/c/Users/...). Non-Windows paths are returned unchanged.
+ */
+export function windowsPathToWsl(path: string): string {
+  const match = path.match(/^([A-Za-z]):[\\/](.*)$/)
+  if (!match) {
+    return path
+  }
+  return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/\\/g, '/')}`
+}
 
 // Threshold in characters for when to consider text a "large paste"
 export const PASTE_THRESHOLD = 800
@@ -53,8 +86,10 @@ export function buildLinuxClipboardSaveCommand(screenshotPath: string): string {
   ]).join(' || ')
 }
 
-function getClipboardCommands() {
-  const platform = process.platform as SupportedPlatform
+export function getClipboardCommands(platformOverride?: EffectivePlatform) {
+  const platform: EffectivePlatform =
+    platformOverride ??
+    (getPlatform() === 'wsl' ? 'wsl' : (process.platform as SupportedPlatform))
 
   // Platform-specific temporary file paths
   // Use CLAUDE_CODE_TMPDIR if set, otherwise fall back to platform defaults
@@ -62,17 +97,32 @@ function getClipboardCommands() {
     process.env.CLAUDE_CODE_TMPDIR ||
     (platform === 'win32' ? process.env.TEMP || 'C:\\Temp' : '/tmp')
   const screenshotFilename = 'claude_cli_latest_screenshot.png'
-  const tempPaths: Record<SupportedPlatform, string> = {
+  const tempPaths: Record<EffectivePlatform, string> = {
     darwin: join(baseTmpDir, screenshotFilename),
     linux: join(baseTmpDir, screenshotFilename),
     win32: join(baseTmpDir, screenshotFilename),
+    // WSL reads the final file from the Linux side; PowerShell writes to the
+    // Windows temp dir first and the save command copies it across.
+    wsl: join(baseTmpDir, screenshotFilename),
   }
 
   const screenshotPath = tempPaths[platform] || tempPaths.linux
 
+  // WSL: the clipboard lives on the Windows side. powershell.exe (default
+  // STA) can read it; the PNG is saved to %TEMP% and copied into the Linux
+  // filesystem via wslpath so the Node side reads the same screenshotPath
+  // as every other platform. Single PS spawn per step keeps paste latency
+  // comparable to the osascript path on macOS.
+  const wslPs = platform === 'wsl' ? getWslPowershellBin() : 'powershell.exe'
+  const wslSaveScript =
+    '$img = Get-Clipboard -Format Image; ' +
+    'if ($img) { $f = Join-Path $env:TEMP "claude_cli_latest_screenshot.png"; ' +
+    '$img.Save($f, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output $f } ' +
+    'else { exit 1 }'
+
   // Platform-specific clipboard commands
   const commands: Record<
-    SupportedPlatform,
+    EffectivePlatform,
     {
       checkImage: string
       saveImage: string
@@ -99,6 +149,12 @@ function getClipboardCommands() {
       saveImage: `powershell -NoProfile -Command "$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${screenshotPath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png) }"`,
       getPath: 'powershell -NoProfile -Command "Get-Clipboard"',
       deleteFile: `del /f "${screenshotPath}"`,
+    },
+    wsl: {
+      checkImage: `${wslPs} -NoProfile -Command 'if ((Get-Clipboard -Format Image) -ne $null) { exit 0 } else { exit 1 }'`,
+      saveImage: `p="$(${wslPs} -NoProfile -Command '${wslSaveScript}' | tr -d '\\r')" && [ -n "$p" ] && cp "$(wslpath -u "$p")" "${screenshotPath}"`,
+      getPath: `${wslPs} -NoProfile -Command 'Get-Clipboard' | tr -d '\\r'`,
+      deleteFile: `rm -f "${screenshotPath}"`,
     },
   }
 
@@ -382,7 +438,16 @@ export async function tryReadImageFromPath(
     return null
   }
 
-  const imagePath = cleanedPath
+  // Under WSL, files dragged from Windows Explorer paste as C:\... paths,
+  // which Node on the Linux side cannot read — remap to /mnt/<drive>/...
+  // stripBackslashEscapes() would destroy C:\Users\... on WSL (it removes
+  // single backslashes), so use the raw trimmed text for the remap.
+  const isWsl = getPlatform() === 'wsl'
+  const rawPath = removeOuterQuotes(text.trim())
+  const imagePath =
+    isWsl && /^[A-Za-z]:[\\/]/.test(rawPath)
+      ? windowsPathToWsl(rawPath)
+      : cleanedPath
   let imageBuffer
 
   try {
@@ -392,7 +457,10 @@ export async function tryReadImageFromPath(
       // VSCode Terminal just grabs the text content which is the filename
       // instead of getting the full path of the file pasted with cmd-v. So
       // we check if it matches the filename of the image in the clipboard.
-      const clipboardPath = await getImagePathFromClipboard()
+      let clipboardPath = await getImagePathFromClipboard()
+      if (clipboardPath && isWsl) {
+        clipboardPath = windowsPathToWsl(clipboardPath)
+      }
       if (clipboardPath && imagePath === basename(clipboardPath)) {
         imageBuffer = getFsImplementation().readFileBytesSync(clipboardPath)
       }

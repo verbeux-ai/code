@@ -16,8 +16,8 @@ test('supports clipboard image fallback on Linux', () => {
   expect(supportsClipboardImageFallback('linux')).toBe(true)
 })
 
-test('does not support clipboard image fallback on WSL', () => {
-  expect(supportsClipboardImageFallback('wsl')).toBe(false)
+test('supports clipboard image fallback on WSL (Windows clipboard via powershell.exe interop)', () => {
+  expect(supportsClipboardImageFallback('wsl')).toBe(true)
 })
 
 test('does not support clipboard image fallback on unknown platforms', () => {

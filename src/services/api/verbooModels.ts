@@ -10,6 +10,7 @@ export type VerbooModel = {
   maxOutputTokens?: number
   displayName?: string
   description?: string
+  vision?: boolean
   reasoning?: VerbooModelReasoning
   raw: Record<string, unknown>
 }
@@ -106,6 +107,7 @@ function normalizeModel(raw: Record<string, unknown>): VerbooModel | null {
     ),
     displayName: pickString(raw, 'display_name', 'displayName', 'label'),
     description: pickString(raw, 'description'),
+    vision: typeof raw.vision === 'boolean' ? raw.vision : undefined,
     reasoning: normalizeReasoning(raw),
     raw,
   }

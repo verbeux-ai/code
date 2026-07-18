@@ -18,8 +18,13 @@ const PASTE_COMPLETION_TIMEOUT_MS = 100
 export function supportsClipboardImageFallback(
   platform: ReturnType<typeof getPlatform>,
 ): boolean {
+  // 'wsl' is included: the Windows clipboard is reachable through
+  // powershell.exe interop (see the wsl command set in utils/imagePaste.ts).
   return (
-    platform === 'macos' || platform === 'windows' || platform === 'linux'
+    platform === 'macos' ||
+    platform === 'windows' ||
+    platform === 'linux' ||
+    platform === 'wsl'
   )
 }
 

@@ -39,6 +39,7 @@ const requiredStatus: VerbooTermsStatus = {
 test('loads the authenticated terms status without accepting anything', async () => {
   axios.get = mock(async (_url, config) => {
     expect(config?.headers?.Authorization).toBe('Bearer access-token')
+    expect(config?.timeout).toBe(10_000)
     return { status: 200, data: { data: requiredStatus } }
   }) as typeof axios.get
 
@@ -46,6 +47,56 @@ test('loads the authenticated terms status without accepting anything', async ()
     kind: 'ok',
     status: requiredStatus,
   })
+})
+
+test('retries a transient terms-status timeout before denying access', async () => {
+  let attempts = 0
+  axios.get = mock(async () => {
+    attempts++
+    if (attempts === 1) {
+      throw Object.assign(new Error('timeout of 10000ms exceeded'), {
+        code: 'ECONNABORTED',
+        isAxiosError: true,
+      })
+    }
+    return { status: 200, data: { data: requiredStatus } }
+  }) as typeof axios.get
+
+  await expect(fetchVerbooTermsStatus('access-token', 'pt')).resolves.toEqual({
+    kind: 'ok',
+    status: requiredStatus,
+  })
+  expect(attempts).toBe(2)
+})
+
+test('retries a transient terms-status server response before denying access', async () => {
+  let attempts = 0
+  axios.get = mock(async () => {
+    attempts++
+    if (attempts === 1) {
+      return { status: 503, data: {} }
+    }
+    return { status: 200, data: { data: requiredStatus } }
+  }) as typeof axios.get
+
+  await expect(fetchVerbooTermsStatus('access-token', 'pt')).resolves.toEqual({
+    kind: 'ok',
+    status: requiredStatus,
+  })
+  expect(attempts).toBe(2)
+})
+
+test('does not retry an expired or forbidden session', async () => {
+  let attempts = 0
+  axios.get = mock(async () => {
+    attempts++
+    return { status: 401, data: {} }
+  }) as typeof axios.get
+
+  await expect(fetchVerbooTermsStatus('access-token', 'pt')).resolves.toEqual({
+    kind: 'unauthorized',
+  })
+  expect(attempts).toBe(1)
 })
 
 test('accepts only through an explicit accepted=true request', async () => {

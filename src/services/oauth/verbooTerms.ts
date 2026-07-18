@@ -44,6 +44,42 @@ export type VerbooTermsStatusResult =
 
 type ApiEnvelope<T> = { data?: T }
 
+// The terms status check is a security gate. It must not fall back to a
+// cached decision, but a single short request was too brittle for users hit
+// by a transient network delay or a cold instance.
+const TERMS_STATUS_TIMEOUT_MS = 10_000
+const TERMS_STATUS_MAX_ATTEMPTS = 2
+const TERMS_STATUS_RETRY_DELAY_MS = 250
+
+function waitForTermsStatusRetry(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, TERMS_STATUS_RETRY_DELAY_MS))
+}
+
+function isTransientTermsStatusTransportError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response) return false
+
+  if (
+    error.code === 'ECONNABORTED' ||
+    error.code === 'ETIMEDOUT' ||
+    error.code === 'ECONNRESET' ||
+    error.code === 'EPIPE' ||
+    error.code === 'ECONNREFUSED' ||
+    error.code === 'EAI_AGAIN' ||
+    error.code === 'ENOTFOUND' ||
+    error.code === 'ERR_NETWORK'
+  ) {
+    return true
+  }
+
+  return /timeout|timed out|network error|socket hang up|connection reset/i.test(
+    error.message,
+  )
+}
+
+function isTransientTermsStatusResponse(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
 function requestHeaders(accessToken: string, locale: VerbooTermsLocale) {
   return {
     Authorization: `Bearer ${accessToken}`,
@@ -62,22 +98,43 @@ export async function fetchVerbooTermsStatus(
   locale: VerbooTermsLocale = getPreferredTermsLocale(),
 ): Promise<VerbooTermsStatusResult> {
   const endpoint = `${getOauthConfig().BASE_API_URL}/api/me/terms/status?locale=${locale}`
-  try {
-    const response = await axios.get<ApiEnvelope<VerbooTermsStatus>>(endpoint, {
-      headers: requestHeaders(accessToken, locale),
-      timeout: 5_000,
-      validateStatus: () => true,
-    })
-    if (response.status === 200 && response.data?.data) {
-      return { kind: 'ok', status: response.data.data }
+  let lastFailure = 'unknown error'
+
+  for (let attempt = 1; attempt <= TERMS_STATUS_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await axios.get<ApiEnvelope<VerbooTermsStatus>>(endpoint, {
+        headers: requestHeaders(accessToken, locale),
+        timeout: TERMS_STATUS_TIMEOUT_MS,
+        validateStatus: () => true,
+      })
+      if (response.status === 200 && response.data?.data) {
+        return { kind: 'ok', status: response.data.data }
+      }
+      if (response.status === 401 || response.status === 403) {
+        return { kind: 'unauthorized' }
+      }
+
+      lastFailure = `HTTP ${response.status}`
+      if (
+        attempt === TERMS_STATUS_MAX_ATTEMPTS ||
+        !isTransientTermsStatusResponse(response.status)
+      ) {
+        return { kind: 'unavailable', reason: lastFailure }
+      }
+    } catch (error) {
+      lastFailure = errorMessage(error)
+      if (
+        attempt === TERMS_STATUS_MAX_ATTEMPTS ||
+        !isTransientTermsStatusTransportError(error)
+      ) {
+        return { kind: 'unavailable', reason: lastFailure }
+      }
     }
-    if (response.status === 401 || response.status === 403) {
-      return { kind: 'unauthorized' }
-    }
-    return { kind: 'unavailable', reason: `HTTP ${response.status}` }
-  } catch (error) {
-    return { kind: 'unavailable', reason: errorMessage(error) }
+
+    await waitForTermsStatusRetry()
   }
+
+  return { kind: 'unavailable', reason: lastFailure }
 }
 
 export async function acceptVerbooTerms(

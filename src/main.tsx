@@ -50,7 +50,7 @@ import { canUserConfigureAdvisor, getInitialAdvisorSetting, isAdvisorEnabled, is
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js';
 import { count, uniq } from './utils/array.js';
 import { installAsciicastRecorder } from './utils/asciicast.js';
-import { getSubscriptionType, isClaudeAISubscriber, prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe, validateForceLoginOrg } from './utils/auth.js';
+import { getClaudeAIOAuthTokensAsync, getSubscriptionType, isClaudeAISubscriber, prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe, validateForceLoginOrg } from './utils/auth.js';
 import { checkHasTrustDialogAccepted, getGlobalConfig, getRemoteControlAtStartup, isAutoUpdaterDisabled, saveGlobalConfig } from './utils/config.js';
 import { seedEarlyInput, stopCapturingEarlyInput } from './utils/earlyInput.js';
 import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
@@ -58,6 +58,7 @@ import { getInitialFastModeSetting, isFastModeEnabled, prefetchFastModeStatus, r
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
 import { createSystemMessage, createUserMessage, removeInterruptedMessage } from './utils/messages.js';
 import { getPlatform } from './utils/platform.js';
+import { fetchVerbooModels } from './services/api/verbooModels.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
 import { getSessionIngressAuthToken } from './utils/sessionIngressAuth.js';
 import { settingsChangeDetector } from './utils/settings/changeDetector.js';
@@ -1011,8 +1012,36 @@ async function run(): Promise<CommanderCommand> {
   // `mcp` and `add` as paths, then choked on --transport as an unknown
   // top-level option. Single-value + collect accumulator means each
   // --plugin-dir takes exactly one arg; repeat the flag for multiple dirs.
-  .option('--plugin-dir <path>', 'Load plugins from a directory for this session only (repeatable: --plugin-dir A --plugin-dir B)', (val: string, prev: string[]) => [...prev, val], [] as string[]).option('--disable-slash-commands', 'Disable all skills', () => true).option('--chrome', 'Enable Verboo in Chrome integration').option('--no-chrome', 'Disable Verboo in Chrome integration').option('--file <specs...>', 'File resources to download at startup. Format: file_id:relative_path (e.g., --file file_abc:doc.txt file_def:img.png)').action(async (prompt, options) => {
+  .option('--plugin-dir <path>', 'Load plugins from a directory for this session only (repeatable: --plugin-dir A --plugin-dir B)', (val: string, prev: string[]) => [...prev, val], [] as string[]).option('--disable-slash-commands', 'Disable all skills', () => true).option('--chrome', 'Enable Verboo in Chrome integration').option('--no-chrome', 'Disable Verboo in Chrome integration').option('--file <specs...>', 'File resources to download at startup. Format: file_id:relative_path (e.g., --file file_abc:doc.txt file_def:img.png)').option('--list-models', 'List available Verboo models and exit').action(async (prompt, options) => {
     profileCheckpoint('action_handler_start');
+
+    // --list-models: fetch and display available Verboo models, then exit
+    if ((options as { listModels?: boolean }).listModels) {
+      try {
+        const tokens = await getClaudeAIOAuthTokensAsync();
+        if (!tokens?.accessToken) {
+          process.stderr.write('Error: Not authenticated. Run `verboo` first to log in.\n');
+          process.exit(1);
+        }
+        const models = await fetchVerbooModels(tokens.accessToken);
+        if (!models || models.length === 0) {
+          process.stdout.write('[]\n');
+          process.exit(0);
+        }
+        const output = models.map(m => ({
+          id: m.id,
+          displayName: m.displayName || null,
+          contextWindow: m.contextWindow || null,
+          maxOutputTokens: m.maxOutputTokens || null,
+          description: m.description || null
+        }));
+        process.stdout.write(JSON.stringify(output, null, 2) + '\n');
+        process.exit(0);
+      } catch (error) {
+        process.stderr.write(`Error: Failed to fetch models — ${(error as Error).message ?? String(error)}\n`);
+        process.exit(1);
+      }
+    }
 
     // --bare = one-switch minimal mode. Sets SIMPLE so all the existing
     // gates fire (CLAUDE.md, skills, hooks inside executeHooks, agent

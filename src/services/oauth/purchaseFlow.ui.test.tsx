@@ -6,7 +6,11 @@ import React from 'react'
 import stripAnsi from 'strip-ansi'
 
 import { render } from '../../ink.js'
-import { PurchaseFlowView, WooviPaymentView } from './purchaseFlow.js'
+import {
+  PurchaseFlowView,
+  StandalonePurchaseFlowView,
+  WooviPaymentView,
+} from './purchaseFlow.js'
 
 const originalGet = axios.get
 
@@ -180,6 +184,111 @@ test('navigates from the standalone selector through the plan grid with arrow ke
     expect(rendered).toContain('Modelos: model-two')
     expect(rendered).toContain('Assinar agora')
     expect(rendered).not.toContain('Testar grátis')
+  } finally {
+    instance.unmount()
+    stdin.end()
+    stdout.end()
+  }
+})
+
+test('renders the Pix payer input inside the standalone provider tree', async () => {
+  axios.get = mock(async (url: string) => {
+    if (url.endsWith('/api/marketplace')) {
+      return {
+        data: {
+          data: [
+            {
+              id: '11111111-1111-4111-8111-111111111111',
+              name: 'Plano Pix',
+              slug: 'plano-pix',
+              priceCents: 1_000,
+              currency: 'brl',
+              billingInterval: 'month',
+              instances: [{ models: [{ modelName: 'model-pix' }] }],
+              memberCount: 0,
+              subscriberLimit: null,
+              trialDays: null,
+              trialPaymentMethodRequired: false,
+              trialEligible: false,
+              paymentProvider: 'woovi',
+              apiOnly: false,
+              isMember: false,
+              isOnWaitlist: false,
+              waitlistEnabled: false,
+              waitlistSubscribersOnly: false,
+            },
+          ],
+        },
+      }
+    }
+    return { data: { data: [] } }
+  }) as typeof axios.get
+
+  let output = ''
+  const stdout = new PassThrough()
+  const stdin = new PassThrough() as PassThrough & {
+    isTTY: boolean
+    setRawMode: (mode: boolean) => void
+    ref: () => void
+    unref: () => void
+  }
+  stdin.isTTY = true
+  stdin.setRawMode = () => {}
+  stdin.ref = () => {}
+  stdin.unref = () => {}
+  ;(stdout as unknown as { columns: number }).columns = 120
+  stdout.on('data', (chunk) => {
+    output += chunk.toString()
+  })
+
+  const instance = await render(
+    <StandalonePurchaseFlowView accessToken="access-token" onDone={() => {}} />,
+    {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      patchConsole: false,
+    },
+  )
+
+  try {
+    await Bun.sleep(30)
+    stdin.write('\x1B[B')
+    stdin.write('\r')
+
+    const catalogStartedAt = Date.now()
+    while (
+      Date.now() - catalogStartedAt < 1_500 &&
+      !stripAnsi(output).includes('Planos disponíveis')
+    ) {
+      await Bun.sleep(20)
+    }
+
+    stdin.write('\r')
+    const detailStartedAt = Date.now()
+    while (
+      Date.now() - detailStartedAt < 1_500 &&
+      !stripAnsi(output).includes('Modelos: model-pix')
+    ) {
+      await Bun.sleep(20)
+    }
+
+    await Bun.sleep(50)
+    stdin.write('\r')
+    await Bun.sleep(50)
+    if (!stripAnsi(output).includes('Dados para o Pix Automático')) {
+      stdin.write('\r')
+    }
+    const payerStartedAt = Date.now()
+    while (
+      Date.now() - payerStartedAt < 1_500 &&
+      !stripAnsi(output).includes('Dados para o Pix Automático')
+    ) {
+      await Bun.sleep(20)
+    }
+
+    const rendered = stripAnsi(output)
+    expect(rendered).toContain('Dados para o Pix Automático')
+    expect(rendered).toContain('CPF')
   } finally {
     instance.unmount()
     stdin.end()

@@ -12,6 +12,7 @@ import { Spinner } from '../../components/Spinner.js'
 import TextInput from '../../components/TextInput.js'
 import { useTerminalSize } from '../../hooks/useTerminalSize.js'
 import { Box, render, Text, useInput } from '../../ink.js'
+import { AppStateProvider } from '../../state/AppState.js'
 import { openBrowser } from '../../utils/browser.js'
 import {
   createCheckoutSession,
@@ -1521,6 +1522,23 @@ export function PurchaseFlowView({
   }
 }
 
+export function StandalonePurchaseFlowView({
+  accessToken,
+  onDone,
+}: {
+  accessToken: string
+  onDone: (result: boolean) => void
+}) {
+  // Startup purchase flows run before the regular application tree exists.
+  // AppStateProvider also installs the VoiceProvider required by TextInput in
+  // VOICE_MODE builds, including the Linux release bundle.
+  return (
+    <AppStateProvider>
+      <PurchaseFlowView accessToken={accessToken} onDone={onDone} />
+    </AppStateProvider>
+  )
+}
+
 export async function showNoModelsFlow(accessToken: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let instance: { unmount: () => void } | null = null
@@ -1534,11 +1552,11 @@ export async function showNoModelsFlow(accessToken: string): Promise<boolean> {
       setTimeout(() => resolve(result), 50)
     }
 
-    render(<PurchaseFlowView accessToken={accessToken} onDone={finish} />).then(
-      (created) => {
-        instance = created
-        if (pendingResult !== null) finish(pendingResult)
-      },
-    )
+    render(
+      <StandalonePurchaseFlowView accessToken={accessToken} onDone={finish} />,
+    ).then((created) => {
+      instance = created
+      if (pendingResult !== null) finish(pendingResult)
+    })
   })
 }

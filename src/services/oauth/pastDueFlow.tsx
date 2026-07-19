@@ -4,11 +4,13 @@ import { Select } from '../../components/CustomSelect/select.js'
 import { Spinner } from '../../components/Spinner.js'
 import { Box, render, Text } from '../../ink.js'
 import { openBrowser } from '../../utils/browser.js'
+import { VerbooApiError } from '../api/verbooApiError.js'
 import {
   fetchPortalUrl,
   fetchSubscriptions,
   type SubscriptionResponse,
 } from '../api/verbooSubscriptions.js'
+import { describePurchaseError } from './purchaseErrors.js'
 
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000
@@ -21,6 +23,7 @@ function formatPrice(cents: number, currency: string): string {
 }
 
 type Step = 'loading' | 'notice' | 'opening' | 'polling' | 'success' | 'error'
+type ErrorSource = 'loading' | 'portal' | 'polling'
 
 export function PastDueView({
   accessToken,
@@ -32,104 +35,161 @@ export function PastDueView({
   const [step, setStep] = useState<Step>('loading')
   const [pastDueGroups, setPastDueGroups] = useState<SubscriptionResponse[]>([])
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [errorSource, setErrorSource] = useState<ErrorSource>('loading')
+  const requestRef = React.useRef<AbortController | null>(null)
+  const completionTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
 
-  // Carrega subscriptions e filtra past_due
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const subs = await fetchSubscriptions(accessToken)
-      if (cancelled) return
-      const pastDue = subs.filter(s => s.status === 'past_due')
+  const loadSubscriptions = useCallback(async () => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setStep('loading')
+    setErrorMsg(null)
+    try {
+      const subscriptions = await fetchSubscriptions(accessToken, {
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted) return
+      const pastDue = subscriptions.filter(
+        (subscription) => subscription.status === 'past_due',
+      )
       setPastDueGroups(pastDue)
-      if (pastDue.length === 0) {
-        onDone(true)
-      } else {
-        setStep('notice')
-      }
-    })()
-    return () => {
-      cancelled = true
+      if (pastDue.length === 0) onDone(true)
+      else setStep('notice')
+    } catch (error) {
+      if (controller.signal.aborted) return
+      setErrorSource('loading')
+      setErrorMsg(
+        describePurchaseError(
+          error,
+          'Não foi possível validar seus pagamentos.',
+        ).message,
+      )
+      setStep('error')
     }
   }, [accessToken, onDone])
 
+  useEffect(() => {
+    void loadSubscriptions()
+    return () => {
+      requestRef.current?.abort()
+      if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
+    }
+  }, [loadSubscriptions])
+
   const startPolling = useCallback(async () => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setStep('polling')
     const startTime = Date.now()
-    while (Date.now() - startTime < POLL_TIMEOUT_MS) {
-      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+    while (
+      !controller.signal.aborted &&
+      Date.now() - startTime < POLL_TIMEOUT_MS
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+      if (controller.signal.aborted) return
       try {
-        const subs = await fetchSubscriptions(accessToken)
-        const stillPastDue = subs.some(s => s.status === 'past_due')
-        if (!stillPastDue) {
+        const subscriptions = await fetchSubscriptions(accessToken, {
+          signal: controller.signal,
+        })
+        if (
+          !subscriptions.some(
+            (subscription) => subscription.status === 'past_due',
+          )
+        ) {
           setStep('success')
-          setTimeout(() => onDone(true), 1_500)
+          completionTimerRef.current = setTimeout(() => onDone(true), 1_500)
           return
         }
-      } catch {
-        // retry
+      } catch (error) {
+        if (controller.signal.aborted) return
+        if (
+          error instanceof VerbooApiError &&
+          (error.status === 401 ||
+            error.status === 403 ||
+            error.kind === 'contract')
+        ) {
+          setErrorSource('polling')
+          setErrorMsg(
+            describePurchaseError(
+              error,
+              'Não foi possível validar o pagamento.',
+            ).message,
+          )
+          setStep('error')
+          return
+        }
+        // Webhooks and the local subscription view are eventually consistent.
       }
     }
-    setErrorMsg('Timeout exceeded. Your payment may not have been processed.')
-    setStep('error')
+    if (!controller.signal.aborted) {
+      setErrorSource('polling')
+      setErrorMsg(
+        'O pagamento ainda não foi confirmado. Você pode verificar novamente.',
+      )
+      setStep('error')
+    }
   }, [accessToken, onDone])
 
   const handlePay = useCallback(async () => {
     setStep('opening')
+    setErrorMsg(null)
     try {
       const url = await fetchPortalUrl(accessToken)
-      if (!url) {
-        setErrorMsg('Could not open the payment portal.')
-        setStep('error')
-        return
-      }
       const opened = await openBrowser(url)
       if (!opened) {
-        setErrorMsg('Could not open the browser. Open this link manually: ' + url)
+        setErrorSource('portal')
+        setErrorMsg(
+          `Não foi possível abrir o navegador. Abra este endereço manualmente: ${url}`,
+        )
         setStep('error')
         return
       }
-      setStep('polling')
       void startPolling()
-    } catch (e) {
-      setErrorMsg((e as Error).message)
+    } catch (error) {
+      setErrorSource('portal')
+      setErrorMsg(
+        describePurchaseError(
+          error,
+          'Não foi possível abrir o portal de pagamento.',
+        ).message,
+      )
       setStep('error')
     }
   }, [accessToken, startPolling])
 
-  const handleSkip = useCallback(() => {
-    onDone(false)
-  }, [onDone])
-
-  if (step === 'loading') {
-    return null
-  }
+  if (step === 'loading') return null
 
   if (step === 'notice') {
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column" gap={1}>
-          <Text color="yellow">⚠ Payment overdue</Text>
-          <Text>Your access to models is blocked until payment is resolved.</Text>
-          {pastDueGroups.map(sub => {
-            const groupName = sub.group?.name ?? sub.groupId
-            let priceDesc = ''
-            if (sub.group) {
-              priceDesc = ` — ${formatPrice(sub.group.priceCents, sub.group.currency)}/${sub.group.billingInterval === 'year' ? 'year' : 'month'}`
-            }
+          <Text color="yellow">⚠ Pagamento pendente</Text>
+          <Text>O acesso aos modelos está bloqueado até a regularização.</Text>
+          {pastDueGroups.map((subscription) => {
+            const groupName = subscription.group?.name ?? subscription.groupId
+            const price = subscription.group
+              ? ` — ${formatPrice(subscription.group.priceCents, subscription.group.currency)}/${subscription.group.billingInterval === 'year' ? 'ano' : 'mês'}`
+              : ''
             return (
-              <Text key={sub.id}>
-                • {groupName}{priceDesc}
+              <Text key={subscription.id}>
+                • {groupName}
+                {price}
               </Text>
             )
           })}
         </Box>
         <Select
           options={[
-            { label: 'Pay now', value: 'pay' },
-            { label: 'Skip', value: 'skip' },
+            { label: 'Regularizar agora', value: 'pay' },
+            { label: 'Sair sem comprar outro plano', value: 'exit' },
           ]}
-          onChange={(v: string) => {
-            if (v === 'pay') void handlePay()
-            else handleSkip()
+          onChange={(value: string) => {
+            if (value === 'pay') void handlePay()
+            else onDone(false)
           }}
         />
       </Box>
@@ -139,7 +199,7 @@ export function PastDueView({
   if (step === 'opening') {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>Opening payment portal...</Text>
+        <Text>Abrindo o portal de pagamento…</Text>
         <Spinner />
       </Box>
     )
@@ -148,50 +208,60 @@ export function PastDueView({
   if (step === 'polling') {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>Waiting for payment confirmation...</Text>
+        <Text>Aguardando a confirmação do pagamento…</Text>
         <Spinner />
       </Box>
     )
   }
 
   if (step === 'success') {
-    return <Text color="green">✓ Payment confirmed! Access restored.</Text>
+    return <Text color="green">✓ Pagamento confirmado. Acesso restaurado.</Text>
   }
 
-  // error
   return (
     <Box flexDirection="column" gap={1}>
       <Text color="red">Erro: {errorMsg}</Text>
       <Select
         options={[
-          { label: 'Try again', value: 'retry' },
-          { label: 'Skip', value: 'skip' },
+          { label: 'Tentar novamente', value: 'retry' },
+          { label: 'Sair', value: 'exit' },
         ]}
-        onChange={(v: string) => {
-          if (v === 'retry') void handlePay()
-          else handleSkip()
+        onChange={(value: string) => {
+          if (value === 'exit') onDone(false)
+          else if (errorSource === 'loading') void loadSubscriptions()
+          else if (errorSource === 'polling') void startPolling()
+          else void handlePay()
         }}
       />
     </Box>
   )
 }
 
-export async function showPastDueNotice(
-  accessToken: string,
-): Promise<boolean> {
-  return new Promise<boolean>(resolve => {
-    const ref = { current: { unmount: () => {} } }
+export async function showPastDueNotice(accessToken: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    const subscriptions = await fetchSubscriptions(accessToken)
+    return !subscriptions.some(
+      (subscription) => subscription.status === 'past_due',
+    )
+  }
 
-    render(
-      <PastDueView
-        accessToken={accessToken}
-        onDone={(ok: boolean) => {
-          ref.current.unmount()
-          setTimeout(() => resolve(ok), 50)
-        }}
-      />,
-    ).then(inst => {
-      ref.current = inst
-    })
+  return new Promise<boolean>((resolve) => {
+    let instance: { unmount: () => void } | null = null
+    let pendingResult: boolean | null = null
+    const finish = (result: boolean) => {
+      if (!instance) {
+        pendingResult = result
+        return
+      }
+      instance.unmount()
+      setTimeout(() => resolve(result), 50)
+    }
+
+    render(<PastDueView accessToken={accessToken} onDone={finish} />).then(
+      (created) => {
+        instance = created
+        if (pendingResult !== null) finish(pendingResult)
+      },
+    )
   })
 }

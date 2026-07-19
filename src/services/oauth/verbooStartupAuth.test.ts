@@ -18,7 +18,7 @@ test('classifies a model timeout as unavailable rather than an empty account', a
 
   await expect(checkVerbooModels('access-token')).resolves.toEqual({
     kind: 'unavailable',
-    reason: 'timeout of 10000ms exceeded',
+    reason: 'Não foi possível consultar os modelos.',
     models: [],
   })
 })

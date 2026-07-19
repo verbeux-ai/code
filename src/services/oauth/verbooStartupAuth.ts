@@ -6,7 +6,12 @@ import {
   getOauthConfig,
   isVerbooMode,
 } from '../../constants/oauth.js'
-import { clearVerbooModelsCache, fetchVerbooModels, type VerbooModel } from '../api/verbooModels.js'
+import {
+  clearVerbooModelsCache,
+  fetchVerbooModels,
+  type VerbooModel,
+} from '../api/verbooModels.js'
+import { fetchSubscriptions } from '../api/verbooSubscriptions.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
   clearOAuthTokenCache,
@@ -78,7 +83,11 @@ type MeResponse = {
 
 async function callApiMe(
   accessToken: string,
-): Promise<{ status: 'ok'; data: MeResponse['data'] } | { status: 'unauthorized' } | { status: 'error'; reason: string }> {
+): Promise<
+  | { status: 'ok'; data: MeResponse['data'] }
+  | { status: 'unauthorized' }
+  | { status: 'error'; reason: string }
+> {
   const endpoint = `${getOauthConfig().BASE_API_URL}/api/me`
   try {
     const response = await axios.get<MeResponse>(endpoint, {
@@ -207,6 +216,29 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
   if (result.kind === 'unavailable') {
     throw new Error(getVerbooModelsUnavailableMessage(result.reason))
   }
+
+  // An active grant with no router models is a provisioning delay, not an
+  // invitation to buy the same plan again. Give propagation a short window
+  // and fail with a specific recovery message instead of opening the catalog.
+  const subscriptions = await fetchSubscriptions(accessToken)
+  const hasCurrentEntitlement = subscriptions.some(
+    (subscription) =>
+      subscription.status === 'active' || subscription.status === 'trialing',
+  )
+  if (hasCurrentEntitlement) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000))
+      const refreshed = await checkVerbooModels(accessToken)
+      if (refreshed.kind === 'available') return
+      if (refreshed.kind === 'unavailable') {
+        throw new Error(getVerbooModelsUnavailableMessage(refreshed.reason))
+      }
+    }
+    throw new Error(
+      'Sua assinatura está ativa, mas os modelos ainda não foram liberados. Tente novamente em instantes ou contate o suporte.',
+    )
+  }
+
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
       'Nenhum modelo disponível nesta conta. Execute `verboo /login` em um terminal interativo para escolher um plano.',
@@ -221,11 +253,18 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
       throw new Error(getVerbooModelsUnavailableMessage(refreshed.reason))
     }
   }
-  process.stdout.write(
-    '\n  Para trocar de conta, execute: verboo logout\n\n',
-  )
+  process.stdout.write('\n  Para trocar de conta, execute: verboo logout\n\n')
   // eslint-disable-next-line custom-rules/no-process-exit
   process.exit(1)
+}
+
+async function resolvePastDueBeforeModels(accessToken: string): Promise<void> {
+  const resolved = await showPastDueNotice(accessToken)
+  if (!resolved) {
+    throw new Error(
+      'Existe um pagamento pendente. Regularize a assinatura antes de escolher outro plano.',
+    )
+  }
 }
 
 async function ensureVerbooTermsAccepted(accessToken: string): Promise<void> {
@@ -318,7 +357,10 @@ export async function preflightVerbooLogin(): Promise<VerbooLoginPreflightResult
     return { kind: 'needs-oauth', reason: 'unauthenticated' }
   }
   if (terms.kind === 'unavailable') {
-    return { kind: 'degraded', reason: `verificação dos termos: ${terms.reason}` }
+    return {
+      kind: 'degraded',
+      reason: `verificação dos termos: ${terms.reason}`,
+    }
   }
   if (terms.status.mustAccept) {
     return {
@@ -360,9 +402,9 @@ export async function ensureVerbooAuthenticated(
 
   if (session.kind === 'ok') {
     await ensureVerbooTermsAccepted(session.tokens.accessToken)
+    await resolvePastDueBeforeModels(session.tokens.accessToken)
     await loadAndCheckModels(session.tokens.accessToken)
     validated = true
-    await showPastDueNotice(session.tokens.accessToken)
     return
   }
 
@@ -376,6 +418,7 @@ export async function ensureVerbooAuthenticated(
       throw new Error('Não foi possível validar a sessão local do Verboo.')
     }
     await ensureVerbooTermsAccepted(stored.accessToken)
+    await resolvePastDueBeforeModels(stored.accessToken)
     await loadAndCheckModels(stored.accessToken)
     validated = true
     return
@@ -413,7 +456,7 @@ export async function ensureVerbooAuthenticated(
   }
   process.stdout.write('\n✓ Autenticação concluída.\n\n')
 
-  saveGlobalConfig(current =>
+  saveGlobalConfig((current) =>
     current.hasCompletedOnboarding
       ? current
       : { ...current, hasCompletedOnboarding: true },
@@ -427,6 +470,7 @@ export async function ensureVerbooAuthenticated(
       ? confirmedSession.tokens.accessToken
       : tokens.accessToken
   await ensureVerbooTermsAccepted(accessToken)
+  await resolvePastDueBeforeModels(accessToken)
   await loadAndCheckModels(accessToken)
   validated = true
 }

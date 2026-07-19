@@ -1,8 +1,10 @@
 import axios from 'axios'
+import { z } from 'zod'
 
 import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logError } from '../../utils/log.js'
+import { toVerbooApiError, VerbooApiError } from './verbooApiError.js'
 
 export type VerbooModel = {
   id: string
@@ -20,10 +22,9 @@ export type VerbooModelReasoning = {
   defaultEffort: string
 }
 
-type ModelsResponse = {
-  object?: string
-  data?: Array<Record<string, unknown>>
-}
+const modelsResponseSchema = z
+  .object({ data: z.array(z.record(z.unknown())) })
+  .passthrough()
 
 const CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -67,7 +68,7 @@ function normalizeReasoning(
     ...new Set(
       rawLevels
         .filter((value): value is string => typeof value === 'string')
-        .map(value => value.trim())
+        .map((value) => value.trim())
         .filter(Boolean),
     ),
   ]
@@ -78,7 +79,7 @@ function normalizeReasoning(
   )?.trim()
   const canonicalDefault = defaultEffort
     ? effortLevels.find(
-        level => level.toLowerCase() === defaultEffort.toLowerCase(),
+        (level) => level.toLowerCase() === defaultEffort.toLowerCase(),
       )
     : undefined
   if (!canonicalDefault) {
@@ -120,7 +121,7 @@ export function clearVerbooModelsCache(): void {
 
 export async function fetchVerbooModels(
   accessToken: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<VerbooModel[]> {
   if (!opts.force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.models
@@ -130,14 +131,24 @@ export async function fetchVerbooModels(
   const endpoint = `${VERBOO_ROUTER_URL}/models`
   inflight = (async () => {
     try {
-      const response = await axios.get<ModelsResponse>(endpoint, {
+      const response = await axios.get(endpoint, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         timeout: 10_000,
+        signal: opts.signal,
       })
-      const data = response.data?.data ?? []
+      const parsed = modelsResponseSchema.safeParse(response.data)
+      if (!parsed.success) {
+        throw new VerbooApiError({
+          message: 'Resposta inválida ao consultar os modelos.',
+          kind: 'contract',
+          code: 'contract_error',
+          cause: parsed.error,
+        })
+      }
+      const data = parsed.data.data
       const models = data
         .map(normalizeModel)
         .filter((m): m is VerbooModel => m !== null)
@@ -147,17 +158,22 @@ export async function fetchVerbooModels(
       )
       return models
     } catch (error) {
-      logError(error as Error)
-      const msg = `[Verboo] Erro ao buscar modelos de ${endpoint}: ${(error as Error).message ?? String(error)}`
-      logForDebugging(msg)
-      process.stderr.write(msg + '\n')
+      if (opts.signal?.aborted || axios.isCancel(error)) throw error
+      const apiError = toVerbooApiError(
+        error,
+        'Não foi possível consultar os modelos.',
+      )
+      logError(apiError)
+      logForDebugging(
+        `[VerbooModels] ${apiError.code ?? apiError.kind}: ${apiError.message}`,
+      )
       // Um cache com modelos ainda permite que uma sessão em andamento continue.
       // Nunca converta uma falha de rede em uma lista vazia: no startup isso era
       // interpretado como "conta sem modelos" e abria o fluxo de compra.
       if (cache && cache.models.length > 0) {
         return cache.models
       }
-      throw error
+      throw apiError
     } finally {
       inflight = null
     }
@@ -171,7 +187,7 @@ export function getCachedVerbooModels(): VerbooModel[] | null {
 
 export function getVerbooModelMeta(modelId: string): VerbooModel | undefined {
   if (!cache) return undefined
-  return cache.models.find(m => m.id === modelId)
+  return cache.models.find((m) => m.id === modelId)
 }
 
 export function getVerbooModelReasoning(
@@ -192,6 +208,6 @@ export function getVerbooReasoningEffort(
   const normalized = requested.trim().toLowerCase()
   if (!normalized) return undefined
   return getVerbooModelReasoning(modelId)?.effortLevels.find(
-    level => level.toLowerCase() === normalized,
+    (level) => level.toLowerCase() === normalized,
   )
 }

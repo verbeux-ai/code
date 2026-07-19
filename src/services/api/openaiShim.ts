@@ -1766,34 +1766,33 @@ class OpenAIShimMessages {
       visionModel,
       async ({ model, images, prompt }) => {
         const result = await (self.create(
+          {
+            model,
+            max_tokens: 2048,
+            stream: false,
+            messages: [
               {
-                model,
-                max_tokens: 2048,
-                stream: false,
-                messages: [
-                  {
-                    role: 'user',
-                    content: [{ type: 'text', text: prompt }, ...images],
-                  },
-                ],
-              } as ShimCreateParams,
-              { signal: options?.signal },
-            ) as Promise<{ content?: Array<{ type?: string; text?: string }> }>)
-            const text = Array.isArray(result?.content)
-              ? result.content
-                  .filter(block => block?.type === 'text')
-                  .map(block => block.text ?? '')
-                  .join('\n')
-                  .trim()
-              : ''
-            if (!text) {
-              throw new Error(
-                `vision model ${model} returned an empty analysis`,
-              )
-            }
-            return text
-          }
-        : undefined,
+                role: 'user',
+                content: [{ type: 'text', text: prompt }, ...images],
+              },
+            ],
+          } as ShimCreateParams,
+          { signal: options?.signal },
+        ) as Promise<{ content?: Array<{ type?: string; text?: string }> }>)
+        const text = Array.isArray(result?.content)
+          ? result.content
+              .filter(block => block?.type === 'text')
+              .map(block => block.text ?? '')
+              .join('\n')
+              .trim()
+          : ''
+        if (!text) {
+          throw new Error(
+            `vision model ${model} returned an empty analysis`,
+          )
+        }
+        return text
+      },
     ) as Promise<
       Array<{
         role: string

@@ -43,7 +43,9 @@ test('uses the router reasoning contract as the model capability source', async 
   }))
   axios.get = get as typeof axios.get
 
-  await expect(fetchVerbooModels('access-token', { force: true })).resolves.toEqual([
+  await expect(
+    fetchVerbooModels('access-token', { force: true }),
+  ).resolves.toEqual([
     expect.objectContaining({
       id: 'verboo/reasoner',
       reasoning: {
@@ -73,7 +75,10 @@ test('does not advertise reasoning when the router response is incomplete', asyn
       data: [
         {
           id: 'verboo/no-reasoning',
-          reasoning: { effort_levels: ['low', 'high'], default_effort: 'medium' },
+          reasoning: {
+            effort_levels: ['low', 'high'],
+            default_effort: 'medium',
+          },
         },
       ],
     },
@@ -89,7 +94,7 @@ test('surfaces a model lookup failure instead of treating it as no models', asyn
     throw new Error('timeout of 10000ms exceeded')
   }) as typeof axios.get
 
-  await expect(fetchVerbooModels('access-token', { force: true })).rejects.toThrow(
-    'timeout of 10000ms exceeded',
-  )
+  await expect(
+    fetchVerbooModels('access-token', { force: true }),
+  ).rejects.toThrow('Não foi possível consultar os modelos.')
 })

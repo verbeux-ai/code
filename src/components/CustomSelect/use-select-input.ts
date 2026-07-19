@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useRegisterOverlay } from '../../context/overlayContext.js'
 import type { InputEvent } from '../../ink/events/input-event.js'
 import { useInput } from '../../ink.js'
+import { useOptionalKeybindingContext } from '../../keybindings/KeybindingContext.js'
 import { useKeybindings } from '../../keybindings/useKeybinding.js'
 import {
   normalizeFullWidthDigits,
@@ -99,10 +100,13 @@ export const useSelectInput = <T>({
   // Automatically register as an overlay when onCancel is provided.
   // This ensures CancelRequestHandler won't intercept Escape when the select is active.
   useRegisterOverlay('select', !!state.onCancel)
+  const keybindingContext = useOptionalKeybindingContext()
 
   // Determine if the focused option is an input type
   const isInInput = useMemo(() => {
-    const focusedOption = options.find(opt => opt.value === state.focusedValue)
+    const focusedOption = options.find(
+      (opt) => opt.value === state.focusedValue,
+    )
     return focusedOption?.type === 'input'
   }, [options, state.focusedValue])
 
@@ -138,7 +142,7 @@ export const useSelectInput = <T>({
         if (state.focusedValue === undefined) return
 
         const focusedOption = options.find(
-          opt => opt.value === state.focusedValue,
+          (opt) => opt.value === state.focusedValue,
         )
         if (focusedOption?.disabled === true) return
 
@@ -174,7 +178,7 @@ export const useSelectInput = <T>({
     (input, key, event: InputEvent) => {
       const normalizedInput = normalizeFullWidthDigits(input)
       const focusedOption = options.find(
-        opt => opt.value === state.focusedValue,
+        (opt) => opt.value === state.focusedValue,
       )
       const currentIsInInput = focusedOption?.type === 'input'
 
@@ -228,6 +232,33 @@ export const useSelectInput = <T>({
         // options — the user has focused a text field and expects typing
         // to insert characters, not jump to a different option.
         return
+      }
+
+      // Standalone Ink flows (purchase, terms and past-due recovery) are
+      // intentionally rendered without the application's KeybindingProvider.
+      // Preserve the default terminal controls in that environment while the
+      // configured keybinding path remains authoritative inside the app.
+      if (!keybindingContext) {
+        if (key.downArrow || (key.ctrl && input === 'n')) {
+          keybindingHandlers['select:next']?.()
+          event.stopImmediatePropagation()
+          return
+        }
+        if (key.upArrow || (key.ctrl && input === 'p')) {
+          keybindingHandlers['select:previous']?.()
+          event.stopImmediatePropagation()
+          return
+        }
+        if (key.return) {
+          keybindingHandlers['select:accept']?.()
+          event.stopImmediatePropagation()
+          return
+        }
+        if (key.escape && state.onCancel) {
+          keybindingHandlers['select:cancel']?.()
+          event.stopImmediatePropagation()
+          return
+        }
       }
 
       if (key.pageDown) {

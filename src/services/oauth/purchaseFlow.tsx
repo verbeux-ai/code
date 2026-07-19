@@ -106,23 +106,6 @@ export function filterCliPurchasablePlans(
   })
 }
 
-function formatCPF(value: string): string {
-  const digits = onlyDigits(value).slice(0, 11)
-  if (digits.length <= 3) return digits
-  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`
-  if (digits.length <= 9) {
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`
-  }
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`
-}
-
-function formatPhone(value: string): string {
-  const digits = onlyDigits(value).slice(0, 11)
-  if (digits.length <= 2) return digits.length > 0 ? `(${digits}` : ''
-  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
-}
-
 function formatPrice(cents: number, currency: string): string {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
@@ -403,9 +386,9 @@ function WooviPayerForm({
   const [phoneCursorOffset, setPhoneCursorOffset] = useState(0)
 
   const submitCPF = (value: string) => {
-    const formatted = formatCPF(value)
-    setCPF(formatted)
-    if (!isValidCPF(formatted)) {
+    const digits = onlyDigits(value).slice(0, 11)
+    setCPF(digits)
+    if (!isValidCPF(digits)) {
       setError('Informe um CPF válido para continuar.')
       return
     }
@@ -414,9 +397,8 @@ function WooviPayerForm({
   }
 
   const submitPhone = (value: string) => {
-    const formatted = formatPhone(value)
-    setPhone(formatted)
-    const digits = onlyDigits(formatted)
+    const digits = onlyDigits(value).slice(0, 11)
+    setPhone(digits)
     if (digits.length !== 11 || digits[2] !== '9') {
       setError('Informe um celular brasileiro com DDD.')
       return
@@ -440,12 +422,12 @@ function WooviPayerForm({
             onChangeCursorOffset={setCPFCursorOffset}
             onChange={(value) => {
               setError(null)
-              setCPF(formatCPF(value))
+              setCPF(onlyDigits(value).slice(0, 11))
             }}
             onSubmit={submitCPF}
             onExit={onCancel}
             columns={INPUT_COLUMNS}
-            placeholder="000.000.000-00"
+            placeholder="00000000000"
             focus
             showCursor
             multiline={false}
@@ -460,12 +442,12 @@ function WooviPayerForm({
             onChangeCursorOffset={setPhoneCursorOffset}
             onChange={(value) => {
               setError(null)
-              setPhone(formatPhone(value))
+              setPhone(onlyDigits(value).slice(0, 11))
             }}
             onSubmit={submitPhone}
             onExit={onCancel}
             columns={INPUT_COLUMNS}
-            placeholder="(11) 99999-9999"
+            placeholder="11999999999"
             focus
             showCursor
             multiline={false}

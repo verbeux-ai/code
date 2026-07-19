@@ -289,6 +289,29 @@ test('renders the Pix payer input inside the standalone provider tree', async ()
     const rendered = stripAnsi(output)
     expect(rendered).toContain('Dados para o Pix Automático')
     expect(rendered).toContain('CPF')
+
+    stdin.write('52998224725')
+    await Bun.sleep(50)
+    stdin.write('\r')
+
+    const phoneStartedAt = Date.now()
+    while (
+      Date.now() - phoneStartedAt < 1_500 &&
+      !stripAnsi(output).includes('Celular com DDD')
+    ) {
+      await Bun.sleep(20)
+    }
+
+    const phoneRendered = stripAnsi(output)
+    expect(phoneRendered).toContain('52998224725')
+    expect(phoneRendered).not.toContain('529.982.247-25')
+    expect(phoneRendered).toContain('Celular com DDD')
+
+    stdin.write('11999999999')
+    await Bun.sleep(50)
+    const completedPhoneRendered = stripAnsi(output)
+    expect(completedPhoneRendered).toContain('11999999999')
+    expect(completedPhoneRendered).not.toContain('(11) 99999-9999')
   } finally {
     instance.unmount()
     stdin.end()

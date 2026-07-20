@@ -5,9 +5,10 @@
 import axios from 'axios'
 import { OAUTH_BETA_HEADER } from '../constants/oauth.js'
 import {
+  didOAuthRefreshRecover,
   getAnthropicApiKey,
   getClaudeAIOAuthTokens,
-  handleOAuth401Error,
+  handleOAuth401ErrorWithOutcome,
   isClaudeAISubscriber,
 } from './auth.js'
 import { getAPIProvider } from './model/providers.js'
@@ -144,7 +145,8 @@ export async function withOAuth401Retry<T>(
     if (!isAuthError) throw err
     const failedAccessToken = getClaudeAIOAuthTokens()?.accessToken
     if (!failedAccessToken) throw err
-    await handleOAuth401Error(failedAccessToken)
+    const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
+    if (!didOAuthRefreshRecover(outcome)) throw err
     return await request()
   }
 }

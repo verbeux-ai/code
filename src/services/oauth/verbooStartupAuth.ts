@@ -2,7 +2,6 @@ import axios from 'axios'
 
 import { runOAuthLoginFlow } from '../../cli/handlers/auth.js'
 import {
-  getActiveScopes,
   getOauthConfig,
   isVerbooMode,
 } from '../../constants/oauth.js'
@@ -15,8 +14,10 @@ import { fetchSubscriptions } from '../api/verbooSubscriptions.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
   clearOAuthTokenCache,
+  didOAuthRefreshRecover,
   getClaudeAIOAuthTokensAsync,
   getOauthAccountInfo,
+  handleOAuth401ErrorWithOutcome,
   saveOAuthTokensIfNeeded,
 } from '../../utils/auth.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
@@ -24,7 +25,7 @@ import { saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
-import { refreshOAuthToken, storeOAuthAccountInfo } from './client.js'
+import { storeOAuthAccountInfo } from './client.js'
 import type { OAuthTokens } from './types.js'
 import { showNoModelsFlow } from './purchaseFlow.js'
 import { showPastDueNotice } from './pastDueFlow.js'
@@ -142,11 +143,14 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
   if (result.status === 'unauthorized' && tokens.refreshToken) {
     logForDebugging('[VerbooStartup] /api/me returned 401, tentando refresh')
     try {
-      const refreshed = await refreshOAuthToken(tokens.refreshToken, {
-        scopes: [...getActiveScopes()],
-      })
-      saveOAuthTokensIfNeeded(refreshed)
-      clearOAuthTokenCache()
+      const outcome = await handleOAuth401ErrorWithOutcome(tokens.accessToken)
+      if (!didOAuthRefreshRecover(outcome)) {
+        return outcome === 'transient_error'
+          ? { kind: 'degraded', reason: 'temporary OAuth refresh failure' }
+          : { kind: 'unauthenticated' }
+      }
+      const refreshed = await getClaudeAIOAuthTokensAsync()
+      if (!refreshed?.accessToken) return { kind: 'unauthenticated' }
       result = await callApiMe(refreshed.accessToken)
       if (result.status === 'ok' && result.data) {
         persistAccount(result.data)

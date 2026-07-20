@@ -16,8 +16,9 @@ import {
   clearApiKeyHelperCache,
   clearAwsCredentialsCache,
   clearGcpCredentialsCache,
+  didOAuthRefreshRecover,
   getClaudeAIOAuthTokens,
-  handleOAuth401Error,
+  handleOAuth401ErrorWithOutcome,
   isClaudeAISubscriber,
   isEnterpriseSubscriber,
 } from '../../utils/auth.js'
@@ -253,7 +254,10 @@ export async function* withRetry<T>(
         ) {
           const failedAccessToken = getClaudeAIOAuthTokens()?.accessToken
           if (failedAccessToken) {
-            await handleOAuth401Error(failedAccessToken)
+            const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
+            if (!didOAuthRefreshRecover(outcome)) {
+              throw new CannotRetryError(lastError, retryContext)
+            }
           }
         }
         client = await getClient()

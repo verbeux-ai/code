@@ -59,8 +59,9 @@ import { AbortError, isAbortError } from '../../utils/errors.js'
 import { count } from '../../utils/array.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
+  didOAuthRefreshRecover,
   getClaudeAIOAuthTokens,
-  handleOAuth401Error,
+  handleOAuth401ErrorWithOutcome,
 } from '../../utils/auth.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { detectCodeIndexingFromMcpServerName } from '../../utils/codeIndexing.js'
@@ -403,7 +404,10 @@ export function createClaudeAiProxyFetch(innerFetch: FetchLike): FetchLike {
     // that — otherwise we double round-trip time for every connector whose
     // downstream service genuinely needs auth (the common case: 30+ servers
     // with "MCP server requires authentication but no OAuth token configured").
-    const tokenChanged = await handleOAuth401Error(sentToken).catch(() => false)
+    const refreshOutcome = await handleOAuth401ErrorWithOutcome(sentToken).catch(
+      () => 'transient_error' as const,
+    )
+    const tokenChanged = didOAuthRefreshRecover(refreshOutcome)
     logEvent('tengu_mcp_claudeai_proxy_401', {
       tokenChanged:
         tokenChanged as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,

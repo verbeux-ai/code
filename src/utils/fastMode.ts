@@ -15,9 +15,10 @@ import {
   logEvent,
 } from '../services/analytics/index.js'
 import {
+  didOAuthRefreshRecover,
   getAnthropicApiKey,
   getClaudeAIOAuthTokens,
-  handleOAuth401Error,
+  handleOAuth401ErrorWithOutcome,
   hasProfileScope,
 } from './auth.js'
 import { isInBundledMode } from './bundledMode.js'
@@ -478,7 +479,8 @@ export async function prefetchFastModeStatus(): Promise<void> {
         if (isAuthError) {
           const failedAccessToken = getClaudeAIOAuthTokens()?.accessToken
           if (failedAccessToken) {
-            await handleOAuth401Error(failedAccessToken)
+            const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
+            if (!didOAuthRefreshRecover(outcome)) throw err
             status = await fetchWithCurrentAuth()
           } else {
             throw err

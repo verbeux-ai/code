@@ -62,7 +62,10 @@ import { execSyncWithDefaults_DEPRECATED } from './execFileNoThrow.js'
 import * as lockfile from './lockfile.js'
 import { logError } from './log.js'
 import { memoizeWithTTLAsync } from './memoize.js'
-import { getSecureStorage } from './secureStorage/index.js'
+import {
+  getSecureStorage,
+  type SecureStorageData,
+} from './secureStorage/index.js'
 import {
   clearLegacyApiKeyPrefetch,
   getLegacyApiKeyPrefetchResult,
@@ -1243,21 +1246,23 @@ export function saveOAuthTokensIfNeeded(tokens: OAuthTokens): {
     secureStorage.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
 
   try {
-    const storageData = secureStorage.read() || {}
-    const existingOauth = storageData.verbooOauth
-
-    storageData.verbooOauth = {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-      scopes: tokens.scopes,
-      // Profile fetch in refreshOAuthToken swallows errors and returns null on
-      // transient failures (network, 5xx, rate limit). Don't clobber a valid
-      // stored subscription with null — fall back to the existing value.
-      subscriptionType:
-        tokens.subscriptionType ?? existingOauth?.subscriptionType ?? null,
-      rateLimitTier:
-        tokens.rateLimitTier ?? existingOauth?.rateLimitTier ?? null,
+    const currentStorageData = secureStorage.read() || {}
+    const existingOauth = currentStorageData.verbooOauth
+    const storageData: SecureStorageData = {
+      ...currentStorageData,
+      verbooOauth: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        scopes: tokens.scopes,
+        // Profile fetch in refreshOAuthToken swallows errors and returns null on
+        // transient failures (network, 5xx, rate limit). Don't clobber a valid
+        // stored subscription with null — fall back to the existing value.
+        subscriptionType:
+          tokens.subscriptionType ?? existingOauth?.subscriptionType ?? null,
+        rateLimitTier:
+          tokens.rateLimitTier ?? existingOauth?.rateLimitTier ?? null,
+      },
     }
 
     const updateStatus = secureStorage.update(storageData)
@@ -1387,7 +1392,21 @@ async function invalidateOAuthCacheIfDiskChanged(): Promise<void> {
 // caches and re-read the keychain. Without this, each call's clearOAuthTokenCache()
 // nukes readInFlight in macOsKeychainStorage and triggers a fresh spawn —
 // sync spawns stacked to 800ms+ of blocked render frames.
-const pending401Handlers = new Map<string, Promise<boolean>>()
+export type OAuthRefreshOutcome =
+  | 'unchanged'
+  | 'token_changed'
+  | 'refreshed'
+  | 'reauth_required'
+  | 'transient_error'
+  | 'storage_error'
+
+export function didOAuthRefreshRecover(
+  outcome: OAuthRefreshOutcome,
+): boolean {
+  return outcome === 'token_changed' || outcome === 'refreshed'
+}
+
+const pending401Handlers = new Map<string, Promise<OAuthRefreshOutcome>>()
 
 /**
  * Handle a 401 "OAuth token has expired" error from the API.
@@ -1402,11 +1421,11 @@ const pending401Handlers = new Map<string, Promise<boolean>>()
  * deduplicated to a single keychain read.
  *
  * @param failedAccessToken - The access token that was rejected with 401
- * @returns true if we now have a valid token, false otherwise
+ * @returns a typed result so callers only retry after the token changed
  */
-export function handleOAuth401Error(
+export function handleOAuth401ErrorWithOutcome(
   failedAccessToken: string,
-): Promise<boolean> {
+): Promise<OAuthRefreshOutcome> {
   const pending = pending401Handlers.get(failedAccessToken)
   if (pending) return pending
 
@@ -1417,25 +1436,35 @@ export function handleOAuth401Error(
   return promise
 }
 
-async function handleOAuth401ErrorImpl(
+// Compatibility wrapper for bridge/SDK dependency-injection interfaces that
+// still expose the historical boolean contract.
+export async function handleOAuth401Error(
   failedAccessToken: string,
 ): Promise<boolean> {
+  return didOAuthRefreshRecover(
+    await handleOAuth401ErrorWithOutcome(failedAccessToken),
+  )
+}
+
+async function handleOAuth401ErrorImpl(
+  failedAccessToken: string,
+): Promise<OAuthRefreshOutcome> {
   // Clear caches and re-read from keychain (async — sync read blocks ~100ms/call)
   clearOAuthTokenCache()
   const currentTokens = await getClaudeAIOAuthTokensAsync()
 
   if (!currentTokens?.refreshToken) {
-    return false
+    return 'reauth_required'
   }
 
   // If keychain has a different token, another tab already refreshed - use it
   if (currentTokens.accessToken !== failedAccessToken) {
     logEvent('tengu_oauth_401_recovered_from_keychain', {})
-    return true
+    return 'token_changed'
   }
 
   // Same token that failed - force refresh, bypassing local expiration check
-  return checkAndRefreshOAuthTokenIfNeeded(0, true)
+  return checkAndRefreshOAuthTokenIfNeededImpl(0, true, failedAccessToken)
 }
 
 /**
@@ -1464,8 +1493,57 @@ export async function getClaudeAIOAuthTokensAsync(): Promise<OAuthTokens | null>
   return getStoredVerbooOAuthTokensAsync()
 }
 
+function isOAuthInvalidGrant(error: unknown): boolean {
+  const response = (error as { response?: { data?: unknown } })?.response
+  const data = response?.data
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'error' in data &&
+    (data as { error?: unknown }).error === 'invalid_grant'
+  )
+}
+
+async function persistRefreshedOAuthTokens(
+  refreshedTokens: OAuthTokens,
+): Promise<boolean> {
+  const delays = [0, 100, 250]
+  for (const delay of delays) {
+    if (delay > 0) await sleep(delay)
+    const status = saveOAuthTokensIfNeeded(refreshedTokens)
+    if (!status.success) continue
+
+    clearOAuthTokenCache()
+    const stored = await getClaudeAIOAuthTokensAsync()
+    if (
+      stored?.accessToken === refreshedTokens.accessToken &&
+      stored.refreshToken === refreshedTokens.refreshToken
+    ) {
+      return true
+    }
+  }
+  logEvent('tengu_oauth_tokens_save_retry_exhausted', {})
+  return false
+}
+
+function clearStoredVerbooOAuthIfRefreshTokenMatches(
+  refreshToken: string,
+): void {
+  if (!isVerbooMode()) return
+  try {
+    const secureStorage = getSecureStorage()
+    const data = secureStorage.read()
+    if (data?.verbooOauth?.refreshToken !== refreshToken) return
+    const { verbooOauth: _, ...dataWithoutVerbooOAuth } = data
+    secureStorage.update(dataWithoutVerbooOAuth)
+    clearOAuthTokenCache()
+  } catch (error) {
+    logError(error)
+  }
+}
+
 // In-flight promise for deduplicating concurrent calls
-let pendingRefreshCheck: Promise<boolean> | null = null
+let pendingRefreshCheck: Promise<OAuthRefreshOutcome> | null = null
 
 export function checkAndRefreshOAuthTokenIfNeeded(
   retryCount = 0,
@@ -1474,23 +1552,26 @@ export function checkAndRefreshOAuthTokenIfNeeded(
   // Deduplicate concurrent non-retry, non-force calls
   if (retryCount === 0 && !force) {
     if (pendingRefreshCheck) {
-      return pendingRefreshCheck
+      return pendingRefreshCheck.then(didOAuthRefreshRecover)
     }
 
     const promise = checkAndRefreshOAuthTokenIfNeededImpl(retryCount, force)
     pendingRefreshCheck = promise.finally(() => {
       pendingRefreshCheck = null
     })
-    return pendingRefreshCheck
+    return pendingRefreshCheck.then(didOAuthRefreshRecover)
   }
 
-  return checkAndRefreshOAuthTokenIfNeededImpl(retryCount, force)
+  return checkAndRefreshOAuthTokenIfNeededImpl(retryCount, force).then(
+    didOAuthRefreshRecover,
+  )
 }
 
 async function checkAndRefreshOAuthTokenIfNeededImpl(
   retryCount: number,
   force: boolean,
-): Promise<boolean> {
+  failedAccessToken?: string,
+): Promise<OAuthRefreshOutcome> {
   const MAX_RETRIES = 5
 
   await invalidateOAuthCacheIfDiskChanged()
@@ -1500,16 +1581,16 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
   const tokens = getClaudeAIOAuthTokens()
   if (!force) {
     if (!tokens?.refreshToken || !isOAuthTokenExpired(tokens.expiresAt)) {
-      return false
+      return 'unchanged'
     }
   }
 
   if (!tokens?.refreshToken) {
-    return false
+    return force ? 'reauth_required' : 'unchanged'
   }
 
   if (!shouldUseClaudeAIAuth(tokens.scopes)) {
-    return false
+    return 'unchanged'
   }
 
   // Re-read tokens async to check if they're still expired
@@ -1517,11 +1598,19 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
   getClaudeAIOAuthTokens.cache?.clear?.()
   clearKeychainCache()
   const freshTokens = await getClaudeAIOAuthTokensAsync()
+  if (!freshTokens?.refreshToken) {
+    return force ? 'reauth_required' : 'unchanged'
+  }
   if (
-    !freshTokens?.refreshToken ||
-    !isOAuthTokenExpired(freshTokens.expiresAt)
+    force &&
+    failedAccessToken &&
+    freshTokens.accessToken !== failedAccessToken
   ) {
-    return false
+    logEvent('tengu_oauth_token_refresh_race_resolved', {})
+    return 'token_changed'
+  }
+  if (!force && !isOAuthTokenExpired(freshTokens.expiresAt)) {
+    return 'unchanged'
   }
 
   // Tokens are still expired, try to acquire lock and refresh
@@ -1542,12 +1631,22 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
         })
         // Wait a bit before retrying
         await sleep(1000 + Math.random() * 1000)
-        return checkAndRefreshOAuthTokenIfNeededImpl(retryCount + 1, force)
+        return checkAndRefreshOAuthTokenIfNeededImpl(
+          retryCount + 1,
+          force,
+          failedAccessToken,
+        )
       }
       logEvent('tengu_oauth_token_refresh_lock_retry_limit_reached', {
         maxRetries: MAX_RETRIES,
       })
-      return false
+      clearOAuthTokenCache()
+      const latestTokens = await getClaudeAIOAuthTokensAsync()
+      return failedAccessToken &&
+        latestTokens?.accessToken &&
+        latestTokens.accessToken !== failedAccessToken
+        ? 'token_changed'
+        : 'transient_error'
     }
     logError(err)
     logEvent('tengu_oauth_token_refresh_lock_error', {
@@ -1555,23 +1654,33 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
         err,
       ) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
-    return false
+    return 'transient_error'
   }
+  let attemptedRefreshToken: string | undefined
   try {
     // Check one more time after acquiring lock
     getClaudeAIOAuthTokens.cache?.clear?.()
     clearKeychainCache()
     const lockedTokens = await getClaudeAIOAuthTokensAsync()
+    if (!lockedTokens?.refreshToken) {
+      return force ? 'reauth_required' : 'unchanged'
+    }
     if (
-      !lockedTokens?.refreshToken ||
-      !isOAuthTokenExpired(lockedTokens.expiresAt)
+      force &&
+      failedAccessToken &&
+      lockedTokens.accessToken !== failedAccessToken
     ) {
       logEvent('tengu_oauth_token_refresh_race_resolved', {})
-      return false
+      return 'token_changed'
+    }
+    if (!force && !isOAuthTokenExpired(lockedTokens.expiresAt)) {
+      logEvent('tengu_oauth_token_refresh_race_resolved', {})
+      return 'unchanged'
     }
 
     logEvent('tengu_oauth_token_refresh_starting', {})
-    const refreshedTokens = await refreshOAuthToken(lockedTokens.refreshToken, {
+    attemptedRefreshToken = lockedTokens.refreshToken
+    const refreshedTokens = await refreshOAuthToken(attemptedRefreshToken, {
       // For Claude.ai subscribers, omit scopes so the default
       // CLAUDE_AI_OAUTH_SCOPES applies — this allows scope expansion
       // (e.g. adding user:file_upload) on refresh without re-login.
@@ -1579,24 +1688,43 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
         ? undefined
         : lockedTokens.scopes,
     })
-    saveOAuthTokensIfNeeded(refreshedTokens)
+    const persisted = await persistRefreshedOAuthTokens(refreshedTokens)
+    if (!persisted) {
+      // The server consumed attemptedRefreshToken. Leaving it in storage makes
+      // a later process look like token theft and can revoke the whole family.
+      clearStoredVerbooOAuthIfRefreshTokenMatches(attemptedRefreshToken)
+      return 'storage_error'
+    }
 
     // Clear the cache after refreshing token
-    getClaudeAIOAuthTokens.cache?.clear?.()
-    clearKeychainCache()
-    return true
+    clearOAuthTokenCache()
+    return 'refreshed'
   } catch (error) {
     logError(error)
 
-    getClaudeAIOAuthTokens.cache?.clear?.()
-    clearKeychainCache()
+    clearOAuthTokenCache()
     const currentTokens = await getClaudeAIOAuthTokensAsync()
-    if (currentTokens && !isOAuthTokenExpired(currentTokens.expiresAt)) {
+    if (
+      currentTokens?.accessToken &&
+      ((failedAccessToken &&
+        currentTokens.accessToken !== failedAccessToken) ||
+        (!failedAccessToken &&
+          tokens?.accessToken &&
+          currentTokens.accessToken !== tokens.accessToken))
+    ) {
       logEvent('tengu_oauth_token_refresh_race_recovered', {})
-      return true
+      return 'token_changed'
     }
 
-    return false
+    if (isOAuthInvalidGrant(error)) {
+      if (attemptedRefreshToken) {
+        clearStoredVerbooOAuthIfRefreshTokenMatches(attemptedRefreshToken)
+      }
+      logEvent('tengu_oauth_token_refresh_reauth_required', {})
+      return 'reauth_required'
+    }
+
+    return 'transient_error'
   } finally {
     logEvent('tengu_oauth_token_refresh_lock_releasing', {})
     await release()

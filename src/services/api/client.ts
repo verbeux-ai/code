@@ -5,7 +5,8 @@ import {
   getAnthropicApiKey,
   getApiKeyFromApiKeyHelper,
   getClaudeAIOAuthTokens,
-  handleOAuth401Error,
+  didOAuthRefreshRecover,
+  handleOAuth401ErrorWithOutcome,
   isClaudeAISubscriber,
   refreshAndGetAwsCredentials,
   refreshGcpCredentialsIfNeeded,
@@ -316,8 +317,8 @@ export async function getAnthropicClient({
         apiKey: accessToken ?? '',
         getApiKey: () => getClaudeAIOAuthTokens()?.accessToken ?? '',
         refreshApiKey: async (failedAccessToken) => {
-          const recovered = await handleOAuth401Error(failedAccessToken)
-          return recovered
+          const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
+          return didOAuthRefreshRecover(outcome)
             ? (getClaudeAIOAuthTokens()?.accessToken ?? null)
             : null
         },

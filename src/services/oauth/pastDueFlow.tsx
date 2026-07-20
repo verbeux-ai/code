@@ -11,6 +11,10 @@ import {
   type SubscriptionResponse,
 } from '../api/verbooSubscriptions.js'
 import { describePurchaseError } from './purchaseErrors.js'
+import {
+  formatPastDuePlanNames,
+  getPastDueAccessDecision,
+} from './subscriptionAccess.js'
 
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000
@@ -22,7 +26,23 @@ function formatPrice(cents: number, currency: string): string {
   }).format(cents / 100)
 }
 
-type Step = 'loading' | 'notice' | 'opening' | 'polling' | 'success' | 'error'
+function getPastDueWarningMessage(
+  subscriptions: SubscriptionResponse[],
+): string {
+  return [
+    `⚠ Pagamento pendente em ${formatPastDuePlanNames(subscriptions)}.`,
+    'Seu acesso pelos outros planos ativos continua liberado; regularize no painel de assinaturas.',
+  ].join(' ')
+}
+
+type Step =
+  | 'loading'
+  | 'notice'
+  | 'warning'
+  | 'opening'
+  | 'polling'
+  | 'success'
+  | 'error'
 type ErrorSource = 'loading' | 'portal' | 'polling'
 
 export function PastDueView({
@@ -52,12 +72,10 @@ export function PastDueView({
         signal: controller.signal,
       })
       if (controller.signal.aborted) return
-      const pastDue = subscriptions.filter(
-        (subscription) => subscription.status === 'past_due',
-      )
-      setPastDueGroups(pastDue)
-      if (pastDue.length === 0) onDone(true)
-      else setStep('notice')
+      const decision = getPastDueAccessDecision(subscriptions)
+      setPastDueGroups(decision.pastDueSubscriptions)
+      if (decision.kind === 'continue') onDone(true)
+      else setStep(decision.kind === 'warn' ? 'warning' : 'notice')
     } catch (error) {
       if (controller.signal.aborted) return
       setErrorSource('loading')
@@ -70,6 +88,12 @@ export function PastDueView({
       setStep('error')
     }
   }, [accessToken, onDone])
+
+  useEffect(() => {
+    if (step !== 'warning') return
+    const timer = setTimeout(() => onDone(true), 0)
+    return () => clearTimeout(timer)
+  }, [onDone, step])
 
   useEffect(() => {
     void loadSubscriptions()
@@ -95,11 +119,7 @@ export function PastDueView({
         const subscriptions = await fetchSubscriptions(accessToken, {
           signal: controller.signal,
         })
-        if (
-          !subscriptions.some(
-            (subscription) => subscription.status === 'past_due',
-          )
-        ) {
+        if (getPastDueAccessDecision(subscriptions).kind !== 'block') {
           setStep('success')
           completionTimerRef.current = setTimeout(() => onDone(true), 1_500)
           return
@@ -162,6 +182,10 @@ export function PastDueView({
   }, [accessToken, startPolling])
 
   if (step === 'loading') return null
+
+  if (step === 'warning') {
+    return <Text color="yellow">{getPastDueWarningMessage(pastDueGroups)}</Text>
+  }
 
   if (step === 'notice') {
     return (
@@ -240,9 +264,7 @@ export function PastDueView({
 export async function showPastDueNotice(accessToken: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     const subscriptions = await fetchSubscriptions(accessToken)
-    return !subscriptions.some(
-      (subscription) => subscription.status === 'past_due',
-    )
+    return getPastDueAccessDecision(subscriptions).kind !== 'block'
   }
 
   return new Promise<boolean>((resolve) => {

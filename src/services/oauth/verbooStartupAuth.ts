@@ -28,6 +28,7 @@ import { refreshOAuthToken, storeOAuthAccountInfo } from './client.js'
 import type { OAuthTokens } from './types.js'
 import { showNoModelsFlow } from './purchaseFlow.js'
 import { showPastDueNotice } from './pastDueFlow.js'
+import { hasCurrentSubscriptionEntitlement } from './subscriptionAccess.js'
 import { showVerbooTermsAcceptance } from '../../components/VerbooTermsAcceptance.js'
 import {
   fetchVerbooTermsStatus,
@@ -221,10 +222,7 @@ async function loadAndCheckModels(accessToken: string): Promise<void> {
   // invitation to buy the same plan again. Give propagation a short window
   // and fail with a specific recovery message instead of opening the catalog.
   const subscriptions = await fetchSubscriptions(accessToken)
-  const hasCurrentEntitlement = subscriptions.some(
-    (subscription) =>
-      subscription.status === 'active' || subscription.status === 'trialing',
-  )
+  const hasCurrentEntitlement = hasCurrentSubscriptionEntitlement(subscriptions)
   if (hasCurrentEntitlement) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 3_000))

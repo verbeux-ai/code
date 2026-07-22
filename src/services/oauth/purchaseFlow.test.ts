@@ -94,6 +94,16 @@ test('keeps an active local trial available for paid conversion even when full',
   expect(
     filterCliPurchasablePlans(
       [trialPlan],
+      [subscription({ source: 'stripe_trial', status: 'trialing' })],
+    ),
+  ).toEqual([trialPlan])
+})
+
+test('keeps legacy local trials available for paid conversion', () => {
+  const trialPlan = plan({ isMember: true })
+  expect(
+    filterCliPurchasablePlans(
+      [trialPlan],
       [subscription({ source: 'trial', status: 'trialing' })],
     ),
   ).toEqual([trialPlan])

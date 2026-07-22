@@ -139,6 +139,7 @@ result = await Bun.build({
     // version separately in Verboo Code branding.
     'MACRO.VERSION': JSON.stringify('99.0.0'),
     'MACRO.DISPLAY_VERSION': JSON.stringify(version),
+    VERBOO_CODE_BUILD_VERSION: JSON.stringify(version),
     'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
     'MACRO.ISSUES_EXPLAINER':
       JSON.stringify('report the issue at https://github.com/anthropics/claude-code/issues'),
@@ -486,6 +487,7 @@ sdkResult = await Bun.build({
   define: {
     'MACRO.VERSION': JSON.stringify(version),
     'MACRO.DISPLAY_VERSION': JSON.stringify(version),
+    VERBOO_CODE_BUILD_VERSION: JSON.stringify(version),
     'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
     'MACRO.ISSUES_EXPLAINER':
       JSON.stringify('report the issue at https://github.com/verbeux-ai/code/issues'),

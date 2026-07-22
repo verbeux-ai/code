@@ -74,7 +74,10 @@ export function movePlanFocus(
 }
 
 function isCurrentLocalTrial(subscription?: SubscriptionResponse): boolean {
-  return subscription?.source === 'trial' && subscription.status === 'trialing'
+  return (
+    subscription?.status === 'trialing' &&
+    ['trial', 'stripe_trial'].includes(subscription.source ?? '')
+  )
 }
 
 export function filterCliPurchasablePlans(

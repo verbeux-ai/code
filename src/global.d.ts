@@ -14,3 +14,6 @@ declare const MACRO: {
   PACKAGE_URL: string
   NATIVE_PACKAGE_URL: string | undefined
 }
+
+/** Product version injected as a direct build constant for telemetry headers. */
+declare const VERBOO_CODE_BUILD_VERSION: string

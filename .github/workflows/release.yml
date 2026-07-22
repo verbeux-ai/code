@@ -69,7 +69,11 @@ jobs:
             src/services/api/openaiShim.test.ts \
             src/services/api/verbooCheckout.test.ts \
             src/services/api/verbooModels.test.ts \
-            src/services/oauth/purchaseFlow.test.ts
+            src/services/oauth/purchaseFlow.test.ts \
+            src/services/oauth/pastDueFlow.test.tsx \
+            src/services/oauth/subscriptionAccess.test.ts \
+            src/services/oauth/verbooStartupAuth.test.ts \
+            src/utils/auth.refresh.test.ts
 
       - name: Smoke test
         run: bun run smoke

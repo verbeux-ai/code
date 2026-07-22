@@ -13,8 +13,9 @@ export function getClaudeCodeUserAgent(): string {
 // minimal: platform details are not needed for the router client metrics.
 export function getVerbooCodeUserAgent(): string {
   const version =
-    typeof MACRO !== 'undefined' && MACRO.DISPLAY_VERSION
-      ? MACRO.DISPLAY_VERSION
+    typeof VERBOO_CODE_BUILD_VERSION !== 'undefined' &&
+    VERBOO_CODE_BUILD_VERSION
+      ? VERBOO_CODE_BUILD_VERSION
       : 'unknown'
   return `verboo-code/${version}`
 }

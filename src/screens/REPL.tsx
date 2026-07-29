@@ -1540,6 +1540,11 @@ export function REPL({
       '🎯 Verboo Intelligence is locking onto the target',
       '🎬 Verboo Intelligence is setting the scene',
       '🎪 Verboo Intelligence is rolling out the red carpet',
+      '🔥 Getting ready to VerbooCodar!!',
+      '🚀 Warming up to VerbooCodar!',
+      '⚡ Firing up the engines to VerbooCodar!',
+      '🧠 Almost ready to VerbooCodar!',
+      '✨ Loading up to VerbooCodar!',
     ];
     let cancelled = false;
     void import('../services/api/openaiShim.js').then(mod => {

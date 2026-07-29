@@ -1053,6 +1053,56 @@ export function setOpenAIShimRouterStatusHandler(
   routerStatusHandler = fn
 }
 
+// -----------------------------------------------------------------------------
+// Aviso "preparando o modelo" (warming hint) por TEMPO.
+// Cobre a latência de cauda (cold start / preempção do backend) que NÃO vem
+// acompanhada do sinal router_status:"warming". O cronômetro começa no ENVIO
+// da requisição (em `create`), então pega tanto o caso do corpo lento quanto o
+// da requisição inteira pendurada antes de qualquer resposta. É só comunicação
+// visual — nunca aborta nem interfere no resultado. Override: VERBOO_SLOW_HINT_MS.
+// Module-level porque routerStatusHandler também é (uma query ativa por vez).
+let warmingHintTimer: ReturnType<typeof setTimeout> | null = null
+let warmingHintShown = false
+
+function getSlowHintMs(): number {
+  const raw = process.env.VERBOO_SLOW_HINT_MS
+  const v = raw ? parseInt(raw, 10) : NaN
+  return Number.isFinite(v) && v > 0 ? v : 12_000
+}
+function clearWarmingHintTimer(): void {
+  if (warmingHintTimer !== null) {
+    clearTimeout(warmingHintTimer)
+    warmingHintTimer = null
+  }
+}
+/** Arma o cronômetro; ao expirar sem conteúdo, mostra o aviso. */
+function scheduleWarmingHint(delayMs: number): void {
+  clearWarmingHintTimer()
+  warmingHintTimer = setTimeout(() => {
+    warmingHintTimer = null
+    if (!warmingHintShown) {
+      warmingHintShown = true
+      routerStatusHandler?.('warming-up')
+    }
+  }, delayMs)
+}
+/** Mostra o aviso imediatamente (usado quando o servidor sinaliza 'warming'). */
+function showWarmingHintNow(): void {
+  clearWarmingHintTimer()
+  if (!warmingHintShown) {
+    warmingHintShown = true
+    routerStatusHandler?.('warming-up')
+  }
+}
+/** Chegou conteúdo real / stream terminou / deu erro: limpa o aviso. Idempotente. */
+function resolveWarmingHint(): void {
+  clearWarmingHintTimer()
+  if (warmingHintShown) {
+    warmingHintShown = false
+    routerStatusHandler?.(null)
+  }
+}
+
 async function* openaiStreamToAnthropic(
   response: Response,
   model: string,
@@ -1078,7 +1128,8 @@ async function* openaiStreamToAnthropic(
   let lastStopReason: 'tool_use' | 'max_tokens' | 'end_turn' | null = null
   let hasEmittedFinalUsage = false
   let hasProcessedFinishReason = false
-  let routerWarmingActive = false
+  // (aviso "preparando" agora é controlado no nível do módulo — ver
+  // scheduleWarmingHint/showWarmingHintNow/resolveWarmingHint acima)
   const streamState = createStreamState()
 
   // Emit message_start
@@ -1116,6 +1167,7 @@ async function* openaiStreamToAnthropic(
   })()
   let lastDataTime = Date.now()
   const streamStartedAt = Date.now()
+
 
   /**
    * Read from the stream with an idle timeout. If no data arrives within
@@ -1249,9 +1301,10 @@ async function* openaiStreamToAnthropic(
         const routerStatus = (chunk as unknown as { router_status?: string })
           .router_status
         if (typeof routerStatus === 'string') {
-          if (routerStatus === 'warming' && !routerWarmingActive) {
-            routerWarmingActive = true
-            routerStatusHandler?.('warming-up')
+          if (routerStatus === 'warming') {
+            // Servidor sinalizou cold start: mostra o aviso já (não espera o
+            // cronômetro por tempo).
+            showWarmingHintNow()
           }
           continue
         }
@@ -1304,14 +1357,10 @@ async function* openaiStreamToAnthropic(
 
         const chunkUsage = convertChunkUsage(chunk.usage)
 
-        // Chunk com content real chegou — limpa warming-up se estava ativo.
-        if (
-          routerWarmingActive &&
-          Array.isArray(chunk.choices) &&
-          chunk.choices.length > 0
-        ) {
-          routerWarmingActive = false
-          routerStatusHandler?.(null)
+        // Chunk com content real chegou — limpa o aviso "preparando" (venha do
+        // sinal router_status OU do cronômetro por tempo).
+        if (Array.isArray(chunk.choices) && chunk.choices.length > 0) {
+          resolveWarmingHint()
         }
 
         for (const choice of chunk.choices ?? []) {
@@ -1678,6 +1727,9 @@ async function* openaiStreamToAnthropic(
       }
     }
   } finally {
+    // Garante que o aviso "preparando" não vaze visualmente se o stream
+    // terminar (fim, erro ou abort) sem ter chegado conteúdo real.
+    resolveWarmingHint()
     reader.releaseLock()
   }
 
@@ -1845,7 +1897,19 @@ class OpenAIShimMessages {
         reasoningEffortOverride: self.reasoningEffort,
         suppressReasoningEffort: self.suppressReasoningEffort,
       })
-      const response = await self._doRequest(request, params, options)
+      // Cronômetro do aviso "preparando" começa AQUI (no envio da requisição),
+      // então cobre tanto a resposta lenta quanto a requisição pendurada antes
+      // de qualquer resposta. É resolvido: no gerador de streaming (quando o
+      // conteúdo chega ou o stream termina), logo abaixo nos caminhos
+      // não-stream, ou aqui no catch se a própria requisição falhar.
+      scheduleWarmingHint(getSlowHintMs())
+      let response: Response
+      try {
+        response = await self._doRequest(request, params, options)
+      } catch (e) {
+        resolveWarmingHint()
+        throw e
+      }
       httpResponse = response
 
       if (params.stream) {
@@ -1866,6 +1930,10 @@ class OpenAIShimMessages {
               ),
         )
       }
+
+      // Caminhos não-stream: a resposta HTTP já chegou, então o aviso cumpriu
+      // seu papel — limpa antes de coletar/converter o corpo.
+      resolveWarmingHint()
 
       if (request.transport === 'codex_responses') {
         const data = await collectCodexCompletedResponse(

@@ -42,6 +42,21 @@ function listTrackedTestFiles(): string[] {
     .sort()
 }
 
+function selectTestFiles(files: string[]): string[] {
+  const filters = process.argv.slice(2)
+  if (filters.length === 0) return files
+
+  const selected = files.filter(file =>
+    filters.some(filter =>
+      filter.endsWith('/') ? file.startsWith(filter) : file === filter,
+    ),
+  )
+  if (selected.length === 0) {
+    throw new Error(`No tracked test files matched: ${filters.join(', ')}`)
+  }
+  return selected
+}
+
 function getConcurrency(): number {
   const parsed = Number.parseInt(process.env.TEST_ISOLATION_CONCURRENCY ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 4
@@ -90,8 +105,9 @@ async function runTestFile(file: string): Promise<TestResult> {
   return { file, exitCode, stdout, stderr }
 }
 
-const files = listTrackedTestFiles()
-const baseline = await loadBaseline(files)
+const allTrackedTestFiles = listTrackedTestFiles()
+const files = selectTestFiles(allTrackedTestFiles)
+const baseline = await loadBaseline(allTrackedTestFiles)
 const unexpectedFailures: TestResult[] = []
 const baselineFailures: TestResult[] = []
 const baselineImprovements: string[] = []

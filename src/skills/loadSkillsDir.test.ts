@@ -11,7 +11,7 @@ import {
 } from '../test/sharedMutationLock.js'
 
 function writeSkill(rootDir: string, skillPath: string): void {
-  const skillDir = join(rootDir, '.verboo', 'skills', ...skillPath.split('/'))
+  const skillDir = join(rootDir, 'skills', ...skillPath.split('/'))
   mkdirSync(skillDir, { recursive: true })
   writeFileSync(
     join(skillDir, 'SKILL.md'),
@@ -47,7 +47,7 @@ test('loads flat and nested skills with colon namespaces', async () => {
 
     const nestedSkill = promptSkills.find(skill => skill.name === 'git:commit')
     assert.ok(nestedSkill)
-    assert.equal(nestedSkill.skillRoot, join(configDir, '.verboo', 'skills', 'git', 'commit'))
+    assert.equal(nestedSkill.skillRoot, join(configDir, 'skills', 'git', 'commit'))
 
     const deepSkill = promptSkills.find(
       skill => skill.name === 'frontend:react:form',
@@ -55,7 +55,7 @@ test('loads flat and nested skills with colon namespaces', async () => {
     assert.ok(deepSkill)
     assert.equal(
       deepSkill.skillRoot,
-      join(configDir, '.verboo', 'skills', 'frontend', 'react', 'form'),
+      join(configDir, 'skills', 'frontend', 'react', 'form'),
     )
   } finally {
     try {

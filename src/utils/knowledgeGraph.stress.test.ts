@@ -16,8 +16,9 @@ import { setClaudeConfigHomeDirForTesting } from './envUtils.js'
 import { getFsImplementation } from './fsOperations.js'
 
 describe('KnowledgeGraph Phase 1 Stress & Edge Cases', () => {
-  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+  const originalConfigDir = process.env.VERBOO_CONFIG_DIR
   const originalOrama = process.env.OPENCLAUDE_KNOWLEDGE_ORAMA
+  const originalProjectsDir = process.env.VERBOO_PROJECTS_DIR
   const configDir = mkdtempSync(join(tmpdir(), 'openclaude-stress-'))
   const cwd = getFsImplementation().cwd()
 
@@ -47,7 +48,8 @@ describe('KnowledgeGraph Phase 1 Stress & Edge Cases', () => {
 
   beforeEach(async () => {
     await acquireEnvMutex()
-    process.env.CLAUDE_CONFIG_DIR = configDir
+    process.env.VERBOO_CONFIG_DIR = configDir
+    process.env.VERBOO_PROJECTS_DIR = join(configDir, 'projects')
     process.env.OPENCLAUDE_KNOWLEDGE_ORAMA = '1'
     setClaudeConfigHomeDirForTesting(configDir)
     resetGlobalGraph()
@@ -58,9 +60,14 @@ describe('KnowledgeGraph Phase 1 Stress & Edge Cases', () => {
       resetGlobalGraph()
       clearMemoryOnly()
       if (originalConfigDir === undefined) {
-        delete process.env.CLAUDE_CONFIG_DIR
+        delete process.env.VERBOO_CONFIG_DIR
       } else {
-        process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+        process.env.VERBOO_CONFIG_DIR = originalConfigDir
+      }
+      if (originalProjectsDir === undefined) {
+        delete process.env.VERBOO_PROJECTS_DIR
+      } else {
+        process.env.VERBOO_PROJECTS_DIR = originalProjectsDir
       }
       if (originalOrama === undefined) {
         delete process.env.OPENCLAUDE_KNOWLEDGE_ORAMA

@@ -52,6 +52,7 @@
     "web:preview": "bun run --cwd web preview",
     "web:typecheck": "bun run --cwd web typecheck",
     "test": "bun test",
+    "test:isolated": "bun run scripts/run-tests-isolated.ts",
     "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage --max-concurrency=1 && bun run scripts/render-coverage-heatmap.ts",
     "test:coverage:ui": "bun run scripts/render-coverage-heatmap.ts",
     "security:pr-scan": "bun run scripts/pr-intent-scan.ts",

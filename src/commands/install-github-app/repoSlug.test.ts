@@ -10,7 +10,7 @@ test('keeps owner/repo input as-is', () => {
 test('extracts slug from https GitHub URLs', () => {
   assert.equal(
     extractGitHubRepoSlug('https://github.com/verbeux-ai/code'),
-    'Gitlawb/verboo',
+    'verbeux-ai/code',
   )
   assert.equal(
     extractGitHubRepoSlug('https://www.github.com/Gitlawb/verboo.git'),

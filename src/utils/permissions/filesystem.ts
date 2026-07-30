@@ -107,16 +107,24 @@ export function getClaudeSkillScope(
 ): { skillName: string; pattern: string } | null {
   const absolutePath = expandPath(filePath)
   const absolutePathLower = normalizeCaseForComparison(absolutePath)
+  const defaultConfigHome = join(homedir(), '.verboo').normalize('NFC')
+  const isDefaultConfigHome = getClaudeConfigHomeDir() === defaultConfigHome
 
   const bases = [
     {
       dir: expandPath(join(getOriginalCwd(), '.verboo', 'skills')),
       prefix: '/.verboo/skills/',
     },
-    {
-      dir: expandPath(join(getClaudeConfigHomeDir(), 'skills')),
-      prefix: '~/.verboo/skills/',
-    },
+    // A fixed ~/.verboo rule is only valid for the default config home.
+    // Arbitrary VERBOO_CONFIG_DIR paths need a path-specific permission.
+    ...(isDefaultConfigHome
+      ? [
+          {
+            dir: expandPath(join(getClaudeConfigHomeDir(), 'skills')),
+            prefix: '~/.verboo/skills/',
+          },
+        ]
+      : []),
     {
       dir: expandPath(join(homedir(), '.claude', 'skills')),
       prefix: '~/.claude/skills/',

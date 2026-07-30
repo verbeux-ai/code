@@ -35,12 +35,38 @@ test('execFileNoThrowWithCwd rejects arguments with control characters', async (
   expect(result.error).toContain('Unsafe argument')
 })
 
-test('execFileNoThrowWithCwd rejects environment entries with control characters', async () => {
+test('execFileNoThrowWithCwd drops environment values with control characters', async () => {
+  const { execFileNoThrowWithCwd } = await importFreshExecFileNoThrowModule()
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (...args: unknown[]) => warnings.push(args.join(' '))
+
+  try {
+    const result = await execFileNoThrowWithCwd(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.BAD_ENV ?? "missing")'],
+      {
+        env: {
+          ...process.env,
+          BAD_ENV: 'line1\nline2',
+        },
+      },
+    )
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toBe('missing')
+    expect(warnings.some(warning => warning.includes('BAD_ENV'))).toBe(true)
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+test('execFileNoThrowWithCwd still rejects environment keys with control characters', async () => {
   const { execFileNoThrowWithCwd } = await importFreshExecFileNoThrowModule()
   const result = await execFileNoThrowWithCwd(process.execPath, ['--version'], {
     env: {
       ...process.env,
-      BAD_ENV: 'line1\nline2',
+      ['BAD\nKEY']: 'value',
     },
   })
 

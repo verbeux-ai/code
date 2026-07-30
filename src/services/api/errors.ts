@@ -284,6 +284,8 @@ export function isMediaSizeErrorMessage(msg: AssistantMessage): boolean {
   )
 }
 export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
+export const PLAN_PROVISIONING_ERROR_MESSAGE =
+  "Your plan is being activated. This can take a minute or two after an upgrade, so please wait a moment and try again. You don't need to log in."
 export const INVALID_API_KEY_ERROR_MESSAGE = 'Not logged in · Please run /login'
 export const INVALID_API_KEY_ERROR_MESSAGE_EXTERNAL =
   'Invalid API key · Fix external API key'
@@ -1018,6 +1020,25 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       error: 'authentication_failed',
       content: getOauthOrgNotAllowedErrorMessage(),
+    })
+  }
+
+  // 401 de billing/provisionamento (ex.: logo após um upgrade de plano o
+  // entitlement ainda não propagou e o router responde "Not Enough Credits").
+  // Não é falha de autenticação: pedir /login não resolve e assusta o cliente
+  // no pior momento (recém pagou). Mostra que o plano está sendo ativado.
+  // Idealmente o router devolveria um código estável; enquanto isso, casamos
+  // pela mensagem retornada.
+  if (
+    error instanceof APIError &&
+    error.status === 401 &&
+    /not enough credits|insufficient credits|provision(ing|ed)/i.test(
+      error.message,
+    )
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: PLAN_PROVISIONING_ERROR_MESSAGE,
+      error: 'billing_error',
     })
   }
 

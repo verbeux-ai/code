@@ -10,6 +10,7 @@ const originalFetch = globalThis.fetch
 const originalEnv = {
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_API_FORMAT: process.env.OPENAI_API_FORMAT,
   VERBOO_SLOW_HINT_MS: process.env.VERBOO_SLOW_HINT_MS,
 }
 
@@ -46,6 +47,29 @@ function makeDelayedSseResponse(lines: string[], delayMs: number): Response {
         } else {
           controller.close()
         }
+      },
+    }),
+    { headers: { 'Content-Type': 'text/event-stream' } },
+  )
+}
+
+function makeSequencedSseResponse(
+  entries: Array<{ line: string; delayMs?: number }>,
+): Response {
+  let i = 0
+  return new Response(
+    new ReadableStream({
+      async pull(controller) {
+        const entry = entries[i]
+        if (!entry) {
+          controller.close()
+          return
+        }
+        i++
+        if (entry.delayMs) {
+          await new Promise(resolve => setTimeout(resolve, entry.delayMs))
+        }
+        controller.enqueue(encoder.encode(entry.line))
       },
     }),
     { headers: { 'Content-Type': 'text/event-stream' } },
@@ -142,6 +166,102 @@ test('NÃO mostra warming-up quando a resposta chega rápido (sem flicker)', asy
     makeDelayedSseResponse(contentChunks(), 0)) as unknown as FetchType
 
   await drain()
+
+  expect(statusCalls).not.toContain('warming-up')
+})
+
+test('chunk inicial vazio não conta como conteúdo visível', async () => {
+  process.env.VERBOO_SLOW_HINT_MS = '40'
+  const statusCalls: (string | null)[] = []
+  setOpenAIShimRouterStatusHandler(status => statusCalls.push(status))
+
+  const metadataChunk = `data: ${JSON.stringify({
+    id: 'c1',
+    object: 'chat.completion.chunk',
+    model: 'fake-model',
+    choices: [
+      {
+        index: 0,
+        delta: { role: 'assistant', content: '' },
+        finish_reason: null,
+      },
+    ],
+  })}\n\n`
+  globalThis.fetch = (async () =>
+    makeSequencedSseResponse([
+      { line: metadataChunk },
+      { line: contentChunks()[0]!, delayMs: 150 },
+      { line: contentChunks()[1]! },
+      { line: contentChunks()[2]! },
+    ])) as unknown as FetchType
+
+  await drain()
+
+  expect(statusCalls).toEqual(['warming-up', null])
+})
+
+test('requisição rápida paralela não cancela o aviso da requisição lenta', async () => {
+  process.env.VERBOO_SLOW_HINT_MS = '40'
+  const statusCalls: (string | null)[] = []
+  setOpenAIShimRouterStatusHandler(status => statusCalls.push(status))
+  let fetchCount = 0
+
+  globalThis.fetch = (async () => {
+    fetchCount++
+    return makeDelayedSseResponse(
+      contentChunks(),
+      fetchCount === 1 ? 150 : 0,
+    )
+  }) as unknown as FetchType
+
+  const slowRequest = drain('slow-model')
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const fastRequest = drain('fast-model')
+  await Promise.all([slowRequest, fastRequest])
+
+  expect(fetchCount).toBe(2)
+  expect(statusCalls).toEqual(['warming-up', null])
+})
+
+test('stream Responses rápido finaliza o timer sem aviso tardio', async () => {
+  process.env.OPENAI_API_FORMAT = 'responses'
+  process.env.VERBOO_SLOW_HINT_MS = '40'
+  const statusCalls: (string | null)[] = []
+  setOpenAIShimRouterStatusHandler(status => statusCalls.push(status))
+
+  globalThis.fetch = (async () =>
+    makeDelayedSseResponse(
+      [
+        `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: 'oi' })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          response: {
+            id: 'resp_1',
+            model: 'fake-model',
+            status: 'completed',
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        })}\n\n`,
+      ],
+      0,
+    )) as unknown as FetchType
+
+  await drain()
+  await new Promise(resolve => setTimeout(resolve, 80))
+
+  expect(statusCalls).not.toContain('warming-up')
+})
+
+test('falha antes da resposta cancela o timer', async () => {
+  process.env.VERBOO_SLOW_HINT_MS = '20'
+  const statusCalls: (string | null)[] = []
+  setOpenAIShimRouterStatusHandler(status => statusCalls.push(status))
+  globalThis.fetch = (async () => {
+    throw new Error('network unavailable')
+  }) as unknown as FetchType
+
+  await expect(drain()).rejects.toThrow()
+  await new Promise(resolve => setTimeout(resolve, 40))
 
   expect(statusCalls).not.toContain('warming-up')
 })

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import stripAnsi from 'strip-ansi'
 import { VERBOO_ROUTER_URL } from '../constants/oauth.js'
-import { detectProvider } from './StartupScreen.js'
+import { detectProvider, renderStartupScreen } from './StartupScreen.js'
 import { saveGlobalConfig } from '../utils/config.js'
 import {
   resetSettingsCache,
@@ -183,5 +184,43 @@ describe('detectProvider — Verboo isolation', () => {
     expect(() => detectProvider()).toThrow(
       'Compre acesso em https://code.verboo.ai',
     )
+  })
+})
+
+describe('renderStartupScreen', () => {
+  const provider = {
+    name: 'Verboo',
+    model: 'early-adopters/qwen3.6-27b',
+    baseUrl: 'https://code.verboo.ai/router/v1',
+    isLocal: false,
+  }
+
+  test('renders the mascot layout safely in a wide terminal', () => {
+    const output = renderStartupScreen(provider, '0.14.5', '~/project', 120)
+    const plainOutput = stripAnsi(output)
+
+    expect(plainOutput).toContain('▄▀▀▀▀▀▀▀▄')
+    expect(plainOutput).toContain('Verboo Code')
+    expect(output).toContain('\x1b[0m')
+    expect(output).not.toContain('undefined')
+    expect(plainOutput.split('\n').every(line => line.length <= 120)).toBe(true)
+  })
+
+  test('uses the compact header in a narrow terminal', () => {
+    const output = stripAnsi(
+      renderStartupScreen(
+        {
+          ...provider,
+          model: 'a-provider-model-name-that-is-long-enough-to-wrap',
+        },
+        '0.14.5',
+        '~/a/very/long/project/path/that/would/wrap',
+        70,
+      ),
+    )
+
+    expect(output).toContain('👻')
+    expect(output).not.toContain('▄▀▀▀▀▀▀▀▄')
+    expect(output.split('\n').every(line => line.length <= 70)).toBe(true)
   })
 })

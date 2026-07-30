@@ -286,6 +286,8 @@ export function isMediaSizeErrorMessage(msg: AssistantMessage): boolean {
 export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
 export const PLAN_PROVISIONING_ERROR_MESSAGE =
   "Your plan is being activated. This can take a minute or two after an upgrade, so please wait a moment and try again. You don't need to log in."
+export const PLAN_ACCESS_PENDING_ERROR_MESSAGE =
+  "We couldn't confirm access to your plan yet. If you upgraded recently, activation can take a minute or two. Please wait a moment and try again; if this continues, contact support."
 export const INVALID_API_KEY_ERROR_MESSAGE = 'Not logged in · Please run /login'
 export const INVALID_API_KEY_ERROR_MESSAGE_EXTERNAL =
   'Invalid API key · Fix external API key'
@@ -307,6 +309,46 @@ export function getCustomOffSwitchMessage(): string {
 export const CUSTOM_OFF_SWITCH_MESSAGE =
   'Opus is experiencing high load, please use /model to switch to Sonnet'
 export const API_TIMEOUT_ERROR_MESSAGE = 'Request timed out'
+
+function getAPIErrorBodyField(
+  error: APIError,
+  field: 'code' | 'error_code' | 'message',
+): string | undefined {
+  const body = error.error
+  if (!body || typeof body !== 'object') return undefined
+
+  const record = body as Record<string, unknown>
+  const nestedError = record.error
+  if (nestedError && typeof nestedError === 'object') {
+    const nestedValue = (nestedError as Record<string, unknown>)[field]
+    if (typeof nestedValue === 'string') return nestedValue
+  }
+
+  const value = record[field]
+  if (typeof value === 'string') return value
+  if (field === 'message' && typeof nestedError === 'string') {
+    return nestedError
+  }
+  return undefined
+}
+
+function getAPIErrorCode(error: APIError): string | undefined {
+  return (
+    getAPIErrorBodyField(error, 'code') ??
+    getAPIErrorBodyField(error, 'error_code')
+  )?.trim().toLowerCase()
+}
+
+function getAPIErrorDetail(error: APIError): string {
+  const bodyMessage = getAPIErrorBodyField(error, 'message')
+  if (bodyMessage) return bodyMessage.trim()
+  return error.message.replace(/^\d{3}\s+/, '').trim()
+}
+
+function isVerbooRouterError(): boolean {
+  return isVerbooMode() && isFirstPartyAnthropicBaseUrl()
+}
+
 export function getPdfTooLargeErrorMessage(): string {
   const limits = `max ${API_PDF_MAX_PAGES} pages, ${formatFileSize(PDF_TARGET_RAW_SIZE)}`
   return getIsNonInteractiveSession()
@@ -1023,23 +1065,43 @@ export function getAssistantMessageFromError(
     })
   }
 
-  // 401 de billing/provisionamento (ex.: logo após um upgrade de plano o
-  // entitlement ainda não propagou e o router responde "Not Enough Credits").
-  // Não é falha de autenticação: pedir /login não resolve e assusta o cliente
-  // no pior momento (recém pagou). Mostra que o plano está sendo ativado.
-  // Idealmente o router devolveria um código estável; enquanto isso, casamos
-  // pela mensagem retornada.
+  // Provisioning and billing codes are meaningful only for the Verboo router.
+  // Prefer the machine-readable code; legacy text is intentionally exact and
+  // receives neutral copy because it cannot prove that an upgrade happened.
   if (
     error instanceof APIError &&
     error.status === 401 &&
-    /not enough credits|insufficient credits|provision(ing|ed)/i.test(
-      error.message,
-    )
+    isVerbooRouterError()
   ) {
-    return createAssistantAPIErrorMessage({
-      content: PLAN_PROVISIONING_ERROR_MESSAGE,
-      error: 'billing_error',
-    })
+    const errorCode = getAPIErrorCode(error)
+    if (errorCode === 'plan_provisioning') {
+      return createAssistantAPIErrorMessage({
+        content: PLAN_PROVISIONING_ERROR_MESSAGE,
+        error: 'billing_error',
+      })
+    }
+
+    if (
+      errorCode === 'insufficient_credits' ||
+      errorCode === 'credit_balance_too_low' ||
+      errorCode === 'credits_exhausted'
+    ) {
+      return createAssistantAPIErrorMessage({
+        content: CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE,
+        error: 'billing_error',
+      })
+    }
+
+    const legacyDetail = getAPIErrorDetail(error).toLowerCase()
+    if (
+      legacyDetail === 'not enough credits' ||
+      legacyDetail === 'insufficient credits'
+    ) {
+      return createAssistantAPIErrorMessage({
+        content: PLAN_ACCESS_PENDING_ERROR_MESSAGE,
+        error: 'billing_error',
+      })
+    }
   }
 
   // Generic handler for other 401/403 authentication errors

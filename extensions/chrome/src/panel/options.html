@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verboo — Settings</title>
+  <link rel="stylesheet" href="../panel/panel.css" />
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="options" id="options" data-state="loading">
+    <header class="options-head">
+      <img
+        class="options-mascot"
+        id="options-mascot"
+        src="/icons/verboo-mascot.png"
+        width="32"
+        height="32"
+        alt=""
+        decoding="async"
+      />
+      <div class="options-head-meta">
+        <h1 class="options-title" data-i18n="options_title">Verboo settings</h1>
+        <p class="options-sub" id="options-user"></p>
+      </div>
+    </header>
+
+    <!-- Permission mode (long descriptions) -->
+    <section class="options-section" aria-labelledby="mode-title">
+      <h2 class="options-section-title" id="mode-title" data-i18n="mode_title">
+        Permission mode
+      </h2>
+      <div class="options-mode-stack" role="radiogroup" aria-labelledby="mode-title">
+        <label class="options-mode" data-mode="manual">
+          <input type="radio" name="mode" value="manual" checked />
+          <div class="options-mode-body">
+            <div class="options-mode-label" data-i18n="mode_manualLong">
+              Ask before acting
+            </div>
+            <div class="options-mode-desc" data-i18n="mode_manual_desc">
+              Review every action before it runs.
+            </div>
+          </div>
+        </label>
+        <label class="options-mode" data-mode="skip">
+          <input type="radio" name="mode" value="skip" />
+          <div class="options-mode-body">
+            <div class="options-mode-label" data-i18n="mode_skipLong">
+              Act without asking
+            </div>
+            <div class="options-mode-desc" data-i18n="mode_skip_desc">
+              No routine prompts; hard blocks still enforced.
+            </div>
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <!-- Site grants -->
+    <section class="options-section" aria-labelledby="grants-title">
+      <h2 class="options-section-title" id="grants-title" data-i18n="siteGrants_title">
+        Site grants
+      </h2>
+      <div class="options-grants-add">
+        <input
+          type="text"
+          id="grants-host-input"
+          class="field-input"
+          data-i18n-placeholder="siteGrants_hostPlaceholder"
+          placeholder="example.com"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <select id="grants-decision-select" class="field-select" aria-label="Decision">
+          <option value="always" data-i18n="siteGrants_alwaysAllow">Always allow</option>
+          <option value="once" data-i18n="siteGrants_allowOnce">Allow once</option>
+          <option value="deny" data-i18n="siteGrants_deny">Deny</option>
+        </select>
+        <button
+          class="btn btn-secondary"
+          id="grants-add-btn"
+          type="button"
+          data-i18n="siteGrants_addHost"
+        >
+          Add
+        </button>
+      </div>
+      <ul class="options-grants-list" id="grants-list" aria-live="polite"></ul>
+      <p class="options-grants-empty" id="grants-empty" data-i18n="siteGrants_empty">
+        No site grants yet.
+      </p>
+    </section>
+
+    <!-- Routines and Skills -->
+    <section
+      class="options-section options-routines"
+      id="routines-section"
+      aria-labelledby="routines-title"
+    >
+      <div class="options-section-heading">
+        <div>
+          <h2 class="options-section-title" id="routines-title" data-i18n="routines_title">
+            Routines and Skills
+          </h2>
+          <p class="options-section-copy" data-i18n="routines_description">
+            Save reusable instructions and run them from the chat with a slash command.
+          </p>
+        </div>
+        <button type="button" class="btn btn-primary" id="routine-create" data-i18n="routine_create">
+          New routine
+        </button>
+      </div>
+      <div class="routines-list" id="routines-list" aria-live="polite"></div>
+      <p class="routines-empty" id="routines-empty" data-i18n="routines_empty">
+        No routines yet.
+      </p>
+      <p class="field-error" id="routines-error" role="alert" hidden></p>
+    </section>
+
+    <!-- Account -->
+    <section class="options-section" aria-labelledby="account-title">
+      <h2 class="options-section-title" id="account-title" data-i18n="account_title">
+        Account
+      </h2>
+      <div class="options-account">
+        <button
+          type="button"
+          class="btn btn-secondary"
+          id="auth-action"
+          data-action="logout"
+          data-i18n="auth_logout"
+        >
+          Sign out
+        </button>
+        <button
+          type="button"
+          class="text-link"
+          id="privacy-link"
+          data-i18n="privacy_link"
+        >
+          Privacy policy
+        </button>
+      </div>
+    </section>
+
+    <dialog
+      class="routine-editor"
+      id="routine-editor-dialog"
+      aria-labelledby="routine-editor-title"
+    >
+      <form id="routine-form" method="dialog">
+        <div class="routine-editor-head">
+          <div>
+            <h2 id="routine-editor-title" data-i18n="routine_editor_title">Routine</h2>
+            <p data-i18n="routine_editor_description">
+              Instructions stay in this Chrome profile and are scoped to your Verboo account.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="icon-btn"
+            id="routine-editor-close"
+            data-i18n-aria-label="routine_cancel"
+            aria-label="Cancel"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+
+        <input type="hidden" id="routine-id" />
+        <input type="hidden" id="routine-revision" />
+
+        <div class="routine-editor-grid">
+          <label class="routine-field">
+            <span data-i18n="routine_name">Name</span>
+            <input class="field-input" id="routine-name" name="name" maxlength="80" required />
+          </label>
+          <label class="routine-field">
+            <span data-i18n="routine_command">Slash command</span>
+            <span class="routine-command-input">
+              <span aria-hidden="true">/</span>
+              <input class="field-input" id="routine-command" name="command" maxlength="64" spellcheck="false" />
+            </span>
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_description">Description</span>
+            <input class="field-input" id="routine-description" name="description" maxlength="240" />
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_instructions">Instructions</span>
+            <textarea class="field-input routine-textarea" id="routine-instructions" name="instructions" maxlength="32000" required></textarea>
+            <small data-i18n="routine_variables_help">Use {{name}} to request a value before the routine starts.</small>
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_start_url">Starting URL</span>
+            <input class="field-input" id="routine-start-url" name="startUrl" type="url" placeholder="https://example.com" />
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_allowed_origins">Allowed sites</span>
+            <textarea class="field-input routine-textarea routine-textarea-small" id="routine-allowed-origins" name="allowedOrigins" placeholder="https://example.com"></textarea>
+            <small data-i18n="routine_origins_help">One origin per line. Scheduled runs never leave this list.</small>
+          </label>
+          <label class="routine-field">
+            <span data-i18n="routine_model">Preferred model</span>
+            <select class="field-select" id="routine-model-id" name="modelId">
+              <option value="" data-i18n="routine_model_default">Use the current visual model</option>
+            </select>
+          </label>
+          <label class="routine-check">
+            <input type="checkbox" id="routine-cleanup-tabs" name="cleanupCreatedTabs" checked />
+            <span data-i18n="routine_cleanup_tabs">Close tabs created by the routine when it finishes</span>
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_files">Reference files</span>
+            <input
+              class="field-input"
+              id="routine-files"
+              name="files"
+              type="file"
+              multiple
+              accept=".md,.txt,.json,.csv,.png,.jpg,.jpeg,.webp"
+            />
+            <small data-i18n="routine_files_help">Markdown, text, JSON, CSV, PNG, JPEG, or WebP.</small>
+            <div class="routine-files-list" id="routine-files-list"></div>
+          </label>
+          <label class="routine-field routine-field-wide">
+            <span data-i18n="routine_recorded_steps">Recorded steps</span>
+            <textarea class="field-input routine-textarea routine-textarea-small" id="routine-recorded-steps" name="recordedSteps"></textarea>
+            <small data-i18n="routine_recorded_steps_help">Review selectors and variable placeholders before saving.</small>
+          </label>
+          <fieldset class="routine-automation routine-field-wide">
+            <legend data-i18n="routine_automation">Automation building blocks</legend>
+            <label class="routine-field">
+              <span data-i18n="routine_branch_selector">If selector</span>
+              <input class="field-input" id="routine-branch-selector" placeholder=".status" />
+            </label>
+            <label class="routine-field">
+              <span data-i18n="routine_branch_contains">Contains text</span>
+              <input class="field-input" id="routine-branch-contains" placeholder="Ready" />
+            </label>
+            <label class="routine-field routine-field-wide">
+              <span data-i18n="routine_branch_then">If found, do</span>
+              <textarea class="field-input routine-textarea routine-textarea-small" id="routine-branch-then"></textarea>
+            </label>
+            <label class="routine-field routine-field-wide">
+              <span data-i18n="routine_branch_else">Otherwise, do</span>
+              <textarea class="field-input routine-textarea routine-textarea-small" id="routine-branch-else"></textarea>
+            </label>
+            <label class="routine-field">
+              <span data-i18n="routine_output_format">Structured output</span>
+              <select class="field-select" id="routine-output-format">
+                <option value="" data-i18n="routine_output_none">No structured output</option>
+                <option value="json">JSON</option>
+                <option value="csv">CSV</option>
+                <option value="table" data-i18n="routine_output_table">Markdown table</option>
+              </select>
+            </label>
+            <label class="routine-field">
+              <span data-i18n="routine_output_selector">Output selector</span>
+              <input class="field-input" id="routine-output-selector" placeholder="table" />
+            </label>
+            <label class="routine-field routine-field-wide">
+              <span data-i18n="routine_subroutines">Sub-routines</span>
+              <textarea class="field-input routine-textarea routine-textarea-small" id="routine-subroutines" placeholder="/collect-leads"></textarea>
+              <small data-i18n="routine_subroutines_help">One slash command per line. They run as reusable instruction modules.</small>
+            </label>
+          </fieldset>
+          <fieldset class="routine-schedule routine-field-wide">
+            <legend data-i18n="routine_schedule">Schedule</legend>
+            <label class="routine-check">
+              <input type="checkbox" id="routine-schedule-enabled" />
+              <span data-i18n="routine_schedule_enable">Run on a schedule</span>
+            </label>
+            <div class="routine-schedule-fields">
+              <label class="routine-field">
+                <span data-i18n="routine_frequency">Frequency</span>
+                <select class="field-select" id="routine-schedule-frequency">
+                  <option value="daily" data-i18n="routine_daily">Daily</option>
+                  <option value="weekly" data-i18n="routine_weekly">Weekly</option>
+                  <option value="monthly" data-i18n="routine_monthly">Monthly</option>
+                  <option value="annual" data-i18n="routine_annual">Annually</option>
+                </select>
+              </label>
+              <label class="routine-field">
+                <span data-i18n="routine_time">Time</span>
+                <input class="field-input" id="routine-schedule-time" type="time" value="09:00" />
+              </label>
+              <label class="routine-field" id="routine-schedule-weekday-field" hidden>
+                <span data-i18n="routine_weekday">Day of week</span>
+                <select class="field-select" id="routine-schedule-weekday">
+                  <option value="1" data-i18n="routine_monday">Monday</option>
+                  <option value="2" data-i18n="routine_tuesday">Tuesday</option>
+                  <option value="3" data-i18n="routine_wednesday">Wednesday</option>
+                  <option value="4" data-i18n="routine_thursday">Thursday</option>
+                  <option value="5" data-i18n="routine_friday">Friday</option>
+                  <option value="6" data-i18n="routine_saturday">Saturday</option>
+                  <option value="0" data-i18n="routine_sunday">Sunday</option>
+                </select>
+              </label>
+              <label class="routine-field" id="routine-schedule-month-field" hidden>
+                <span data-i18n="routine_month">Month</span>
+                <select class="field-select" id="routine-schedule-month">
+                  <option value="1">01</option>
+                  <option value="2">02</option>
+                  <option value="3">03</option>
+                  <option value="4">04</option>
+                  <option value="5">05</option>
+                  <option value="6">06</option>
+                  <option value="7">07</option>
+                  <option value="8">08</option>
+                  <option value="9">09</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                  <option value="12">12</option>
+                </select>
+              </label>
+              <label class="routine-field" id="routine-schedule-day-field" hidden>
+                <span data-i18n="routine_day">Day</span>
+                <input
+                  class="field-input"
+                  id="routine-schedule-day"
+                  type="number"
+                  min="1"
+                  max="31"
+                  value="1"
+                />
+              </label>
+            </div>
+            <p
+              class="field-error"
+              id="routine-schedule-error"
+              role="status"
+              data-i18n="routine_schedule_requirements"
+              hidden
+            >
+              Scheduled routines require a valid starting URL and matching allowed site.
+            </p>
+          </fieldset>
+        </div>
+
+        <p class="field-error" id="routine-form-error" role="alert" hidden></p>
+        <div class="routine-editor-actions">
+          <button type="button" class="btn btn-secondary" id="routine-editor-cancel" data-i18n="routine_cancel">
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" id="routine-save" data-i18n="routine_save">
+            Save routine
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

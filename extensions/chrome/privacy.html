@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — Verboo Code — Browser Control</title>
+  <meta name="description" content="Privacy policy for the Verboo Code Chrome extension: what is stored locally, what is sent off-device, and what the extension does not do." />
+  <style>
+    :root {
+      --fg: #111418;
+      --fg-muted: #4a525c;
+      --bg: #ffffff;
+      --bg-soft: #f7f8fa;
+      --border: #e4e7ec;
+      --accent: #1f6feb;
+      --max-width: 760px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #e6e8eb;
+        --fg-muted: #9aa3ad;
+        --bg: #0e1116;
+        --bg-soft: #161b22;
+        --border: #30363d;
+        --accent: #58a6ff;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      color: var(--fg);
+      background: var(--bg);
+    }
+    .container {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+    h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; }
+    h2 { font-size: 1.25rem; margin: 36px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    h3 { font-size: 1rem; margin: 20px 0 8px; }
+    p { margin: 0 0 12px; }
+    .meta { color: var(--fg-muted); font-size: 0.9rem; margin: 0 0 24px; }
+    ul, ol { padding-left: 22px; margin: 0 0 16px; }
+    li { margin-bottom: 6px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 20px;
+      font-size: 0.92rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { background: var(--bg-soft); font-weight: 600; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.88em;
+      background: var(--bg-soft);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 0.78rem;
+      border-radius: 999px;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+    }
+    .disclaimer {
+      border-left: 3px solid var(--accent);
+      padding: 12px 16px;
+      background: var(--bg-soft);
+      border-radius: 0 6px 6px 0;
+      margin-top: 32px;
+      font-size: 0.92rem;
+      color: var(--fg-muted);
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Verboo Code — Privacy Policy</h1>
+    <p class="meta">
+      <strong>Last updated:</strong> 2026-08-04 ·
+      <strong>Extension:</strong> Verboo Code — Browser Control ·
+      <span class="badge">v0.3.1</span>
+    </p>
+
+    <p>
+      This privacy policy explains what data the Verboo Code browser extension
+      handles when you use it to control Chrome with a Verboo account session.
+      Plain-English summary first, technical detail below.
+    </p>
+
+    <h2>Summary</h2>
+    <p>Saved routines stay scoped to the signed-in Verboo account and this Chrome profile. Routine instructions and user-selected reference content are sent to the Verboo Router only when that routine runs.</p>
+    <ul>
+      <li><strong>No data is sold.</strong></li>
+      <li><strong>You stay in control</strong> of every action: the extension asks before each potentially destructive step, and you can always deny.</li>
+      <li><strong>Hard blocks cannot be bypassed.</strong> Actions like purchasing, financial trades, mass deletion, and credential exposure are blocked even in the most permissive permission mode.</li>
+      <li><strong>Standalone chat is explicit.</strong> After extension OAuth, a turn you start sends your prompt, selected browser context, and tool results to the Verboo Router. Text selected through <strong>Ask Verboo</strong> stays local and is sent only when you send a chat turn. Browser text is fenced as untrusted data.</li>
+      <li><strong>MCP stays local.</strong> The Verboo in Chrome MCP transport does not carry CLI tokens into the extension.</li>
+    </ul>
+
+    <h2>What the extension accesses</h2>
+    <table>
+      <thead>
+        <tr><th>Data</th><th>Why</th><th>Where it goes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Active tab URL and title</td>
+          <td>Show context in the side panel and route tool calls</td>
+          <td>Sent to the Verboo Router only during a standalone chat turn after extension OAuth.</td>
+        </tr>
+        <tr>
+          <td>Text you explicitly select and choose <strong>Ask Verboo</strong> for</td>
+          <td>Show the selected text as context in the side panel</td>
+          <td>Kept temporarily in <code>chrome.storage.session</code> and sent only when you send a chat turn. It is fenced as untrusted browser data before model processing.</td>
+        </tr>
+        <tr>
+          <td>Page content you read or click on</td>
+          <td>Execute tools you approved</td>
+          <td>Sent to the Verboo Router only for a turn you started; text is fenced as untrusted browser data.</td>
+        </tr>
+        <tr>
+          <td>Chrome tabs and tab groups</td>
+          <td>Manage your browsing during a turn (list, switch, close, open new)</td>
+          <td>Used locally for execution; selected tool results may be included in the active Router turn.</td>
+        </tr>
+        <tr>
+          <td>Your Verboo account session</td>
+          <td>Authenticate standalone chat</td>
+          <td>Stored locally as <code>verbooSession</code>; access tokens are sent only to bundled Verboo OAuth/Router endpoints and are never copied from the CLI.</td>
+        </tr>
+        <tr>
+          <td>Permission mode (Manual / Auto / Skip) and per-site grants</td>
+          <td>Enforce your chosen safety level</td>
+          <td>Stored locally under <code>chromePermissionMode</code> and <code>siteGrants</code>. Never sent anywhere.</td>
+        </tr>
+        <tr>
+          <td>Saved routines, variable defaults, recorded steps, schedules, and selected reference files</td>
+          <td>Repeat a browser task from a slash command or optional local schedule</td>
+          <td>Definitions and files stay in this Chrome profile. Instructions and required reference content are sent to the selected model only while the routine runs.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>What the extension does NOT do</h2>
+    <ul>
+      <li>It does <strong>not</strong> read your keystrokes outside of tools you explicitly approve.</li>
+      <li>It does <strong>not</strong> track you across sites that the extension is not active on.</li>
+      <li>It does <strong>not</strong> collect analytics, telemetry, or crash reports.</li>
+      <li>It does <strong>not</strong> read or modify pages on internal Chrome URLs (<code>chrome://</code>, <code>chrome-extension://</code>, <code>about:</code>) — these are hard-blocked.</li>
+      <li>It does <strong>not</strong> read or modify content on <code>chrome.google.com/webstore</code>.</li>
+      <li>It does <strong>not</strong> store your browsing history.</li>
+      <li>It does <strong>not</strong> load executable code from a remote origin. All extension scripts are bundled.</li>
+      <li>It does <strong>not</strong> request the <code>debugger</code> permission. Future full-page screenshots will re-add it with an updated listing.</li>
+    </ul>
+
+    <h2>Storage keys (multi-user accurate)</h2>
+    <table>
+      <thead>
+        <tr><th>Key</th><th>Module</th><th>Contents</th><th>Sent off-device?</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>verbooSession</code></td>
+          <td><code>src/auth/auth.js</code></td>
+          <td><code>{ accountId, email?, accessToken, refreshToken?, expiresAt?, source: 'oauth' }</code></td>
+          <td>Bundled Verboo OAuth/Router endpoints used by standalone chat.</td>
+        </tr>
+        <tr>
+          <td><code>verbooModelsCache</code> / <code>verbooSelectedModelId</code></td>
+          <td><code>src/auth/auth.js</code></td>
+          <td>Router model catalog, timestamp, and selected model ID</td>
+          <td>The selected model ID is included in Router requests.</td>
+        </tr>
+        <tr>
+          <td><code>chromePermissionMode</code></td>
+          <td><code>src/policy/modesStore.js</code></td>
+          <td>One of <code>'manual'</code>, <code>'auto'</code>, <code>'skip'</code></td>
+          <td>Never.</td>
+        </tr>
+        <tr>
+          <td><code>siteGrants</code></td>
+          <td><code>src/policy/siteGrantsStore.js</code></td>
+          <td>Array of <code>{ host, decision, updatedAt }</code></td>
+          <td>Never.</td>
+        </tr>
+        <tr>
+          <td><code>verbooRoutinesV1</code></td>
+          <td><code>src/routines/store.js</code></td>
+          <td>Account-scoped routine definitions, schedules, variables, and recorded steps</td>
+          <td>Routine instructions are sent only while that routine runs.</td>
+        </tr>
+        <tr>
+          <td><code>verbooRoutineRunsV1</code></td>
+          <td><code>src/routines/runStore.js</code></td>
+          <td>Bounded run history, status, checkpoints, and optional recovery suggestions</td>
+          <td>Never directly.</td>
+        </tr>
+        <tr>
+          <td><code>verbooSelectionContexts</code></td>
+          <td><code>src/selectionContext.js</code></td>
+          <td>A temporary selected-text context, keyed by tab, until it is sent or dismissed</td>
+          <td>Only when you send the next chat turn with that context; then discarded.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>Persistent definitions live in <code>chrome.storage.local</code>. Routine files live in the extension-only IndexedDB database <code>verboo-routines</code>; deleting a routine deletes its files. Temporary drafts, active recording state, and pending selected-text context use <code>chrome.storage.session</code>. A selected-text context is discarded when you remove it or after the first chat turn that uses it. Nothing is synced to your Google account. Recording listeners remain inert until you start recording, discard password/payment/token fields, and do not save safe input literals until you explicitly resolve them.</p>
+
+    <h2>Permissions explained</h2>
+    <ul>
+      <li><code>sidePanel</code> — Opens the Verboo control panel alongside the page you are on.</li>
+      <li><code>contextMenus</code> — Shows <strong>Ask Verboo</strong> only when text is selected; choosing it opens the side panel and keeps the text locally as pending context until you send a chat turn.</li>
+      <li><code>identity</code> — Opens the user-initiated Verboo OAuth PKCE flow and receives its Chrome callback.</li>
+      <li><code>storage</code> — Persists the extension session, model cache/selection, permission mode, grants, routines, checkpoints, and temporary recording state.</li>
+      <li><code>alarms</code> — Wakes Chrome for an optional local routine schedule. Missed occurrences run at most once.</li>
+      <li><code>notifications</code> — Alerts you when a routine pauses for sign-in, a compatible model, a variable, an allowed site, a normal window, or approval.</li>
+      <li><code>scripting</code> — Injects small scripts into the active tab to read content, click elements, or fill form fields you approved. Scripts are bundled in the extension; the extension never evaluates strings fetched from a remote origin.</li>
+      <li><code>tabs</code> — Lists, switches, closes, opens, and updates tabs. Used to manage browser state during a turn.</li>
+      <li><code>tabGroups</code> — Groups browser tabs when you organize a multi-step task.</li>
+      <li><code>host_permissions</code> (<code>http://*/*</code>, <code>https://*/*</code>) — Required so <code>scripting</code> and <code>tabs</code> can work on any HTTP/HTTPS page. Non-HTTP schemes (<code>file://</code>, <code>chrome://</code>, <code>about:</code>) are not reachable.</li>
+    </ul>
+
+    <p>Future permissions, added only when needed and announced in a Store update:</p>
+    <ul>
+      <li><code>debugger</code> — For full-page screenshots and sandboxed JavaScript evaluation via the Chrome DevTools Protocol. Not requested in the current build.</li>
+    </ul>
+
+    <h2>When you are not signed in</h2>
+    <p>
+      If you are not signed in, standalone chat does not call the Verboo Router.
+      The side panel still exposes local permission and site-grant controls.
+    </p>
+
+    <h2>Multi-user</h2>
+    <p>
+      Zero hardcoded paths, users, or tokens. <code>accountId</code> from the
+      OAuth session distinguishes users. Every routine is keyed by that
+      account ID; session, permission mode, and site grants remain local to
+      this extension profile.
+    </p>
+
+    <h2>Third parties</h2>
+    <p>
+      The extension embeds no third-party scripts, fonts, or trackers. All
+      assets are bundled in the extension package. Standalone inference is
+      requested through the Verboo Router after OAuth.
+    </p>
+
+    <h2>Children</h2>
+    <p>
+      The extension is not directed at children under 13, and we do not
+      knowingly collect data from children.
+    </p>
+
+    <h2>Changes to this policy</h2>
+    <p>
+      Material changes will be reflected by updating the date at the top.
+      Continued use after a change indicates acceptance of the updated policy.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Open an issue at the Verboo Code repository issue tracker (replace before
+      publishing to the Web Store).
+    </p>
+
+  </main>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "verboo-chrome",
+  "version": "0.3.1",
+  "description": "Control Chrome with Verboo — MV3 extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "package": "node scripts/package.mjs",
+    "test": "node --test \"src/manifest.test.js\" \"src/selectionContext.test.js\" \"src/selectionContext.contract.test.js\" \"src/privacyContract.test.js\" \"src/policy/**/*.test.js\" \"src/controller/*.test.js\" \"src/controller/tools/*.test.js\" \"src/native/*.test.js\" \"src/planMessage.test.js\" \"src/auth/auth.test.js\" \"src/presence/**/*.test.js\" \"src/agent/**/*.test.js\" \"src/panel/**/*.test.js\" \"src/routines/**/*.test.js\""
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

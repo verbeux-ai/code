@@ -1,0 +1,118 @@
+{
+  "version": "1.1.0",
+  "tools": [
+    {
+      "name": "navigate",
+      "description": "Navigate the active tab to an HTTP or HTTPS URL.",
+      "risk": "mutate",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "read_page",
+      "description": "Read text content from the current page or a CSS selector.",
+      "risk": "read",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "selector": { "type": "string" },
+          "attribute": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "structured_extract",
+      "description": "Extract the current page or selector as JSON, CSV, or a Markdown table.",
+      "risk": "read",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "selector": { "type": "string" },
+          "format": { "type": "string", "enum": ["json", "csv", "table"] }
+        }
+      }
+    },
+    {
+      "name": "click",
+      "description": "Click an element on the current page by CSS selector.",
+      "risk": "mutate",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["selector"],
+        "properties": {
+          "selector": { "type": "string" },
+          "button": { "type": "string", "enum": ["left", "right", "middle"] }
+        }
+      }
+    },
+    {
+      "name": "type",
+      "description": "Type text into an input or textarea selected by CSS.",
+      "risk": "mutate",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["selector", "text"],
+        "properties": {
+          "selector": { "type": "string" },
+          "text": { "type": "string" },
+          "clear": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "screenshot",
+      "description": "Capture the visible viewport of the current HTTP or HTTPS tab.",
+      "risk": "read",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "tabs",
+      "description": "List, open a new tab, switch, or close tabs in the current Chrome window. When the user explicitly asks for a new tab, use action=new; do not use navigate because navigate replaces the active tab.",
+      "risk": "mutate",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string", "enum": ["list", "new", "switch", "close"] },
+          "url": { "type": "string" },
+          "tabId": { "type": "integer" }
+        }
+      }
+    },
+    {
+      "name": "tab_group",
+      "description": "Create, remove, assign, or unassign a Chrome tab group.",
+      "risk": "mutate",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string", "enum": ["create", "remove", "assign", "unassign"] },
+          "groupId": { "type": "integer" },
+          "tabIds": { "type": "array", "items": { "type": "integer" } },
+          "title": { "type": "string" },
+          "color": {
+            "type": "string",
+            "enum": ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]
+          }
+        }
+      }
+    }
+  ]
+}

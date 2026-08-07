@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verboo</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <div class="app" id="app" data-auth="signed-out">
+
+    <!-- ═══════════════════════════════════════════════════════════
+         SIGNED-OUT: user-initiated Verboo OAuth login.
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="login-gate" id="login-gate" aria-label="Sign in">
+      <div class="login-card">
+        <img
+          class="login-mascot"
+          src="/icons/verboo-mascot.png"
+          width="56"
+          height="56"
+          alt=""
+          decoding="async"
+        />
+        <h1 class="login-title" data-i18n="branding_title">Verboo</h1>
+        <p class="login-tagline" data-i18n="branding_tagline">Control Chrome with Verboo</p>
+        <p class="login-copy" data-i18n="auth_oauthIntro">
+          Continue with your Verboo account in a secure browser window.
+        </p>
+
+        <div class="login-connection-note" role="note">
+          <div class="login-connection-row">
+            <span class="login-connection-dot" aria-hidden="true"></span>
+            <span class="login-connection-copy">
+              <strong data-i18n="auth_accountLoginLabel">Verboo account</strong>
+              <span data-i18n="auth_accountLoginBody">This signs in only this Chrome extension.</span>
+            </span>
+          </div>
+          <div class="login-connection-row">
+            <span class="login-connection-dot login-connection-dot--muted" aria-hidden="true"></span>
+            <span class="login-connection-copy">
+              <strong data-i18n="auth_cliConnectionLabel">CLI connection</strong>
+              <span data-i18n="auth_cliConnectionBody">Configure it separately in the Verboo desktop app.</span>
+            </span>
+          </div>
+        </div>
+
+        <form class="login-form" id="login-form" novalidate>
+          <p class="field-error" id="login-error" role="alert" hidden></p>
+
+          <button
+            class="btn btn-primary btn-block"
+            type="submit"
+            id="login-submit"
+            data-i18n="auth_login"
+            data-loading-text="auth_loginLoading"
+          >
+            <span class="btn-label" data-i18n="auth_login">Sign in</span>
+            <span class="btn-spinner" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M8 2a6 6 0 016 6" />
+              </svg>
+            </span>
+          </button>
+        </form>
+
+        <div class="login-links">
+          <a
+            class="text-link"
+            href="https://code.verboo.ai/pt"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-i18n="auth_createAccount"
+          >
+            Create account
+          </a>
+          <a
+            class="text-link"
+            href="https://code.verboo.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-i18n="auth_openDashboard"
+          >
+            Open dashboard
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         SIGNED-IN: chat-first. Composer + mode chip at the bottom;
+         permissions & grants live in chrome.runtime.openOptionsPage.
+         ═══════════════════════════════════════════════════════════ -->
+    <div class="workspace" id="workspace" hidden>
+      <header class="topbar">
+        <div class="topbar-brand" id="topbar-brand">
+          <img
+            class="topbar-mascot"
+            src="/icons/verboo-mascot.png"
+            width="24"
+            height="24"
+            alt=""
+            decoding="async"
+          />
+          <span class="sr-only" data-i18n="branding_title">Verboo</span>
+          <!-- Email / account kept off-layout; surface via brand title attr in JS -->
+          <span class="topbar-user" id="topbar-user" hidden></span>
+        </div>
+        <div class="model-picker" id="model-picker">
+          <button
+            type="button"
+            class="model-picker-trigger"
+            id="model-picker-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="model-menu"
+            data-i18n-aria-label="model_picker_label"
+            aria-label="Choose model"
+            disabled
+          >
+            <span class="model-picker-copy">
+              <span class="model-picker-name" id="model-picker-name" data-i18n="model_loading">Loading models…</span>
+              <span class="model-picker-meta" id="model-picker-meta"></span>
+            </span>
+            <span class="model-picker-caret" aria-hidden="true">
+              <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 5l3 3 3-3" />
+              </svg>
+            </span>
+          </button>
+          <div
+            class="model-menu"
+            id="model-menu"
+            role="listbox"
+            data-i18n-aria-label="model_picker_label"
+            aria-label="Choose model"
+            hidden
+          ></div>
+        </div>
+        <div class="topbar-actions">
+          <button
+            id="routines-btn"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="routine-slash-menu"
+            type="button"
+            class="icon-btn"
+            title="Routines"
+            data-i18n-title="routines_title"
+            data-i18n-aria-label="routines_title"
+            aria-label="Routines"
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 4.25h10M3 8h10M3 11.75h6.5" />
+              <path d="M1.75 4.25h.01M1.75 8h.01M1.75 11.75h.01" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="record-workflow"
+            title="Record workflow"
+            data-i18n-title="routine_record"
+            data-i18n-aria-label="routine_record"
+            aria-label="Record workflow"
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.5" />
+              <circle cx="8" cy="8" r="2.25" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="clear-chat"
+            title="New conversation"
+            data-i18n-title="chat_clearTitle"
+            data-i18n-aria-label="chat_clearTitle"
+            aria-label="New conversation"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5z" />
+              <path d="M8 5.75v4.5M5.75 8h4.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="settings-btn"
+            title="Settings"
+            data-i18n-title="topbar_settingsTitle"
+            data-i18n-aria-label="topbar_settingsTitle"
+            aria-label="Settings"
+          >
+            <svg
+              class="icon-btn-glyph"
+              viewBox="0 0 16 16"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="8" cy="8" r="2.25" />
+              <path d="M8 1.5v1.5M8 13v1.5M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M1.5 8h1.5M13 8h1.5M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="auth-action"
+            data-action="logout"
+            data-i18n-title="auth_logout"
+            data-i18n-aria-label="auth_logout"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9.5 12V13a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 011.5 13V3A1.5 1.5 0 013 1.5h5A1.5 1.5 0 019.5 3v1" />
+              <path d="M14.5 8H6m5-2.5L14 8l-3 2.5" />
+            </svg>
+          </button>
+        </div>
+      </header>
+      <div class="recording-status" id="recording-status" role="status" hidden>
+        <span class="recording-dot" aria-hidden="true"></span>
+        <span data-i18n="routine_recording">Recording workflow</span>
+        <time id="recording-time">00:00</time>
+        <button type="button" id="recording-cancel" data-i18n="routine_cancel">Cancel</button>
+      </div>
+
+      <!-- Primary: chat transcript takes the entire body -->
+      <section class="chat" aria-label="Chat">
+        <div
+          class="chat-messages"
+          id="chat-messages"
+          aria-live="polite"
+          data-empty="chat_greeting"
+        ></div>
+
+        <div class="chat-foot">
+          <div
+            class="routine-slash-menu"
+            id="routine-slash-menu"
+            role="menu"
+            data-i18n-aria-label="routines_title"
+            aria-label="Routines"
+            hidden
+          >
+            <div class="routine-slash-list" id="routine-slash-list"></div>
+            <button type="button" class="routine-manage" id="routine-manage" role="menuitem">
+              <span data-i18n="routine_manage">Manage routines</span>
+              <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+          <div class="selection-context" id="selection-context" role="status" hidden>
+            <div class="selection-context-copy">
+              <span id="selection-context-count" data-i18n="selection_context_count">1 selection</span>
+              <span id="selection-context-preview"></span>
+              <span id="selection-context-warning" hidden></span>
+            </div>
+            <button
+              type="button"
+              class="selection-context-remove"
+              id="selection-context-remove"
+              data-i18n-aria-label="selection_context_remove"
+              aria-label="Remove selected text"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <form class="chat-composer" id="chat-form">
+            <textarea
+              id="chat-input"
+              class="field-input chat-input"
+              data-i18n-placeholder="chat_placeholder"
+              placeholder="Ask Verboo to control this page…"
+              autocomplete="off"
+              aria-label="Message"
+              aria-autocomplete="list"
+              aria-controls="routine-slash-menu"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              rows="1"
+            ></textarea>
+            <div class="composer-toolbar">
+              <div class="mode-inline" role="radiogroup" data-i18n-aria-label="mode_title" aria-label="Permission mode">
+                <label class="mode-chip" data-mode="manual">
+                  <input type="radio" name="mode" value="manual" checked />
+                  <span class="mode-chip-label" data-i18n="mode_short_manual">
+                    Ask before acting
+                  </span>
+                </label>
+                <label class="mode-chip" data-mode="skip">
+                  <input type="radio" name="mode" value="skip" />
+                  <span class="mode-chip-label" data-i18n="mode_short_skip">
+                    Act without asking
+                  </span>
+                </label>
+              </div>
+              <div class="composer-submit">
+                <button
+                  type="submit"
+                  class="icon-send"
+                  id="chat-send"
+                  title="Send"
+                  data-i18n-title="chat_sendTitle"
+                  data-i18n-aria-label="chat_sendTitle"
+                  aria-label="Send"
+                  disabled
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 12.5L13 8 3 3.5l1.8 4.5L9.5 8 4.8 8z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="icon-send icon-stop"
+                  id="chat-stop"
+                  title="Stop"
+                  data-i18n-title="chat_stopTitle"
+                  data-i18n-aria-label="chat_stopTitle"
+                  aria-label="Stop"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <rect x="4.25" y="4.25" width="7.5" height="7.5" rx="1.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <dialog
+        class="routine-variable-dialog"
+        id="routine-variable-dialog"
+        aria-labelledby="routine-variable-title"
+      >
+        <form method="dialog" id="routine-variable-form">
+          <div class="routine-dialog-head">
+            <div>
+              <h2 id="routine-variable-title" data-i18n="routine_variables_title">
+                Complete routine details
+              </h2>
+              <p id="routine-variable-description"></p>
+            </div>
+            <button
+              type="button"
+              class="icon-btn"
+              id="routine-variable-close"
+              data-i18n-aria-label="routine_cancel"
+              aria-label="Cancel"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <div class="routine-variable-fields" id="routine-variable-fields"></div>
+          <p class="field-error" id="routine-variable-error" role="alert" hidden></p>
+          <div class="routine-dialog-actions">
+            <button type="button" class="btn btn-secondary" id="routine-variable-cancel" data-i18n="routine_cancel">
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-primary" data-i18n="routine_run">
+              Run routine
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+  </div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

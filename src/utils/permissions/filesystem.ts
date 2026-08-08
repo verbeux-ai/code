@@ -269,6 +269,34 @@ function isSessionPlanFile(absolutePath: string): boolean {
 }
 
 /**
+ * Project-local planning bundles are generated artifacts, not harness
+ * configuration. Keep this carve-out deliberately narrower than .verboo/**:
+ * settings, skills, agents, hooks, and every other config path still pass
+ * through the normal protected-directory checks.
+ *
+ * Check every lexical and resolved form of the target. This prevents a
+ * symlink placed under .verboo/plans from being used to write outside the
+ * plans directory.
+ */
+function isProjectPlanArtifactPath(absolutePath: string): boolean {
+  const planRoot = join(getOriginalCwd(), '.verboo', 'plans')
+  const planRootForms = getPathsForPermissionCheck(planRoot).map(normalize)
+  const targetForms = getPathsForPermissionCheck(absolutePath).map(normalize)
+
+  return (
+    planRootForms.length > 0 &&
+    targetForms.length > 0 &&
+    targetForms.every(targetPath =>
+      planRootForms.some(
+        planRootPath =>
+          targetPath !== planRootPath &&
+          targetPath.startsWith(planRootPath + sep),
+      ),
+    )
+  )
+}
+
+/**
  * Returns the session memory directory path for the current session with trailing separator.
  * Path format: {projectDir}/{sessionId}/session-memory/
  */
@@ -1510,6 +1538,22 @@ export function checkEditableInternalPath(
       decisionReason: {
         type: 'other',
         reason: 'Plan files for current session are allowed for writing',
+      },
+    }
+  }
+
+  // Skills commonly persist requirement, research, and execution bundles in
+  // the project's .verboo/plans directory. Unlike the rest of .verboo, these
+  // files are data artifacts and are not loaded as executable configuration.
+  // Allow them before the .verboo safety guard so bypass mode actually remains
+  // non-interactive for the supported planning workflow.
+  if (isProjectPlanArtifactPath(normalizedPath)) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Project planning artifacts are allowed for writing',
       },
     }
   }

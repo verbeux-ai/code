@@ -13,11 +13,20 @@ describe('findToolByNameOrUniquePrefix', () => {
     expect(findToolByNameOrUniquePrefix(tools, 'Rea')?.name).toBe('Read')
   })
 
-  test('does not guess short, ambiguous, or MCP tool names', () => {
+  test('prefers a unique one-character completion over longer deferred tools', () => {
+    expect(
+      findToolByNameOrUniquePrefix(
+        [{ name: 'Read' }, { name: 'ReadMcpResourceTool' }] as Tools,
+        'Rea',
+      )?.name,
+    ).toBe('Read')
+  })
+
+  test('does not guess short, genuinely ambiguous, or MCP tool names', () => {
     expect(findToolByNameOrUniquePrefix(tools, 'R')).toBeUndefined()
     expect(
       findToolByNameOrUniquePrefix(
-        [{ name: 'Read' }, { name: 'Ready' }] as Tools,
+        [{ name: 'Read' }, { name: 'Real' }] as Tools,
         'Rea',
       ),
     ).toBeUndefined()

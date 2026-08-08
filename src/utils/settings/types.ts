@@ -741,12 +741,39 @@ spinnerVerbs: z
             'Example: { "deepseek-chat": { "base_url": "https://api.deepseek.com/v1", "api_key": "sk-xxx" } }',
         ),
       agentRouting: z
-        .record(z.string(), z.string())
+        .record(
+          z.string(),
+          z.union([
+            // Backwards compatible: external provider name, profile name, or
+            // exact model advertised by the authenticated Verboo catalog.
+            z.string().trim().min(1),
+            z
+              .object({
+                profile: z.enum([
+                  'fast',
+                  'review',
+                  'coding',
+                  'testing',
+                  'balanced',
+                ]),
+                fallback: z
+                  .enum(['inherit', 'first-available'])
+                  .optional(),
+              })
+              .strict(),
+            z
+              .object({
+                model: z.string().trim().min(1),
+                provider: z.literal('inherit').optional(),
+              })
+              .strict(),
+          ]),
+        )
         .optional()
         .describe(
-          'Map of agent identifier (subagent_type or team member name) to model name. ' +
-            'Use "default" key as fallback. Model name must exist in agentModels. ' +
-            'Example: { "Explore": "deepseek-chat", "general-purpose": "gpt-4o", "default": "gpt-4o" }',
+          'Map of agent identifier to an external provider model, semantic profile, ' +
+            'or authenticated Verboo model. Use "default" as fallback. ' +
+            'Example: { "Explore": "fast", "worker-review": { "profile": "review" } }',
         ),
       fastMode: z
         .boolean()

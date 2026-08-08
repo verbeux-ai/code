@@ -135,10 +135,11 @@ export function AsyncAgentDetailDialog(t0) {
   } else {
     t11 = $[19];
   }
+  const elapsedAndModel = agent.model ? `${elapsedTime} · ${agent.model}` : elapsedTime;
   let t12;
-  if ($[20] !== elapsedTime || $[21] !== t10 || $[22] !== t11) {
-    t12 = <Text dimColor={true}>{elapsedTime}{t10}{t11}</Text>;
-    $[20] = elapsedTime;
+  if ($[20] !== elapsedAndModel || $[21] !== t10 || $[22] !== t11) {
+    t12 = <Text dimColor={true}>{elapsedAndModel}{t10}{t11}</Text>;
+    $[20] = elapsedAndModel;
     $[21] = t10;
     $[22] = t11;
     $[23] = t12;

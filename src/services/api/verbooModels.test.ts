@@ -4,6 +4,8 @@ import axios from 'axios'
 import {
   clearVerbooModelsCache,
   fetchVerbooModels,
+  getCachedVerbooAgentModelRoles,
+  getVerbooAgentModelForRole,
   getVerbooModelReasoning,
   getVerbooReasoningEffort,
 } from './verbooModels.js'
@@ -87,6 +89,33 @@ test('does not advertise reasoning when the router response is incomplete', asyn
   await fetchVerbooModels('access-token', { force: true })
 
   expect(getVerbooModelReasoning('verboo/no-reasoning')).toBeUndefined()
+})
+
+test('accepts only entitled model IDs for agent catalog roles', async () => {
+  axios.get = mock(async () => ({
+    data: {
+      data: [{ id: 'xiaomi/mimo-v2-flash' }, { id: 'gpt-5.6-sol' }],
+      agent_model_roles: {
+        explore: 'xiaomi/mimo-v2-flash',
+        balanced: 'gpt-5.6-sol',
+        review: 'gpt-5.6-sol',
+        powerful: 'not-entitled',
+        future_role: 'ignored',
+        fast: { model: 'future-contract-shape' },
+      },
+    },
+  })) as typeof axios.get
+
+  await fetchVerbooModels('access-token', { force: true })
+
+  expect(getCachedVerbooAgentModelRoles()).toEqual({
+    explore: 'xiaomi/mimo-v2-flash',
+    balanced: 'gpt-5.6-sol',
+    review: 'gpt-5.6-sol',
+  })
+  expect(getVerbooAgentModelForRole('explore')).toBe('xiaomi/mimo-v2-flash')
+  expect(getVerbooAgentModelForRole('powerful')).toBeUndefined()
+  expect(getVerbooAgentModelForRole('fast')).toBeUndefined()
 })
 
 test('surfaces a model lookup failure instead of treating it as no models', async () => {

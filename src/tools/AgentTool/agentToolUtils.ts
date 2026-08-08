@@ -44,6 +44,11 @@ import { AbortError, errorMessage } from '../../utils/errors.js'
 import type { CacheSafeParams } from '../../utils/forkedAgent.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import {
+  getAgentBudgetUsage,
+  type AgentCompletionReason,
+  type AgentExecutionBudgetState,
+} from '../../query/agentExecutionBudget.js'
+import {
   extractTextContent,
   getLastAssistantMessage,
 } from '../../utils/messages.js'
@@ -254,6 +259,18 @@ export const agentToolResultSchema = lazySchema(() =>
         })
         .nullable(),
     }),
+    completionReason: z
+      .enum(['completed', 'max_turns', 'max_tool_calls', 'timeout'])
+      .optional(),
+    budgetUsage: z
+      .object({
+        apiCalls: z.number(),
+        toolCalls: z.number(),
+        elapsedMs: z.number(),
+        maxToolCalls: z.number(),
+        hardTimeoutMs: z.number(),
+      })
+      .optional(),
   }),
 )
 
@@ -283,6 +300,7 @@ export function finalizeAgentTool(
     startTime: number
     agentType: string
     isAsync: boolean
+    executionBudgetState?: AgentExecutionBudgetState
   },
 ): AgentToolResult {
   const {
@@ -292,6 +310,7 @@ export function finalizeAgentTool(
     startTime,
     agentType,
     isAsync,
+    executionBudgetState,
   } = metadata
 
   const lastAssistantMessage = getLastAssistantMessage(agentMessages)
@@ -315,9 +334,22 @@ export function finalizeAgentTool(
       }
     }
   }
+  if (executionBudgetState?.completionReason && lastAssistantMessage.isVirtual) {
+    for (let i = agentMessages.length - 2; i >= 0; i--) {
+      const message = agentMessages[i]!
+      if (message.type !== 'assistant' || message.isVirtual) continue
+      const previousText = message.message.content.filter(_ => _.type === 'text')
+      if (previousText.length > 0) {
+        content = [...previousText, ...content]
+        break
+      }
+    }
+  }
 
   const totalTokens = getTokenCountFromUsage(lastAssistantMessage.message.usage)
   const totalToolUseCount = countToolUses(agentMessages)
+  const completionReason: AgentCompletionReason =
+    executionBudgetState?.completionReason ?? 'completed'
 
   logEvent('tengu_agent_tool_completed', {
     agent_type:
@@ -332,6 +364,13 @@ export function finalizeAgentTool(
     total_tokens: totalTokens,
     is_built_in_agent: isBuiltInAgent,
     is_async: isAsync,
+    completion_reason:
+      completionReason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    ...(executionBudgetState && {
+      budget_api_calls: executionBudgetState.apiCalls,
+      budget_tool_calls: executionBudgetState.toolCalls,
+      budget_elapsed_ms: Date.now() - executionBudgetState.startedAt,
+    }),
   })
 
   // Signal to inference that this subagent's cache chain can be evicted.
@@ -353,6 +392,10 @@ export function finalizeAgentTool(
     totalTokens,
     totalToolUseCount,
     usage: lastAssistantMessage.message.usage,
+    ...(executionBudgetState && {
+      completionReason,
+      budgetUsage: getAgentBudgetUsage(executionBudgetState),
+    }),
   }
 }
 

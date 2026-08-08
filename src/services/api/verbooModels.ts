@@ -22,13 +22,35 @@ export type VerbooModelReasoning = {
   defaultEffort: string
 }
 
+export const VERBOO_AGENT_MODEL_ROLES = [
+  'explore',
+  'fast',
+  'balanced',
+  'powerful',
+  'review',
+  'coding',
+  'testing',
+] as const
+
+export type VerbooAgentModelRole = (typeof VERBOO_AGENT_MODEL_ROLES)[number]
+export type VerbooAgentModelRoles = Partial<
+  Record<VerbooAgentModelRole, string>
+>
+
 const modelsResponseSchema = z
-  .object({ data: z.array(z.record(z.unknown())) })
+  .object({
+    data: z.array(z.record(z.unknown())),
+    agent_model_roles: z.record(z.unknown()).optional(),
+  })
   .passthrough()
 
 const CACHE_TTL_MS = 5 * 60 * 1000
 
-let cache: { fetchedAt: number; models: VerbooModel[] } | null = null
+let cache: {
+  fetchedAt: number
+  models: VerbooModel[]
+  agentModelRoles: VerbooAgentModelRoles
+} | null = null
 let inflight: Promise<VerbooModel[]> | null = null
 
 function pickNumber(
@@ -114,6 +136,31 @@ function normalizeModel(raw: Record<string, unknown>): VerbooModel | null {
   }
 }
 
+function normalizeAgentModelRoles(
+  rawRoles: Record<string, unknown> | undefined,
+  models: VerbooModel[],
+): VerbooAgentModelRoles {
+  if (!rawRoles) return {}
+
+  const entitledModelIds = new Set(models.map(model => model.id))
+  const roles: VerbooAgentModelRoles = {}
+  for (const role of VERBOO_AGENT_MODEL_ROLES) {
+    const rawModelId = rawRoles[role]
+    const modelId =
+      typeof rawModelId === 'string' ? rawModelId.trim() : undefined
+    if (!modelId) continue
+    if (!entitledModelIds.has(modelId)) {
+      logForDebugging(
+        `[VerbooModels] Ignoring agent model role "${role}" because "${modelId}" is not in the authenticated model catalog`,
+        { level: 'warn' },
+      )
+      continue
+    }
+    roles[role] = modelId
+  }
+  return roles
+}
+
 export function clearVerbooModelsCache(): void {
   cache = null
   inflight = null
@@ -152,7 +199,11 @@ export async function fetchVerbooModels(
       const models = data
         .map(normalizeModel)
         .filter((m): m is VerbooModel => m !== null)
-      cache = { fetchedAt: Date.now(), models }
+      const agentModelRoles = normalizeAgentModelRoles(
+        parsed.data.agent_model_roles,
+        models,
+      )
+      cache = { fetchedAt: Date.now(), models, agentModelRoles }
       logForDebugging(
         `[VerbooModels] Fetched ${models.length} models from ${endpoint}`,
       )
@@ -183,6 +234,16 @@ export async function fetchVerbooModels(
 
 export function getCachedVerbooModels(): VerbooModel[] | null {
   return cache?.models ?? null
+}
+
+export function getCachedVerbooAgentModelRoles(): VerbooAgentModelRoles | null {
+  return cache?.agentModelRoles ?? null
+}
+
+export function getVerbooAgentModelForRole(
+  role: VerbooAgentModelRole,
+): string | undefined {
+  return cache?.agentModelRoles[role]
 }
 
 export function getVerbooModelMeta(modelId: string): VerbooModel | undefined {

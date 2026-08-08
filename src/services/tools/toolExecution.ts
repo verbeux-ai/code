@@ -29,6 +29,7 @@ import {
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
   findToolByName,
+  findToolByNameOrUniquePrefix,
   type Tool,
   type ToolProgress,
   type ToolProgressData,
@@ -388,7 +389,16 @@ export async function* runToolUse(
 ): AsyncGenerator<MessageUpdateLazy, void> {
   const toolName = toolUse.name
   // First try to find in the available tools (what the model sees)
-  let tool = findToolByName(toolUseContext.options.tools, toolName)
+  let tool = findToolByNameOrUniquePrefix(
+    toolUseContext.options.tools,
+    toolName,
+  )
+
+  if (tool && tool.name !== toolName) {
+    logForDebugging(
+      `Recovered truncated tool name ${toolName} as ${tool.name}: ${toolUse.id}`,
+    )
+  }
 
   // If not found, check if it's a deprecated tool being called by alias
   // (e.g., old transcripts calling "KillShell" which is now an alias for "TaskStop")

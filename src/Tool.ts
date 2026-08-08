@@ -374,6 +374,25 @@ export function findToolByName(tools: Tools, name: string): Tool | undefined {
   return tools.find(t => toolMatchesName(t, name))
 }
 
+/**
+ * Resolves a provider-truncated built-in tool name only when the prefix is
+ * unambiguous among tools already available to the model. This keeps malformed
+ * calls such as `Rea` recoverable as `Read` without guessing MCP tool names or
+ * accepting very short, collision-prone prefixes.
+ */
+export function findToolByNameOrUniquePrefix(
+  tools: Tools,
+  name: string,
+): Tool | undefined {
+  const exactMatch = findToolByName(tools, name)
+  if (exactMatch) return exactMatch
+
+  if (name.length < 3 || name.startsWith('mcp__')) return undefined
+
+  const prefixMatches = tools.filter(tool => tool.name.startsWith(name))
+  return prefixMatches.length === 1 ? prefixMatches[0] : undefined
+}
+
 export type Tool<
   Input extends AnyObject = AnyObject,
   Output = unknown,

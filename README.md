@@ -55,6 +55,67 @@ verboo /login
 
 `WebFetch` works via basic HTTP plus HTML-to-markdown conversion. It may fail on JavaScript-rendered sites or sites that block plain HTTP requests.
 
+## Agent Model Routing
+
+Verboo resolves subagent profiles against the authenticated `/models` catalog,
+so routing adapts automatically to the models included in the current account.
+The built-in read-only `Explore` agent uses the `fast` profile by default.
+
+Configure other agents in `~/.verboo/settings.json`:
+
+```json
+{
+  "agentRouting": {
+    "Explore": "fast",
+    "worker-review": { "profile": "review" },
+    "worker-backend": { "profile": "coding" },
+    "worker-tests": { "profile": "testing" },
+    "default": { "profile": "balanced" }
+  }
+}
+```
+
+Available profiles are `fast`, `review`, `coding`, `testing`, and `balanced`. Each profile
+selects the first preferred model that is actually available to the logged-in
+account. When no candidate is available, routing inherits the parent model.
+
+Skills can use the same dynamic profiles in `SKILL.md` frontmatter:
+
+```yaml
+---
+name: worker-review
+model: profile:review
+context: fork
+---
+```
+
+To opt into an unknown future model as a last resort:
+
+```json
+{
+  "agentRouting": {
+    "Explore": { "profile": "fast", "fallback": "first-available" }
+  }
+}
+```
+
+An exact Verboo model can also be requested without configuring another API
+key. The route is used only when that model exists in the authenticated catalog:
+
+```json
+{
+  "agentRouting": {
+    "worker-review": {
+      "model": "deepseek-v4-pro",
+      "provider": "inherit"
+    }
+  }
+}
+```
+
+The legacy `agentModels` plus string `agentRouting` format for external
+OpenAI-compatible providers remains supported.
+
 ---
 
 ## Headless gRPC Server

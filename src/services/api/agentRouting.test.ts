@@ -1,6 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveAgentProvider } from './agentRouting.js'
-import type { SettingsJson } from '../../utils/settings/types.js'
+import {
+  parseAgentModelProfileReference,
+  resolveAgentProfileModel,
+  resolveAgentProvider,
+  resolveAgentRoute,
+} from './agentRouting.js'
+import {
+  SettingsSchema,
+  type SettingsJson,
+} from '../../utils/settings/types.js'
+import type { VerbooModel } from './verbooModels.js'
+
+const models = (...ids: string[]): VerbooModel[] =>
+  ids.map(id => ({ id, raw: { id } }))
 
 const baseSettings = {
   agentModels: {
@@ -121,5 +133,193 @@ describe('resolveAgentProvider', () => {
   test('name only (no subagentType)', () => {
     const result = resolveAgentProvider('frontend-dev', undefined, baseSettings)
     expect(result?.model).toBe('deepseek-chat')
+  })
+})
+
+describe('resolveAgentRoute profiles', () => {
+  const proCatalog = models(
+    'pro/qwen3.6-27b',
+    'pro/deepseek-v4-flash',
+    'pro/mimo-v2.5',
+    'pro/glm-4.7-flash',
+  )
+  const maxCatalog = [
+    ...proCatalog,
+    ...models(
+      'max/minimax-m3',
+      'max/deepseek-v4-pro',
+      'max/mimo-v2.5-pro',
+    ),
+  ]
+  const ultraCatalog = [
+    ...maxCatalog,
+    ...models('ultra/kimi-k2.7', 'ultra/glm-5.2'),
+  ]
+
+  test('parses skill model profile references', () => {
+    expect(parseAgentModelProfileReference('profile:review')).toBe('review')
+    expect(parseAgentModelProfileReference('PROFILE:FAST')).toBe('fast')
+    expect(parseAgentModelProfileReference('fast')).toBeNull()
+    expect(parseAgentModelProfileReference('unknown-model')).toBeNull()
+  })
+
+  test('resolves a skill profile against the authenticated catalog', () => {
+    expect(resolveAgentProfileModel('review', proCatalog)).toBe(
+      'pro/qwen3.6-27b',
+    )
+    expect(resolveAgentProfileModel('review', maxCatalog)).toBe(
+      'max/deepseek-v4-pro',
+    )
+  })
+
+  test('testing profile preserves the plan-qualified Qwen model ID', () => {
+    expect(
+      resolveAgentProfileModel(
+        'testing',
+        models('max/mimo-v2.5', 'max/qwen3.6-27b'),
+      ),
+    ).toBe('max/qwen3.6-27b')
+  })
+
+  test('routes built-in Explore to fast by default in Verboo mode', () => {
+    const settings = {} as SettingsJson
+
+    expect(
+      resolveAgentRoute(undefined, 'Explore', settings, proCatalog),
+    ).toEqual({
+      model: 'pro/deepseek-v4-flash',
+      source: 'profile',
+      profile: 'fast',
+    })
+  })
+
+  test.each([
+    ['Pro', proCatalog, 'pro/deepseek-v4-flash'],
+    ['Max', maxCatalog, 'pro/deepseek-v4-flash'],
+    ['Ultra', ultraCatalog, 'pro/deepseek-v4-flash'],
+  ])('selects a fast model from the %s catalog', (_plan, catalog, expected) => {
+    const settings = {
+      agentRouting: { Explore: 'fast' },
+    } as SettingsJson
+
+    expect(resolveAgentRoute(undefined, 'Explore', settings, catalog)).toEqual({
+      model: expected,
+      source: 'profile',
+      profile: 'fast',
+    })
+  })
+
+  test.each([
+    ['Pro', proCatalog, 'pro/qwen3.6-27b'],
+    ['Max', maxCatalog, 'max/deepseek-v4-pro'],
+    ['Ultra', ultraCatalog, 'max/deepseek-v4-pro'],
+  ])(
+    'selects the best available review model from the %s catalog',
+    (_plan, catalog, expected) => {
+      const settings = {
+        agentRouting: { 'worker-review': { profile: 'review' } },
+      } as SettingsJson
+
+      expect(
+        resolveAgentRoute(
+          undefined,
+          'worker-review',
+          settings,
+          catalog,
+        ),
+      ).toEqual({
+        model: expected,
+        source: 'profile',
+        profile: 'review',
+      })
+    },
+  )
+
+  test('preserves the exact canonical ID returned by the catalog', () => {
+    const settings = {
+      agentRouting: {
+        Explore: { model: 'deepseek-v4-flash', provider: 'inherit' },
+      },
+    } as SettingsJson
+
+    expect(
+      resolveAgentRoute(undefined, 'Explore', settings, proCatalog),
+    ).toEqual({
+      model: 'pro/deepseek-v4-flash',
+      source: 'verboo-model',
+    })
+  })
+
+  test('inherits when an explicit model is unavailable', () => {
+    const settings = {
+      agentRouting: {
+        Explore: { model: 'deepseek-v4-pro', provider: 'inherit' },
+      },
+    } as SettingsJson
+
+    expect(
+      resolveAgentRoute(undefined, 'Explore', settings, proCatalog),
+    ).toBeNull()
+  })
+
+  test('can opt into the first available model for unknown future catalogs', () => {
+    const futureCatalog = models('future/new-fast-model')
+    const settings = {
+      agentRouting: {
+        Explore: { profile: 'fast', fallback: 'first-available' },
+      },
+    } as SettingsJson
+
+    expect(
+      resolveAgentRoute(undefined, 'Explore', settings, futureCatalog),
+    ).toEqual({
+      model: 'future/new-fast-model',
+      source: 'profile',
+      profile: 'fast',
+    })
+  })
+
+  test('keeps legacy external provider routing ahead of profile names', () => {
+    const settings = {
+      agentModels: {
+        fast: { base_url: 'https://fast.example.com/v1', api_key: 'secret' },
+      },
+      agentRouting: { Explore: 'fast' },
+    } as SettingsJson
+
+    expect(
+      resolveAgentRoute(undefined, 'Explore', settings, proCatalog),
+    ).toEqual({
+      model: 'fast',
+      source: 'external-provider',
+      providerOverride: {
+        model: 'fast',
+        baseURL: 'https://fast.example.com/v1',
+        apiKey: 'secret',
+      },
+    })
+  })
+
+  test('settings schema accepts profile and inherited-model routes', () => {
+    const result = SettingsSchema().safeParse({
+      agentRouting: {
+        Explore: 'fast',
+        'worker-review': { profile: 'review' },
+        'worker-tests': { profile: 'testing' },
+        custom: { model: 'max/mimo-v2.5-pro', provider: 'inherit' },
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  test('settings schema rejects unknown profiles', () => {
+    const result = SettingsSchema().safeParse({
+      agentRouting: {
+        Explore: { profile: 'turbo' },
+      },
+    })
+
+    expect(result.success).toBe(false)
   })
 })

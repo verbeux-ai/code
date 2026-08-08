@@ -1,6 +1,6 @@
 import type { PermissionMode } from '../permissions/PermissionMode.js'
 import { capitalize } from '../stringUtils.js'
-import { MODEL_ALIASES, type ModelAlias } from './aliases.js'
+import { MODEL_ALIASES } from './aliases.js'
 import { applyBedrockRegionPrefix, getBedrockRegionPrefix } from './bedrock.js'
 import {
   getCanonicalName,
@@ -37,7 +37,7 @@ export function getDefaultSubagentModel(): string {
 export function getAgentModel(
   agentModel: string | undefined,
   parentModel: string,
-  toolSpecifiedModel?: ModelAlias,
+  toolSpecifiedModel?: string,
   permissionMode?: PermissionMode,
 ): string {
   if (process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
@@ -71,6 +71,16 @@ export function getAgentModel(
     if (aliasMatchesParentTier(toolSpecifiedModel, parentModel)) {
       return parentModel
     }
+    if (
+      isClaudeFamilyAlias(toolSpecifiedModel) &&
+      !checkIsClaudeNativeProvider()
+    ) {
+      return getRuntimeMainLoopModel({
+        permissionMode: permissionMode ?? 'default',
+        mainLoopModel: parentModel,
+        exceeds200kTokens: false,
+      })
+    }
     const model = parseUserSpecifiedModel(toolSpecifiedModel)
     return applyParentRegionPrefix(model, toolSpecifiedModel)
   }
@@ -82,11 +92,11 @@ export function getAgentModel(
   // have guaranteed haiku/sonnet model availability. Custom Anthropic-compatible
   // endpoints, OpenAI-shim, Gemini, Mistral, and other providers may not have
   // equivalent models, causing "model not found" errors when resolving aliases.
-  // For haiku/sonnet aliases on non-Claude-native providers, inherit parent model.
-  // Note: 'opus' is NOT included here because it's handled separately by
-  // aliasMatchesParentTier() which checks if parent's tier matches the alias.
+  // Claude family aliases cannot be resolved by non-Claude-native providers.
+  // Inherit the parent instead of sending a literal haiku/sonnet/opus ID that
+  // the provider will reject.
   if (
-    (agentModelWithExp === 'haiku' || agentModelWithExp === 'sonnet') &&
+    isClaudeFamilyAlias(agentModelWithExp) &&
     !checkIsClaudeNativeProvider()
   ) {
     // Non-Claude-native provider → inherit parent model
@@ -112,6 +122,15 @@ export function getAgentModel(
   }
   const model = parseUserSpecifiedModel(agentModelWithExp)
   return applyParentRegionPrefix(model, agentModelWithExp)
+}
+
+function isClaudeFamilyAlias(model: string): boolean {
+  const normalized = model.trim().toLowerCase()
+  return (
+    normalized === 'haiku' ||
+    normalized === 'sonnet' ||
+    normalized === 'opus'
+  )
 }
 
 /**

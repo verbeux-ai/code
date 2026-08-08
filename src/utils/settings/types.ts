@@ -741,12 +741,41 @@ spinnerVerbs: z
             'Example: { "deepseek-chat": { "base_url": "https://api.deepseek.com/v1", "api_key": "sk-xxx" } }',
         ),
       agentRouting: z
-        .record(z.string(), z.string())
+        .record(
+          z.string(),
+          z.union([
+            // Backwards-compatible form. When the value exists in agentModels,
+            // it routes to that external provider. Known profile names and
+            // available Verboo model IDs are resolved at runtime.
+            z.string().trim().min(1),
+            z
+              .object({
+                profile: z.enum([
+                  'fast',
+                  'review',
+                  'coding',
+                  'testing',
+                  'balanced',
+                ]),
+                fallback: z
+                  .enum(['inherit', 'first-available'])
+                  .optional(),
+              })
+              .strict(),
+            z
+              .object({
+                model: z.string().trim().min(1),
+                provider: z.literal('inherit').optional(),
+              })
+              .strict(),
+          ]),
+        )
         .optional()
         .describe(
-          'Map of agent identifier (subagent_type or team member name) to model name. ' +
-            'Use "default" key as fallback. Model name must exist in agentModels. ' +
-            'Example: { "Explore": "deepseek-chat", "general-purpose": "gpt-4o", "default": "gpt-4o" }',
+          'Map of agent identifier (subagent_type or team member name) to an external model, ' +
+            'an available Verboo model, or a semantic profile. Use "default" as fallback. ' +
+            'Examples: { "Explore": "fast", "worker-review": { "profile": "review" }, ' +
+            '"custom": { "model": "max/mimo-v2.5-pro", "provider": "inherit" } }',
         ),
       fastMode: z
         .boolean()

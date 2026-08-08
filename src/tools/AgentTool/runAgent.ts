@@ -15,7 +15,13 @@ import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
+import {
+  parseAgentModelProfileReference,
+  resolveAgentProfileModel,
+  resolveAgentRoute,
+} from '../../services/api/agentRouting.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
+import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 import {
   connectToServer,
   fetchToolsForClient,
@@ -57,9 +63,7 @@ import { clearSessionHooks } from '../../utils/hooks/sessionHooks.js'
 import { executeSubagentStartHooks } from '../../utils/hooks.js'
 import { createUserMessage } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
-import { resolveAgentProvider } from '../../services/api/agentRouting.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
-import type { ModelAlias } from '../../utils/model/aliases.js'
 import {
   clearAgentTranscriptSubdir,
   recordSidechainTranscript,
@@ -283,7 +287,7 @@ export async function* runAgent({
     abortController?: AbortController
     agentId?: AgentId
   }
-  model?: ModelAlias
+  model?: string
   maxTurns?: number
   /** Preserve toolUseResult on messages for subagents with viewable transcripts */
   preserveToolUseResults?: boolean
@@ -337,20 +341,41 @@ export async function* runAgent({
   const rootSetAppState =
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState
 
-  const resolvedAgentModel = getAgentModel(
-    agentDefinition.model,
-    toolUseContext.options.mainLoopModel,
-    model,
-    permissionMode,
-  )
-
-  // Resolve per-agent provider routing from settings
-  const providerOverride = resolveAgentProvider(
+  const configuredRoute = resolveAgentRoute(
     agentName,
     agentDefinition.agentType,
     getInitialSettings(),
+    getCachedVerbooModels() ?? [],
   )
-  const effectiveModel = providerOverride ? providerOverride.model : resolvedAgentModel
+  const toolModelProfile = parseAgentModelProfileReference(model)
+  const profileToolModel = toolModelProfile
+    ? resolveAgentProfileModel(
+        toolModelProfile,
+        getCachedVerbooModels() ?? [],
+      ) ?? undefined
+    : model
+  if (toolModelProfile) {
+    logForDebugging(
+      `[agentRouting] agent=${agentDefinition.agentType} source=skill-profile profile=${toolModelProfile} model=${profileToolModel ?? 'inherit'}`,
+    )
+  }
+  const resolvedAgentModel = configuredRoute?.model ?? getAgentModel(
+    agentDefinition.model,
+    toolUseContext.options.mainLoopModel,
+    profileToolModel,
+    permissionMode,
+  )
+
+  // External provider routes carry their own credentials. Profile and exact
+  // Verboo routes reuse the authenticated provider from the parent session.
+  const providerOverride = configuredRoute?.providerOverride
+  const effectiveModel = configuredRoute?.model ?? resolvedAgentModel
+
+  if (configuredRoute) {
+    logForDebugging(
+      `[agentRouting] agent=${agentDefinition.agentType} source=${configuredRoute.source} model=${effectiveModel}${configuredRoute.profile ? ` profile=${configuredRoute.profile}` : ''}`,
+    )
+  }
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
 

@@ -30,4 +30,14 @@ describe('resolveQueryTurnModel', () => {
       }),
     ).toBe('max/deepseek-v4-pro')
   })
+
+  test('falls back to the session model when a profile has no available candidate', () => {
+    expect(
+      resolveQueryTurnModel({
+        permissionMode: 'default',
+        turnModel: 'profile:review',
+        sessionModel: 'max/deepseek-v4-pro',
+      }),
+    ).toBe('max/deepseek-v4-pro')
+  })
 })

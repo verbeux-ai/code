@@ -75,6 +75,9 @@ export const EXPLORE_AGENT: BuiltInAgentDefinition = {
   baseDir: 'built-in',
   // Use haiku for speed — explore is a fast read-only search agent
   model: 'haiku',
+  // Bound repository discovery. Each turn can issue parallel reads/searches,
+  // so four turns provide enough breadth without letting Plan wait indefinitely.
+  maxTurns: 4,
   // Explore is a fast read-only search agent — it doesn't need commit/PR/lint
   // rules from CLAUDE.md. The main agent has full context and interprets results.
   omitClaudeMd: true,

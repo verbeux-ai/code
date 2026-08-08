@@ -11,6 +11,8 @@ import { startAgentSummarization } from '../../services/AgentSummary/agentSummar
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { clearDumpState } from '../../services/api/dumpPrompts.js';
+import { resolveAgentRoute } from '../../services/api/agentRouting.js';
+import { getCachedVerbooModels } from '../../services/api/verbooModels.js';
 import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { checkRemoteAgentEligibility, formatPreconditionError, getRemoteTaskSessionUrl, registerRemoteAgentTask } from '../../tasks/RemoteAgentTask/RemoteAgentTask.js';
 import { assembleToolPool } from '../../tools.js';
@@ -31,6 +33,7 @@ import type { PermissionResult } from '../../utils/permissions/PermissionResult.
 import { filterDeniedAgents, getDenyRuleForAgent } from '../../utils/permissions/permissions.js';
 import { enqueueSdkEvent } from '../../utils/sdkEventQueue.js';
 import { writeAgentMetadata } from '../../utils/sessionStorage.js';
+import { getInitialSettings } from '../../utils/settings/settings.js';
 import { sleep } from '../../utils/sleep.js';
 import { buildEffectiveSystemPrompt } from '../../utils/systemPrompt.js';
 import { asSystemPrompt } from '../../utils/systemPromptType.js';
@@ -415,8 +418,10 @@ export const AgentTool = buildTool({
       setAgentColor(selectedAgent.agentType, selectedAgent.color);
     }
 
-    // Resolve agent params for logging (these are already resolved in runAgent)
-    const resolvedAgentModel = getAgentModel(selectedAgent.model, toolUseContext.options.mainLoopModel, isForkPath ? undefined : model, permissionMode);
+    // Resolve the same catalog-aware route used by runAgent so telemetry and
+    // progress UI report the model that will actually execute the work.
+    const configuredRoute = resolveAgentRoute(name, selectedAgent.agentType, getInitialSettings(), getCachedVerbooModels() ?? []);
+    const resolvedAgentModel = configuredRoute?.model ?? getAgentModel(selectedAgent.model, toolUseContext.options.mainLoopModel, isForkPath ? undefined : model, permissionMode);
     logEvent('tengu_agent_tool_selected', {
       agent_type: selectedAgent.agentType as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       model: resolvedAgentModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -428,8 +433,13 @@ export const AgentTool = buildTool({
       is_fork: isForkPath
     });
 
-    // Resolve effective isolation mode (explicit param overrides agent def)
-    const effectiveIsolation = isolation ?? selectedAgent.isolation;
+    // The built-in Explore agent is strictly read-only. A worktree adds setup
+    // and cleanup latency without providing any isolation benefit.
+    const isReadOnlyBuiltInExplore = isBuiltInAgent(selectedAgent) && selectedAgent.agentType === 'Explore';
+    const effectiveIsolation = isReadOnlyBuiltInExplore ? selectedAgent.isolation : isolation ?? selectedAgent.isolation;
+    if (isReadOnlyBuiltInExplore && isolation) {
+      logForDebugging(`[AgentTool] Ignoring isolation=${isolation} for read-only built-in Explore agent`);
+    }
 
     // Remote isolation: delegate to CCR. Gated internal-only — the guard enables
     // dead code elimination of the entire block for external builds.

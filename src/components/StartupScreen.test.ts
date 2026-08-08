@@ -193,18 +193,20 @@ describe('renderStartupScreen', () => {
     isLocal: false,
   }
 
-  test('renders the mascot layout safely in a wide terminal', () => {
+  test('uses the compact ghost identity in a wide terminal', () => {
     const output = renderStartupScreen(provider, '0.14.5', '~/project', 120)
     const plainOutput = stripAnsi(output)
 
-    expect(plainOutput).toContain('▄▀▀▀▀▀▀▀▄')
+    expect(plainOutput).toContain('👻')
     expect(plainOutput).toContain('Verboo Code')
+    expect(plainOutput).not.toContain('▄▀▀▀▀▀▀▀▄')
+    expect(plainOutput).not.toContain('Tokens ilimitados')
     expect(output).toContain('\x1b[0m')
     expect(output).not.toContain('undefined')
     expect(plainOutput.split('\n').every(line => line.length <= 120)).toBe(true)
   })
 
-  test('uses the compact header in a narrow terminal', () => {
+  test('keeps the compact identity in a narrow terminal', () => {
     const output = stripAnsi(
       renderStartupScreen(
         {

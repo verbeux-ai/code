@@ -907,7 +907,8 @@ async function getMessagesForPromptSlashCommand(command: CommandBase & PromptCom
   }), ...attachmentMessages, createAttachmentMessage({
     type: 'command_permissions',
     allowedTools: additionalAllowedTools,
-    model: command.model
+    model: command.model,
+    effort: command.effort
   })];
   return {
     messages,

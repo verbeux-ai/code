@@ -28,6 +28,7 @@ import { enqueue } from './messageQueueManager.js'
 import { resolveSkillModelOverride } from './model/model.js'
 import type { ProcessUserInputContext } from './processUserInput/processUserInput.js'
 import { processUserInput } from './processUserInput/processUserInput.js'
+import { getActiveSkillScopeForQueuedContinuation } from './processUserInput/activeSkillScope.js'
 import type { QueryGuard } from './QueryGuard.js'
 import { queryCheckpoint, startQueryProfile } from './queryProfiler.js'
 import { runWithWorkload } from './workloadContext.js'
@@ -553,6 +554,13 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
 
         const primaryCmd = commands[0]
         const primaryMode = primaryCmd?.mode ?? 'prompt'
+        const inheritedSkillScope = getActiveSkillScopeForQueuedContinuation(
+          messages,
+          primaryMode,
+        )
+        allowedTools ??= inheritedSkillScope?.allowedTools
+        model ??= inheritedSkillScope?.model
+        effort ??= inheritedSkillScope?.effort
         const primaryInput =
           primaryCmd && typeof primaryCmd.value === 'string'
             ? primaryCmd.value

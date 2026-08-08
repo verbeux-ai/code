@@ -64,6 +64,7 @@ import {
 } from 'src/types/textInputTypes.js'
 import { randomUUID, type UUID } from 'crypto'
 import { getSettings_DEPRECATED } from './settings/settings.js'
+import type { EffortValue } from './effort.js'
 import { getSnippetForTwoFileDiff } from 'src/tools/FileEditTool/utils.js'
 import type {
   ContentBlockParam,
@@ -606,6 +607,7 @@ export type Attachment =
       type: 'command_permissions'
       allowedTools: string[]
       model?: string
+      effort?: EffortValue
     }
   | AgentMentionAttachment
   | {

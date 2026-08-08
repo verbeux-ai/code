@@ -2335,6 +2335,114 @@ test('preserves Gemini tool call extra_content from streaming chunks', async () 
   })
 })
 
+test('assembles function names split across streaming tool-call deltas', async () => {
+  globalThis.fetch = (async (_input, _init) => {
+    const chunks = makeStreamChunks([
+      {
+        id: 'chatcmpl-split-tool-name',
+        object: 'chat.completion.chunk',
+        model: 'max/deepseek-v4-pro',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'function-call-split-name',
+                  type: 'function',
+                  function: {
+                    name: 'Rea',
+                    arguments: '',
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-tool-name',
+        object: 'chat.completion.chunk',
+        model: 'max/deepseek-v4-pro',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: {
+                    name: 'd',
+                    arguments: '{"file_path":"/tmp/example.ts"}',
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-tool-name',
+        object: 'chat.completion.chunk',
+        model: 'max/deepseek-v4-pro',
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+    ])
+
+    return makeSseResponse(chunks)
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'max/deepseek-v4-pro',
+      system: 'test system',
+      messages: [{ role: 'user', content: 'Read the example file' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) {
+    events.push(event)
+  }
+
+  const toolStarts = events.filter(
+    (event) =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as Array<{ content_block: Record<string, unknown> }>
+  const inputDeltas = events.filter(
+    (event) =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'input_json_delta',
+  ) as Array<{ delta: { partial_json: string } }>
+
+  expect(toolStarts.at(-1)?.content_block).toMatchObject({
+    type: 'tool_use',
+    id: 'function-call-split-name',
+    name: 'Read',
+  })
+  expect(inputDeltas.map((event) => event.delta.partial_json).join('')).toBe(
+    '{"file_path":"/tmp/example.ts"}',
+  )
+})
+
 test('normalizes plain string Bash tool arguments from OpenAI-compatible responses', async () => {
   globalThis.fetch = (async (_input, _init) => {
     return new Response(

@@ -1169,6 +1169,7 @@ async function* openaiStreamToAnthropic(
       index: number
       jsonBuffer: string
       normalizeAtStop: boolean
+      nameWasContinued: boolean
       extra_content?: Record<string, unknown>
     }
   >()
@@ -1503,6 +1504,7 @@ async function* openaiStreamToAnthropic(
                   index: toolBlockIndex,
                   jsonBuffer: initialArguments,
                   normalizeAtStop,
+                  nameWasContinued: false,
                   extra_content: initEC,
                 })
 
@@ -1516,7 +1518,10 @@ async function* openaiStreamToAnthropic(
                     input: {},
                     ...(initEC ? { extra_content: initEC } : {}),
                     ...((initEC?.google as any)?.thought_signature
-                      ? { signature: (initEC.google as any).thought_signature }
+                      ? {
+                          signature: (initEC?.google as any)
+                            .thought_signature,
+                        }
                       : {}),
                   },
                 }
@@ -1533,12 +1538,23 @@ async function* openaiStreamToAnthropic(
                     },
                   }
                 }
-              } else if (tc.function?.arguments) {
-                // Continuation of existing tool call
+              } else {
+                // Continuation of an existing tool call. OpenAI-compatible
+                // providers may split function names across SSE deltas (for
+                // example `Rea` then `d`). Preserve both name and argument
+                // fragments instead of executing a truncated unknown tool.
                 const active = activeToolCalls.get(tc.index)
                 if (active) {
-                  if (tc.function.arguments) {
-                    active.jsonBuffer += tc.function.arguments
+                  const functionNameFragment = tc.function?.name
+                  const argumentFragment = tc.function?.arguments
+
+                  if (functionNameFragment) {
+                    active.name += functionNameFragment
+                    active.nameWasContinued = true
+                  }
+
+                  if (argumentFragment) {
+                    active.jsonBuffer += argumentFragment
                   }
 
                   // Also capture extra_content/thought_signature if bundled with args
@@ -1556,7 +1572,7 @@ async function* openaiStreamToAnthropic(
                     }
                   }
 
-                  if (active.normalizeAtStop) {
+                  if (!argumentFragment || active.normalizeAtStop) {
                     continue
                   }
 
@@ -1565,27 +1581,8 @@ async function* openaiStreamToAnthropic(
                     index: active.index,
                     delta: {
                       type: 'input_json_delta',
-                      partial_json: tc.function.arguments,
+                      partial_json: argumentFragment,
                     },
-                  }
-                }
-              } else {
-                // Chunk with only extra_content / thought_signature (Gemini thinking models
-                // may send thought_signature in a separate chunk from id/name/arguments)
-                const active = activeToolCalls.get(tc.index)
-                if (active) {
-                  const lateSig = (tc as any).thought_signature as
-                    string | undefined
-                  const lateEC = tc.extra_content
-                    ? { ...tc.extra_content }
-                    : lateSig
-                      ? { google: { thought_signature: lateSig } }
-                      : undefined
-                  if (lateEC) {
-                    active.extra_content = {
-                      ...(active.extra_content ?? {}),
-                      ...lateEC,
-                    }
                   }
                 }
               }
@@ -1609,10 +1606,10 @@ async function* openaiStreamToAnthropic(
             }
             // Close active tool calls
             for (const [, tc] of activeToolCalls) {
-              // Re-emit content_block_start with final extra_content so that
-              // late-arriving thought_signature chunks (Gemini thinking models)
-              // are reflected in the stored message block before it is finalized.
-              if (tc.extra_content) {
+              // Re-emit content_block_start when late metadata or function-name
+              // fragments arrived, so the stored block has the final tool name
+              // and any provider-specific signature before it is finalized.
+              if (tc.extra_content || tc.nameWasContinued) {
                 yield {
                   type: 'content_block_start' as const,
                   index: tc.index,
@@ -1621,10 +1618,12 @@ async function* openaiStreamToAnthropic(
                     id: tc.id,
                     name: tc.name,
                     input: {},
-                    extra_content: tc.extra_content,
-                    ...((tc.extra_content.google as any)?.thought_signature
+                    ...(tc.extra_content
+                      ? { extra_content: tc.extra_content }
+                      : {}),
+                    ...((tc.extra_content?.google as any)?.thought_signature
                       ? {
-                          signature: (tc.extra_content.google as any)
+                          signature: (tc.extra_content?.google as any)
                             .thought_signature,
                         }
                       : {}),

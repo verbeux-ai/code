@@ -10,6 +10,7 @@ import {
   type Tools,
   type ToolUseContext,
 } from '../../Tool.js'
+import { getAllBaseTools } from '../../tools.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
 import { createChildAbortController } from '../../utils/abortController.js'
@@ -84,10 +85,22 @@ export class StreamingToolExecutor {
    * Add a tool to the execution queue. Will start executing immediately if conditions allow.
    */
   addTool(block: ToolUseBlock, assistantMessage: AssistantMessage): void {
-    const toolDefinition = findToolByNameOrUniquePrefix(
+    let toolDefinition = findToolByNameOrUniquePrefix(
       this.toolDefinitions,
       block.name,
     )
+    if (!toolDefinition) {
+      const baseTool = findToolByNameOrUniquePrefix(
+        getAllBaseTools(),
+        block.name,
+      )
+      if (baseTool && !baseTool.isMcp && baseTool.name !== block.name) {
+        toolDefinition = baseTool
+        logForDebugging(
+          `Recovered truncated base tool name ${block.name} as ${baseTool.name}: ${block.id}`,
+        )
+      }
+    }
     if (!toolDefinition) {
       this.tools.push({
         id: block.id,

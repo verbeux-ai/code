@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  assertDesktopIntegrationContract,
   assertRegularPayloadTree,
   materializePayload,
   packageDesktopCli,
@@ -22,13 +23,27 @@ async function fixture() {
   const output = join(root, 'output')
   await mkdir(join(source, 'dist'), { recursive: true })
   await mkdir(join(source, 'node_modules', 'dependency'), { recursive: true })
-  await writeFile(join(source, 'dist', 'cli.mjs'), "console.log('1.2.3 (Verboo Code)')\n")
+  await writeFile(
+    join(source, 'dist', 'cli.mjs'),
+    "// TodoWrite TodoWrite todoFeatureEnabled todo_reminder todo_reminder\nconsole.log('1.2.3 (Verboo Code)')\n",
+  )
   await writeFile(join(source, 'node_modules', 'dependency', 'index.js'), 'export default 1\n')
   await writeFile(join(source, 'LICENSE'), 'MIT\n')
   return { root, source, output }
 }
 
 describe('desktop CLI native packaging', () => {
+  test('rejects a built entrypoint that no longer exposes desktop todo markers', () => {
+    expect(() => assertDesktopIntegrationContract('TodoWrite todoFeatureEnabled todo_reminder')).toThrow(
+      'Desktop integration marker',
+    )
+    expect(() =>
+      assertDesktopIntegrationContract(
+        'TodoWrite TodoWrite todoFeatureEnabled todo_reminder todo_reminder',
+      ),
+    ).not.toThrow()
+  })
+
   test('materializes the entrypoint, dependency tree, metadata, and license without Node', async () => {
     const { root, source } = await fixture()
     const payload = await materializePayload({

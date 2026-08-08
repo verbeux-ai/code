@@ -42,8 +42,26 @@ export type PackageDesktopCliResult = {
   sha256: string
 }
 
+const DESKTOP_INTEGRATION_MARKERS = [
+  { name: 'TodoWrite', minimum: 2 },
+  { name: 'todoFeatureEnabled', minimum: 1 },
+  { name: 'todo_reminder', minimum: 2 },
+] as const
+
+export function assertDesktopIntegrationContract(entrypoint: string): void {
+  for (const { name, minimum } of DESKTOP_INTEGRATION_MARKERS) {
+    const occurrences = entrypoint.split(name).length - 1
+    if (occurrences < minimum) {
+      throw new Error(
+        `Desktop integration marker ${JSON.stringify(name)} appears ${occurrences} times; expected at least ${minimum}`,
+      )
+    }
+  }
+}
+
 export async function materializePayload(input: MaterializePayloadInput): Promise<string> {
   parseDesktopTarget(input.target)
+  assertDesktopIntegrationContract(await readFile(input.entrypoint, 'utf8'))
   const payload = join(
     input.stagingRoot,
     `verboo-cli-${input.version}-${input.target}`,

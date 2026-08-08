@@ -27,7 +27,10 @@ async function releaseFixture() {
     .slice(0, 16)
   await mkdir(join(source, 'dist'), { recursive: true })
   await mkdir(join(source, 'node_modules', 'dependency'), { recursive: true })
-  await writeFile(join(source, 'dist', 'cli.mjs'), "console.log('1.2.3 (Verboo Code)')\n")
+  await writeFile(
+    join(source, 'dist', 'cli.mjs'),
+    "// TodoWrite TodoWrite todoFeatureEnabled todo_reminder todo_reminder\nconsole.log('1.2.3 (Verboo Code)')\n",
+  )
   await writeFile(join(source, 'node_modules', 'dependency', 'index.js'), 'export default 1\n')
   await writeFile(join(source, 'LICENSE'), 'MIT\n')
 

@@ -62,10 +62,10 @@ export function usePromptInputPlaceholder({
       promptSuggestionEnabled &&
       !proactiveModule?.isProactiveActive()
     ) {
-      return getExampleCommandFromCache() ?? 'Ask Verboo to build, fix, or explain…'
+      return getExampleCommandFromCache() ?? 'Describe a task, bug, or idea…'
     }
 
-    return 'Ask Verboo to build, fix, or explain…'
+    return 'Describe a task, bug, or idea…'
   }, [
     input,
     queuedCommands,

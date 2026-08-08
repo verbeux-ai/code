@@ -32,8 +32,6 @@ import { PromptInputFooterLeftSide } from './PromptInputFooterLeftSide.js';
 import { PromptInputFooterSuggestions, type SuggestionItem } from './PromptInputFooterSuggestions.js';
 import { PromptInputHelpMenu } from './PromptInputHelpMenu.js';
 
-const BAR_WIDTH = 16;
-
 /**
  * ContextWindowDisplay with memo to prevent re-renders on every keystroke.
  * Compares message identity (reference + count) to avoid deep diffs.
@@ -50,8 +48,6 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
 
   const contextTokens = useMemo(() => tokenCountWithEstimation(messages), [messages]);
   const pct = useMemo(() => Math.min(100, Math.max(0, Math.round((contextTokens / windowSize) * 100))), [contextTokens, windowSize]);
-  const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((pct / 100) * BAR_WIDTH)));
-  const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
   const contextColor = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : undefined;
   const rateValue = Math.round(avgRate10s);
   const showTokenRate = rateValue > 0;
@@ -61,11 +57,10 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
 
   return (
     <Box flexDirection="row" gap={1}>
+      <Text dimColor>context</Text>
       <Text color={contextColor} dimColor={contextColor === undefined}>{pct}%</Text>
-      <Text color={contextColor} dimColor={contextColor === undefined}>{bar}</Text>
-      <Text dimColor>
-        {inputK}/{windowK}
-      </Text>
+      <Text dimColor>·</Text>
+      <Text dimColor>{inputK} / {windowK}</Text>
       {showTokenRate && <Text dimColor>·</Text>}
       {showTokenRate && <Text dimColor={!isGenerating} color={rateColor}>{rateValue} tok/s</Text>}
     </Box>

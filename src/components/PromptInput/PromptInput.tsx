@@ -2282,7 +2282,7 @@ function PromptInput({
           <Text dimColor>Waiting for permission…</Text>
         </Box>}
       <PromptInputStashNotice hasStash={stashedPrompt !== undefined} />
-      <Box marginLeft={2} height={1} overflow="hidden">
+      <Box paddingX={2} height={1} overflow="hidden" justifyContent="flex-end">
         {mode === 'prompt' && !exitMessage.show && !isPasting ? <ContextWindowDisplay messages={messages} permissionMode={effectiveToolPermissionContext.mode} /> : <Text> </Text>}
       </Box>
       {swarmBanner ? <>
@@ -2368,10 +2368,9 @@ function getInitialPasteId(messages: Message[]): number {
   }
   return maxId + 1;
 }
-function buildPromptBorderText(mode: PromptInputMode): BorderTextOptions | undefined {
-  if (mode !== 'bash') return undefined;
+function buildPromptBorderText(mode: PromptInputMode): BorderTextOptions {
   return {
-    content: ' shell ',
+    content: mode === 'bash' ? ' shell ' : ' prompt ',
     position: 'top',
     align: 'start',
     offset: 1

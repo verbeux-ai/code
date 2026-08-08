@@ -22,6 +22,30 @@ const ACCENT = [173, 52, 254] as const
 const DIMCOL = [120, 100, 140] as const
 const STARTUP_DEFAULT_COLUMNS = 80
 
+// Original Verboo mascot. Keep this code-native so it renders consistently in
+// terminals without depending on the platform's emoji artwork.
+const VERBOO_LOGO = [
+  '  ▄▀▀▀▀▀▀▀▄  ',
+  '▄▀▀▀▀▀▀▀▀▀▀▀▄',
+  '▀▀▀ ▀▀▀▀▀ ▀▀▀',
+  '▀▀▀▀▀▀▀▀▀▀▀▀▀',
+  '▀▀▀▀▀▄▄▄▀▀▀▀▀',
+  ' ▀▀▀▀▀▀▀▀▀▀▀ ',
+  '▄▀▀ ▀▀▀▀▀ ▀▀▄',
+]
+
+const VERBOO_LOGO_MASK = [
+  '  011111110  ',
+  '0111111111110',
+  '1110111110111',
+  '1111011101111',
+  '1111100011111',
+  ' 11111111111 ',
+  '110 01110 011',
+]
+
+const STARTUP_LOGO_MIN_COLUMNS = 48
+
 // ─── Provider detection ───────────────────────────────────────────────────────
 
 function resolveVerbooStartupModel(modelOverride?: string): string {
@@ -169,21 +193,59 @@ export function renderStartupScreen(
   const out: string[] = ['']
   const bold = `${ESC}1m`
   const PURPLE = rgb(...ACCENT)
+  const PURPLE_FILL = `${PURPLE}${ESC}48;2;${ACCENT[0]};${ACCENT[1]};${ACCENT[2]}m`
   const DIMP = `${DIM}${rgb(...DIMCOL)}`
   const STATUS_C = p.isLocal ? rgb(130, 200, 140) : PURPLE
   const statusLabel = p.isLocal ? 'local' : 'cloud'
-  const detailWidth = Math.max(1, columns - 8)
   const providerAndModel = p.name === 'Verboo' ? p.model : `${p.name} · ${p.model}`
-  const model = truncateStartupText(providerAndModel, Math.max(1, detailWidth - statusLabel.length - 4))
-  const cwd = truncateStartupText(displayCwd, detailWidth)
-  const hint = truncateStartupText('Type a request, or use /help for commands', detailWidth)
-  const shownVersion = truncateStartupText(version, Math.max(1, columns - 24))
 
-  out.push(`  👻  ${bold}${PURPLE}Verboo Code${RESET} ${DIMP}v${shownVersion}${RESET}`)
-  out.push(`      ${STATUS_C}●${RESET} ${DIMP}${model} · ${statusLabel}${RESET}`)
-  out.push(`      ${DIMP}${cwd}${RESET}`)
-  out.push('')
-  out.push(`      ${DIMP}${hint}${RESET}`)
+  if (columns < STARTUP_LOGO_MIN_COLUMNS) {
+    const detailWidth = Math.max(1, columns - 4)
+    const shownVersion = truncateStartupText(version, Math.max(1, columns - 20))
+    const model = truncateStartupText(providerAndModel, Math.max(1, detailWidth - statusLabel.length - 4))
+    const cwd = truncateStartupText(displayCwd, detailWidth)
+
+    out.push(`  ${bold}${PURPLE}Verboo Code${RESET} ${DIMP}v${shownVersion}${RESET}`)
+    out.push(`  ${STATUS_C}●${RESET} ${DIMP}${model} · ${statusLabel}${RESET}`)
+    out.push(`  ${DIMP}${cwd}${RESET}`)
+  } else {
+    const maxLogoWidth = Math.max(...VERBOO_LOGO.map(line => line.trimEnd().length))
+    const logoTextPadding = 2
+    const rightTextWidth = Math.max(1, columns - 2 - maxLogoWidth - logoTextPadding)
+    const shownVersion = truncateStartupText(version, Math.max(1, rightTextWidth - 16))
+    const model = truncateStartupText(providerAndModel, Math.max(1, rightTextWidth - statusLabel.length - 5))
+    const cwd = truncateStartupText(displayCwd, rightTextWidth)
+    const hint = truncateStartupText('Type a request, or use /help for commands', rightTextWidth)
+    const rightColumn = [
+      '',
+      `${bold}${PURPLE}Verboo Code${RESET} ${DIMP}v${shownVersion}${RESET}`,
+      `${STATUS_C}●${RESET} ${DIMP}${model} · ${statusLabel}${RESET}`,
+      `${DIMP}${cwd}${RESET}`,
+      '',
+      `${DIMP}${hint}${RESET}`,
+      '',
+    ]
+
+    for (let i = 0; i < VERBOO_LOGO.length; i++) {
+      const line = (VERBOO_LOGO[i] ?? '').trimEnd()
+      const mask = VERBOO_LOGO_MASK[i] ?? ''
+      let painted = ''
+
+      for (let j = 0; j < line.length; j++) {
+        const character = line[j] ?? ''
+        const isBlock = character === '▀' || character === '▄'
+        painted += isBlock && mask[j] === '1'
+          ? `${PURPLE_FILL}${character}${RESET}`
+          : isBlock
+            ? `${PURPLE}${character}${RESET}`
+            : character
+      }
+
+      const gap = ' '.repeat(Math.max(0, maxLogoWidth - line.length + logoTextPadding))
+      out.push(`  ${painted}${gap}${rightColumn[i] ?? ''}`)
+    }
+  }
+
   out.push('')
 
   return `${out.join('\n')}\n`

@@ -2368,9 +2368,10 @@ function getInitialPasteId(messages: Message[]): number {
   }
   return maxId + 1;
 }
-function buildPromptBorderText(mode: PromptInputMode): BorderTextOptions {
+function buildPromptBorderText(mode: PromptInputMode): BorderTextOptions | undefined {
+  if (mode !== 'bash') return undefined;
   return {
-    content: mode === 'bash' ? ' shell ' : ' 👻 ',
+    content: ' shell ',
     position: 'top',
     align: 'start',
     offset: 1

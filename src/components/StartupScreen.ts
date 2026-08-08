@@ -4,10 +4,14 @@
  */
 
 import { VERBOO_ROUTER_URL, isVerbooMode } from '../constants/oauth.js'
-import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
+import { getCachedClaudeNativeModels } from '../services/api/claudeNativeModels.js'
+import { CLAUDE_NATIVE_API_BASE_URL } from '../services/api/claudeNativeConfig.js'
+import { getCachedCodexModels } from '../services/api/codexModels.js'
+import { DEFAULT_CODEX_BASE_URL, isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
 import { getCachedVerbooModels } from '../services/api/verbooModels.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
-import { getDefaultVerbooModel, getUserSpecifiedModelSetting, isClaudeModelLike, parseUserSpecifiedModel } from '../utils/model/model.js'
+import { getActiveModelIdentity } from '../utils/model/activeModelIdentity.js'
+import { getDefaultMainLoopModel, getDefaultVerbooModel, getUserSpecifiedModelSetting, parseUserSpecifiedModel } from '../utils/model/model.js'
 import { containsExactZaiGlmModelId, isZaiBaseUrl } from '../utils/zaiProvider.js'
 
 declare const MACRO: { VERSION: string; DISPLAY_VERSION?: string }
@@ -25,17 +29,24 @@ const STARTUP_DEFAULT_COLUMNS = 80
 // ─── Provider detection ───────────────────────────────────────────────────────
 
 function resolveVerbooStartupModel(modelOverride?: string): string {
-  const cachedModels = getCachedVerbooModels()
+  const verbooModels = getCachedVerbooModels()
+  const codexModels = getCachedCodexModels()
+  const claudeModels = getCachedClaudeNativeModels()
+  const availableModels = [
+    ...(verbooModels ?? []),
+    ...(codexModels ?? []),
+    ...(claudeModels ?? []),
+  ]
+  const catalogsLoaded =
+    verbooModels !== null || codexModels !== null || claudeModels !== null
   const resolveIfAvailable = (model: unknown): string | undefined => {
     if (typeof model !== 'string') return undefined
     const trimmed = model.trim()
-    if (!trimmed || isClaudeModelLike(trimmed)) return undefined
+    if (!trimmed) return undefined
 
     const resolved = parseUserSpecifiedModel(trimmed)
-    if (isClaudeModelLike(resolved)) return undefined
-
-    if (cachedModels !== null) {
-      return cachedModels.some(m => m.id === resolved && !isClaudeModelLike(m.id))
+    if (catalogsLoaded) {
+      return availableModels.some(model => model.id === resolved)
         ? resolved
         : undefined
     }
@@ -46,20 +57,25 @@ function resolveVerbooStartupModel(modelOverride?: string): string {
   return (
     resolveIfAvailable(modelOverride) ??
     resolveIfAvailable(getUserSpecifiedModelSetting()) ??
-    cachedModels?.find(model => !isClaudeModelLike(model.id))?.id ??
     getDefaultVerbooModel()
   )
 }
 
 export function detectProvider(modelOverride?: string): { name: string; model: string; baseUrl: string; isLocal: boolean } {
   if (isVerbooMode()) {
-    const baseUrl = VERBOO_ROUTER_URL
-    const isLocal = isLocalProviderUrl(baseUrl)
+    const model = resolveVerbooStartupModel(modelOverride)
+    const identity = getActiveModelIdentity(model)
+    const baseUrl =
+      identity.provider === 'Codex'
+        ? DEFAULT_CODEX_BASE_URL
+        : identity.provider === 'Claude'
+          ? CLAUDE_NATIVE_API_BASE_URL
+          : VERBOO_ROUTER_URL
     return {
-      name: 'Verboo',
-      model: resolveVerbooStartupModel(modelOverride),
+      name: identity.provider,
+      model: identity.model,
       baseUrl,
-      isLocal,
+      isLocal: false,
     }
   }
 
@@ -143,12 +159,12 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     return { name, model: displayModel, baseUrl, isLocal }
   }
 
-  // VERBOO-BRAND: default provider é Verboo. API LLM via router em code.verboo.ai/router.
-  const modelSetting = modelOverride || getDefaultVerbooModel()
+  const modelSetting =
+    modelOverride || getUserSpecifiedModelSetting() || getDefaultMainLoopModel()
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
-  const baseUrl = VERBOO_ROUTER_URL
+  const baseUrl = process.env.ANTHROPIC_BASE_URL || CLAUDE_NATIVE_API_BASE_URL
   const isLocal = isLocalProviderUrl(baseUrl)
-  return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
+  return { name: 'Claude', model: resolvedModel, baseUrl, isLocal }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -172,7 +188,7 @@ export function renderStartupScreen(
   const DIMP = `${DIM}${rgb(...DIMCOL)}`
   const STATUS_C = p.isLocal ? rgb(130, 200, 140) : PURPLE
   const statusLabel = p.isLocal ? 'local' : 'cloud'
-  const providerAndModel = p.name === 'Verboo' ? p.model : `${p.name} · ${p.model}`
+  const providerAndModel = `${p.name} · ${p.model}`
   const shownVersion = truncateStartupText(version, Math.max(1, columns - 22))
   const model = truncateStartupText(
     providerAndModel,

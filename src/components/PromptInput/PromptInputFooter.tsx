@@ -21,6 +21,7 @@ import { getContextWindowForModel } from '../../utils/context.js';
 import { formatNumber } from '../../utils/format.js';
 import { isFullscreenEnvEnabled } from '../../utils/fullscreen.js';
 import { getRuntimeMainLoopModel } from '../../utils/model/model.js';
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js';
 import type { PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { doesMostRecentAssistantMessageExceed200k, tokenCountWithEstimation } from '../../utils/tokens.js';
 import { isUndercover } from '../../utils/undercover.js';
@@ -43,6 +44,7 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
   const mainLoopModel = useMainLoopModel();
   const exceeds200k = useMemo(() => doesMostRecentAssistantMessageExceed200k(messages), [messages]);
   const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: exceeds200k });
+  const activeModel = getActiveModelIdentity(runtimeModel);
   const windowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
   const { avgRate10s, isGenerating } = useTokenRateDetailed(messages);
 
@@ -56,7 +58,10 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
   const windowK = formatNumber(windowSize);
 
   return (
-    <Box flexDirection="row" gap={1}>
+    <Box flexDirection="row" gap={1} flexShrink={1}>
+      <Text color="claude">{activeModel.provider}</Text>
+      <Text dimColor wrap="truncate">{activeModel.model}</Text>
+      <Text dimColor>·</Text>
       <Text dimColor>context</Text>
       <Text color={contextColor} dimColor={contextColor === undefined}>{pct}%</Text>
       <Text dimColor>·</Text>

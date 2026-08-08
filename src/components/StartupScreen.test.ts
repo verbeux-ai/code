@@ -41,6 +41,10 @@ const originalWrite = process.stdout.write
 async function importStartupScreenWithModels(
   models: Array<{ id: string }> = [{ id: 'early-adopters/qwen3.6-27b' }],
   settingsModel?: string,
+  optionalModels: {
+    codex?: Array<{ id: string }>
+    claude?: Array<{ id: string }>
+  } = {},
 ) {
   mock.restore()
   setSessionSettingsCache({
@@ -56,6 +60,12 @@ async function importStartupScreenWithModels(
     getVerbooAgentModelForRole: () => undefined,
     getVerbooModelMeta: (modelId: string) =>
       models.find(model => model.id === modelId),
+  }))
+  mock.module('../services/api/codexModels.js', () => ({
+    getCachedCodexModels: () => optionalModels.codex ?? [],
+  }))
+  mock.module('../services/api/claudeNativeModels.js', () => ({
+    getCachedClaudeNativeModels: () => optionalModels.claude ?? [],
   }))
   const nonce = `${Date.now()}-${Math.random()}`
   return import(`./StartupScreen.js?ts=${nonce}`)
@@ -151,6 +161,32 @@ describe('detectProvider — Verboo isolation', () => {
     expect(result.model).toBe('early-adopters/qwen3.6-27b')
   })
 
+  test('labels an active Codex model from the Codex catalog', async () => {
+    const { detectProvider } = await importStartupScreenWithModels(
+      [{ id: 'early-adopters/qwen3.6-27b' }],
+      undefined,
+      { codex: [{ id: 'gpt-5.5' }] },
+    )
+
+    expect(detectProvider('gpt-5.5')).toMatchObject({
+      name: 'Codex',
+      model: 'gpt-5.5',
+    })
+  })
+
+  test('labels an active Claude model from the Claude catalog', async () => {
+    const { detectProvider } = await importStartupScreenWithModels(
+      [{ id: 'early-adopters/qwen3.6-27b' }],
+      undefined,
+      { claude: [{ id: 'claude-opus-4-6' }] },
+    )
+
+    expect(detectProvider('claude-opus-4-6')).toMatchObject({
+      name: 'Claude',
+      model: 'claude-opus-4-6',
+    })
+  })
+
   test('uses persisted Verboo model when no CLI override is provided', async () => {
     const { detectProvider } = await importStartupScreenWithModels(
       [
@@ -200,6 +236,7 @@ describe('renderStartupScreen', () => {
 
     expect(plainOutput).toContain('👻')
     expect(plainOutput).toContain('Verboo Code')
+    expect(plainOutput).toContain('Verboo · early-adopters/qwen3.6-27b')
     expect(plainOutput).not.toContain('▄▀▀▀▀▀▀▀▄')
     expect(plainOutput).not.toContain('Tokens ilimitados')
     expect(output).toContain('\x1b[0m')

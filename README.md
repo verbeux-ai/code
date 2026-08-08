@@ -55,6 +55,61 @@ verboo /login
 
 `WebFetch` works via basic HTTP plus HTML-to-markdown conversion. It may fail on JavaScript-rendered sites or sites that block plain HTTP requests.
 
+## Agent Model Routing
+
+Verboo resolves subagent models against the authenticated `/models` catalog and
+preserves the complete server-provided ID, including plan prefixes such as
+`max/qwen3.6-27b`. Router-provided `agent_model_roles` are authoritative; the
+portable profiles below are compatibility fallbacks and can also be selected by
+user-defined workers.
+
+Configure agents in `~/.verboo/settings.json`:
+
+```json
+{
+  "agentRouting": {
+    "Explore": "fast",
+    "worker-review": { "profile": "review" },
+    "worker-backend": { "profile": "coding" },
+    "worker-tests": { "profile": "testing" },
+    "default": { "profile": "balanced" }
+  }
+}
+```
+
+Available profiles are `fast`, `review`, `coding`, `testing`, and `balanced`.
+Each chooses a preferred model that is present in the logged-in account. If no
+candidate is available, the worker inherits the parent model. A profile can opt
+into the first catalog entry as a last resort with
+`"fallback": "first-available"`.
+
+Forked and inline skills support the same profiles:
+
+```yaml
+---
+name: worker-review
+model: profile:review
+context: fork
+---
+```
+
+An exact Verboo model can be requested without adding another API key. It is
+used only when it exists in the authenticated catalog:
+
+```json
+{
+  "agentRouting": {
+    "worker-review": {
+      "model": "deepseek-v4-pro",
+      "provider": "inherit"
+    }
+  }
+}
+```
+
+The legacy `agentModels` plus string `agentRouting` format for external
+OpenAI-compatible providers remains supported.
+
 ---
 
 ## Headless gRPC Server

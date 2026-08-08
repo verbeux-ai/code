@@ -16,7 +16,9 @@ import {
   filterUnresolvedToolUses,
   filterWhitespaceOnlyAssistantMessages,
 } from '../../utils/messages.js'
-import { getAgentModel } from '../../utils/model/agent.js'
+import { resolveAgentExecutionModel } from '../../services/api/agentRouting.js'
+import { getInitialSettings } from '../../utils/settings/settings.js'
+import { createAgentExecutionBudgetState } from '../../query/agentExecutionBudget.js'
 import { getQuerySourceForAgent } from '../../utils/promptCategory.js'
 import {
   getAgentTranscript,
@@ -147,13 +149,18 @@ export async function resumeAgentBackground({
     }
   }
 
-  // Resolve model for analytics metadata (runAgent resolves its own internally)
-  const resolvedAgentModel = getAgentModel(
-    selectedAgent.model,
-    toolUseContext.options.mainLoopModel,
-    undefined,
+  const modelResolution = resolveAgentExecutionModel({
+    agentModel: selectedAgent.model,
+    agentModelRole: selectedAgent.modelRole,
+    parentModel: toolUseContext.options.mainLoopModel,
     permissionMode,
-  )
+    agentType: selectedAgent.agentType,
+    settings: getInitialSettings(),
+  })
+  const resolvedAgentModel = modelResolution.effectiveModel
+  const executionBudgetState = selectedAgent.executionBudget
+    ? createAgentExecutionBudgetState(selectedAgent.executionBudget, startTime)
+    : undefined
 
   const workerPermissionContext = {
     ...appState.toolPermissionContext,
@@ -192,6 +199,8 @@ export async function resumeAgentBackground({
     worktreePath: resumedWorktreePath,
     description: meta?.description,
     contentReplacementState: resumedReplacementState,
+    modelResolution,
+    executionBudgetState,
   }
 
   // Skip name-registry write — original entry persists from the initial spawn
@@ -200,6 +209,7 @@ export async function resumeAgentBackground({
     description: uiDescription,
     prompt,
     selectedAgent,
+    model: resolvedAgentModel,
     setAppState: rootSetAppState,
     toolUseId: toolUseContext.toolUseId,
   })
@@ -211,6 +221,7 @@ export async function resumeAgentBackground({
     startTime,
     agentType: selectedAgent.agentType,
     isAsync: true,
+    executionBudgetState,
   }
 
   const asyncAgentContext = {

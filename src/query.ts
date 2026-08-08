@@ -48,6 +48,7 @@ import {
   maybeLogMemoryHighWatermark,
 } from './utils/memoryDiagnostics.js'
 import {
+  createAssistantMessage,
   createUserMessage,
   createUserInterruptionMessage,
   normalizeMessagesForAPI,
@@ -111,6 +112,14 @@ import {
 } from './bootstrap/state.js'
 import { createBudgetTracker, checkTokenBudget } from './query/tokenBudget.js'
 import { count } from './utils/array.js'
+import {
+  createBudgetedCanUseTool,
+  isAgentBudgetTimeout,
+  markAgentBudgetCompletion,
+  refreshAgentBudgetDeadline,
+  shouldFinalizeAgentBudget,
+  type AgentExecutionBudgetState,
+} from './query/agentExecutionBudget.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const snipModule = feature('HISTORY_SNIP')
   ? (require('./services/compact/snipCompact.js') as typeof import('./services/compact/snipCompact.js'))
@@ -123,7 +132,18 @@ const taskSummaryModule = feature('BG_SESSIONS')
 function* yieldMissingToolResultBlocks(
   assistantMessages: AssistantMessage[],
   errorMessage: string,
+  existingToolResults: Array<UserMessage | AttachmentMessage> = [],
 ) {
+  const completedToolUseIds = new Set(
+    existingToolResults.flatMap(message => {
+      if (message.type !== 'user' || !Array.isArray(message.message.content)) {
+        return []
+      }
+      return message.message.content.flatMap(content =>
+        content.type === 'tool_result' ? [content.tool_use_id] : [],
+      )
+    }),
+  )
   for (const assistantMessage of assistantMessages) {
     // Extract all tool use blocks from this assistant message
     const toolUseBlocks = assistantMessage.message.content.filter(
@@ -132,6 +152,7 @@ function* yieldMissingToolResultBlocks(
 
     // Emit an interruption message for each tool use
     for (const toolUse of toolUseBlocks) {
+      if (completedToolUseIds.has(toolUse.id)) continue
       yield createUserMessage({
         content: [
           {
@@ -190,6 +211,8 @@ export type QueryParams = {
   querySource: QuerySource
   maxOutputTokensOverride?: number
   maxTurns?: number
+  /** Optional mutable state shared across an agent's foreground/background lifecycle. */
+  executionBudgetState?: AgentExecutionBudgetState
   skipCacheWrite?: boolean
   // API task_budget (output_config.task_budget, beta task-budgets-2026-03-13).
   // Distinct from the tokenBudget +500k auto-continue feature. `total` is the
@@ -283,13 +306,20 @@ async function* queryLoop(
     systemPrompt,
     userContext,
     systemContext,
-    canUseTool,
+    canUseTool: baseCanUseTool,
     fallbackModel,
     querySource,
     maxTurns,
     skipCacheWrite,
   } = params
   const deps = params.deps ?? productionDeps()
+  const executionBudgetState = params.executionBudgetState
+  const canUseTool = executionBudgetState
+    ? createBudgetedCanUseTool(baseCanUseTool, executionBudgetState)
+    : baseCanUseTool
+  const budgetTimeoutMessage = executionBudgetState
+    ? `Explore reached its ${Math.round(executionBudgetState.config.hardTimeoutMs / 1000)}-second time budget. Returning the partial findings collected before the deadline.`
+    : 'Explore reached its time budget. Returning partial findings.'
 
   // Mutable cross-iteration state. The loop body destructures this at the top
   // of each iteration so reads stay bare-name (`messages`, `toolUseContext`).
@@ -335,6 +365,54 @@ async function* queryLoop(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (executionBudgetState) {
+      refreshAgentBudgetDeadline(executionBudgetState)
+      if (maxTurns && executionBudgetState.apiCalls >= maxTurns) {
+        markAgentBudgetCompletion(executionBudgetState, 'max_turns')
+        yield createAttachmentMessage({
+          type: 'max_turns_reached',
+          maxTurns,
+          turnCount: executionBudgetState.apiCalls,
+        })
+        return {
+          reason: 'max_turns',
+          turnCount: executionBudgetState.apiCalls,
+        }
+      }
+      if (
+        shouldFinalizeAgentBudget(executionBudgetState, maxTurns)
+      ) {
+        if (
+          maxTurns &&
+          executionBudgetState.apiCalls >= maxTurns - 1 &&
+          executionBudgetState.completionReason === undefined
+        ) {
+          markAgentBudgetCompletion(executionBudgetState, 'max_turns')
+        }
+        executionBudgetState.finalizing = true
+        state = {
+          ...state,
+          messages: [
+            ...state.messages,
+            createUserMessage({
+              content:
+                'The Explore time budget is nearly exhausted. Do not call tools. Summarize the useful findings and explicitly identify any uncertainty.',
+              isMeta: true,
+            }),
+          ],
+          toolUseContext: {
+            ...state.toolUseContext,
+            options: {
+              ...state.toolUseContext.options,
+              tools: [],
+              refreshTools: undefined,
+            },
+          },
+          pendingToolUseSummary: undefined,
+        }
+      }
+    }
+
     // Destructure state at the top of each iteration. toolUseContext alone
     // is reassigned within an iteration (queryTracking, messages updates);
     // the rest are read-only between continue sites.
@@ -745,6 +823,21 @@ async function* queryLoop(
       while (attemptWithFallback) {
         attemptWithFallback = false
         try {
+          if (executionBudgetState) {
+            if (maxTurns && executionBudgetState.apiCalls >= maxTurns) {
+              markAgentBudgetCompletion(executionBudgetState, 'max_turns')
+              yield createAttachmentMessage({
+                type: 'max_turns_reached',
+                maxTurns,
+                turnCount: executionBudgetState.apiCalls,
+              })
+              return {
+                reason: 'max_turns',
+                turnCount: executionBudgetState.apiCalls,
+              }
+            }
+            executionBudgetState.apiCalls++
+          }
           let streamingFallbackOccured = false
           queryCheckpoint('query_api_streaming_start')
           for await (const message of deps.callModel({
@@ -1042,6 +1135,24 @@ async function* queryLoop(
         }
       }
     } catch (error) {
+      if (isAgentBudgetTimeout(toolUseContext.abortController.signal)) {
+        if (streamingToolExecutor) {
+          for await (const update of streamingToolExecutor.getRemainingResults()) {
+            if (update.message) yield update.message
+          }
+        } else {
+          yield* yieldMissingToolResultBlocks(
+            assistantMessages,
+            'Explore time budget reached; tool execution was cancelled.',
+            toolResults,
+          )
+        }
+        yield createAssistantMessage({
+          content: budgetTimeoutMessage,
+          isVirtual: true,
+        })
+        return { reason: 'budget_timeout' }
+      }
       logError(error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
@@ -1115,6 +1226,13 @@ async function* queryLoop(
           assistantMessages,
           'Interrupted by user',
         )
+      }
+      if (isAgentBudgetTimeout(toolUseContext.abortController.signal)) {
+        yield createAssistantMessage({
+          content: budgetTimeoutMessage,
+          isVirtual: true,
+        })
+        return { reason: 'budget_timeout' }
       }
       // chicago MCP: auto-unhide + lock release on interrupt. Same cleanup
       // as the natural turn-end path in stopHooks.ts. Main thread only —
@@ -1743,6 +1861,13 @@ async function* queryLoop(
 
     // We were aborted during tool calls
     if (toolUseContext.abortController.signal.aborted) {
+      if (isAgentBudgetTimeout(toolUseContext.abortController.signal)) {
+        yield createAssistantMessage({
+          content: budgetTimeoutMessage,
+          isVirtual: true,
+        })
+        return { reason: 'budget_timeout' }
+      }
       // chicago MCP: auto-unhide + lock release when aborted mid-tool-call.
       // This is the most likely Ctrl+C path for CU (e.g. slow screenshot).
       // Main thread only — see stopHooks.ts for the subagent rationale.
@@ -1961,8 +2086,63 @@ async function* queryLoop(
       }
     }
 
+    if (executionBudgetState) {
+      refreshAgentBudgetDeadline(executionBudgetState)
+      const shouldReserveFinalTurn =
+        executionBudgetState.config.reserveFinalTurn &&
+        maxTurns !== undefined &&
+        executionBudgetState.apiCalls >= maxTurns - 1
+      const shouldFinalize = shouldFinalizeAgentBudget(
+        executionBudgetState,
+        maxTurns,
+      )
+
+      if (shouldFinalize) {
+        if (
+          shouldReserveFinalTurn &&
+          executionBudgetState.completionReason === undefined
+        ) {
+          markAgentBudgetCompletion(executionBudgetState, 'max_turns')
+        }
+        executionBudgetState.finalizing = true
+        state = {
+          messages: [
+            ...messagesForQuery,
+            ...assistantMessages,
+            ...toolResults,
+            createUserMessage({
+              content:
+                'The Explore execution budget has been reached. Do not call tools. Summarize the useful findings collected so far and explicitly identify any uncertainty.',
+              isMeta: true,
+            }),
+          ],
+          toolUseContext: {
+            ...toolUseContextWithQueryTracking,
+            options: {
+              ...toolUseContextWithQueryTracking.options,
+              tools: [],
+              refreshTools: undefined,
+            },
+          },
+          autoCompactTracking: tracking,
+          turnCount: nextTurnCount,
+          maxOutputTokensRecoveryCount: 0,
+          hasAttemptedReactiveCompact: false,
+          continuationNudgeCount: 0,
+          pendingToolUseSummary: undefined,
+          maxOutputTokensOverride: undefined,
+          stopHookActive,
+          transition: { reason: 'next_turn' },
+        }
+        continue
+      }
+    }
+
     // Check if we've reached the max turns limit
     if (maxTurns && nextTurnCount > maxTurns) {
+      if (executionBudgetState) {
+        markAgentBudgetCompletion(executionBudgetState, 'max_turns')
+      }
       yield createAttachmentMessage({
         type: 'max_turns_reached',
         maxTurns,

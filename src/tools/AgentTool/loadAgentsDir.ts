@@ -13,6 +13,8 @@ import {
   McpServerConfigSchema,
 } from '../../services/mcp/types.js'
 import type { ToolUseContext } from '../../Tool.js'
+import type { VerbooAgentModelRole } from '../../services/api/verbooModels.js'
+import type { AgentExecutionBudgetConfig } from '../../query/agentExecutionBudget.js'
 import { logForDebugging } from '../../utils/debug.js'
 import {
   EFFORT_LEVELS,
@@ -112,9 +114,13 @@ export type BaseAgentDefinition = {
   hooks?: HooksSettings // Session-scoped hooks registered when agent starts
   color?: AgentColorName
   model?: string
+  /** Provider catalog role used to resolve a model without hard-coding an ID. */
+  modelRole?: VerbooAgentModelRole
   effort?: EffortValue
   permissionMode?: PermissionMode
   maxTurns?: number // Maximum number of agentic turns before stopping
+  /** Runtime-only budget for built-in agents. Custom agent files cannot set it. */
+  executionBudget?: AgentExecutionBudgetConfig
   filename?: string // Original filename without .md extension (for user/project/managed agents)
   baseDir?: string
   criticalSystemReminder_EXPERIMENTAL?: string // Short message re-injected at every user turn

@@ -21,6 +21,7 @@ import { getContextWindowForModel } from '../../utils/context.js';
 import { formatNumber } from '../../utils/format.js';
 import { isFullscreenEnvEnabled } from '../../utils/fullscreen.js';
 import { getRuntimeMainLoopModel } from '../../utils/model/model.js';
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js';
 import type { PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { doesMostRecentAssistantMessageExceed200k, tokenCountWithEstimation } from '../../utils/tokens.js';
 import { isUndercover } from '../../utils/undercover.js';
@@ -31,8 +32,6 @@ import { Notifications } from './Notifications.js';
 import { PromptInputFooterLeftSide } from './PromptInputFooterLeftSide.js';
 import { PromptInputFooterSuggestions, type SuggestionItem } from './PromptInputFooterSuggestions.js';
 import { PromptInputHelpMenu } from './PromptInputHelpMenu.js';
-
-const BAR_WIDTH = 16;
 
 /**
  * ContextWindowDisplay with memo to prevent re-renders on every keystroke.
@@ -45,13 +44,12 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
   const mainLoopModel = useMainLoopModel();
   const exceeds200k = useMemo(() => doesMostRecentAssistantMessageExceed200k(messages), [messages]);
   const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: exceeds200k });
+  const activeModel = getActiveModelIdentity(runtimeModel);
   const windowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
   const { avgRate10s, isGenerating } = useTokenRateDetailed(messages);
 
   const contextTokens = useMemo(() => tokenCountWithEstimation(messages), [messages]);
   const pct = useMemo(() => Math.min(100, Math.max(0, Math.round((contextTokens / windowSize) * 100))), [contextTokens, windowSize]);
-  const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((pct / 100) * BAR_WIDTH)));
-  const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
   const contextColor = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : undefined;
   const rateValue = Math.round(avgRate10s);
   const showTokenRate = rateValue > 0;
@@ -60,12 +58,14 @@ function ContextWindowDisplayInner({ messages, permissionMode }: {
   const windowK = formatNumber(windowSize);
 
   return (
-    <Box flexDirection="row" gap={1}>
+    <Box flexDirection="row" gap={1} flexShrink={1}>
+      <Text color="claude">{activeModel.provider}</Text>
+      <Text dimColor wrap="truncate">{activeModel.model}</Text>
+      <Text dimColor>·</Text>
+      <Text dimColor>context</Text>
       <Text color={contextColor} dimColor={contextColor === undefined}>{pct}%</Text>
-      <Text color={contextColor} dimColor={contextColor === undefined}>{bar}</Text>
-      <Text dimColor>
-        {inputK}/{windowK}
-      </Text>
+      <Text dimColor>·</Text>
+      <Text dimColor>{inputK} / {windowK}</Text>
       {showTokenRate && <Text dimColor>·</Text>}
       {showTokenRate && <Text dimColor={!isGenerating} color={rateColor}>{rateValue} tok/s</Text>}
     </Box>

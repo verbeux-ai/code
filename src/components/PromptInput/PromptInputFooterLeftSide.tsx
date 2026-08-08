@@ -346,11 +346,11 @@ function ModeIndicator({
   // Rendered before the tasks pill so a long pill label (e.g. ultraplan URL)
   // doesn't push the mode indicator off-screen.
   const modePart = currentMode && hasActiveMode && !getIsRemoteMode() ? <Text color={getModeColor(currentMode)} key="mode">
-        {permissionModeSymbol(currentMode)}{' '}
-        {permissionModeTitle(currentMode).toLowerCase()} on
+        {currentMode === 'bypassPermissions' || currentMode === 'dontAsk' ? '⚠' : permissionModeSymbol(currentMode)}{' '}
+        {permissionModeTitle(currentMode).toLowerCase()}
         {shouldShowModeHint && <Text dimColor>
-            {' '}
-            <KeyboardShortcutHint shortcut={modeCycleShortcut} action="cycle" parens />
+            {' · '}
+            <KeyboardShortcutHint shortcut={modeCycleShortcut} action="change" />
           </Text>}
       </Text> : null;
 

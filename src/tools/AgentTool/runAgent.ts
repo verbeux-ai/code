@@ -14,6 +14,10 @@ import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
+import {
+  logEvent,
+  type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+} from '../../services/analytics/index.js'
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
 import {
@@ -55,11 +59,19 @@ import {
 import { registerFrontmatterHooks } from '../../utils/hooks/registerFrontmatterHooks.js'
 import { clearSessionHooks } from '../../utils/hooks/sessionHooks.js'
 import { executeSubagentStartHooks } from '../../utils/hooks.js'
-import { createUserMessage } from '../../utils/messages.js'
-import { getAgentModel } from '../../utils/model/agent.js'
-import { resolveAgentProvider } from '../../services/api/agentRouting.js'
+import { createSystemMessage, createUserMessage } from '../../utils/messages.js'
+import {
+  resolveAgentExecutionModel,
+  type AgentModelResolution,
+} from '../../services/api/agentRouting.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
-import type { ModelAlias } from '../../utils/model/aliases.js'
+import { createChildAbortController } from '../../utils/abortController.js'
+import {
+  createAgentExecutionBudgetState,
+  isAgentBudgetTimeout,
+  startAgentBudgetTimers,
+  type AgentExecutionBudgetState,
+} from '../../query/agentExecutionBudget.js'
 import {
   clearAgentTranscriptSubdir,
   recordSidechainTranscript,
@@ -265,6 +277,8 @@ export async function* runAgent({
   transcriptSubdir,
   onQueryProgress,
   agentName,
+  modelResolution,
+  executionBudgetState: providedExecutionBudgetState,
 }: {
   agentDefinition: AgentDefinition
   promptMessages: Message[]
@@ -283,7 +297,7 @@ export async function* runAgent({
     abortController?: AbortController
     agentId?: AgentId
   }
-  model?: ModelAlias
+  model?: string
   maxTurns?: number
   /** Preserve toolUseResult on messages for subagents with viewable transcripts */
   preserveToolUseResults?: boolean
@@ -326,6 +340,10 @@ export async function* runAgent({
   onQueryProgress?: () => void
   /** Agent name (team member name) for routing resolution */
   agentName?: string
+  /** Pre-resolved by AgentTool so prompt/logging/API use the exact same route. */
+  modelResolution?: AgentModelResolution
+  /** Shared across foreground/background transitions to avoid resetting limits. */
+  executionBudgetState?: AgentExecutionBudgetState
 }): AsyncGenerator<Message, void> {
   // Track subagent usage for feature discovery
 
@@ -337,20 +355,43 @@ export async function* runAgent({
   const rootSetAppState =
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState
 
-  const resolvedAgentModel = getAgentModel(
-    agentDefinition.model,
-    toolUseContext.options.mainLoopModel,
-    model,
-    permissionMode,
-  )
+  const resolvedModel =
+    modelResolution ??
+    resolveAgentExecutionModel({
+      agentModel: agentDefinition.model,
+      agentModelRole: agentDefinition.modelRole,
+      parentModel: toolUseContext.options.mainLoopModel,
+      toolSpecifiedModel: model,
+      permissionMode,
+      agentName,
+      agentType: agentDefinition.agentType,
+      settings: getInitialSettings(),
+    })
+  const resolvedAgentModel = resolvedModel.effectiveModel
+  const effectiveModel = resolvedModel.effectiveModel
+  const providerOverride = resolvedModel.providerOverride
 
-  // Resolve per-agent provider routing from settings
-  const providerOverride = resolveAgentProvider(
-    agentName,
-    agentDefinition.agentType,
-    getInitialSettings(),
-  )
-  const effectiveModel = providerOverride ? providerOverride.model : resolvedAgentModel
+  logEvent('tengu_agent_model_resolved', {
+    agent_type:
+      agentDefinition.agentType as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    model:
+      effectiveModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    source:
+      resolvedModel.source as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    ...(resolvedModel.catalogRole && {
+      catalog_role:
+        resolvedModel.catalogRole as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    }),
+    ...(resolvedModel.profile && {
+      model_profile:
+        resolvedModel.profile as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    }),
+    ...(resolvedModel.fallbackReason && {
+      fallback_reason:
+        resolvedModel.fallbackReason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    }),
+    is_async: isAsync,
+  })
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
 
@@ -524,11 +565,19 @@ export async function* runAgent({
   // - Override takes precedence
   // - Async agents get a new unlinked controller (runs independently)
   // - Sync agents share parent's controller
-  const agentAbortController = override?.abortController
+  const baseAgentAbortController = override?.abortController
     ? override.abortController
     : isAsync
       ? new AbortController()
       : toolUseContext.abortController
+  const executionBudgetState =
+    providedExecutionBudgetState ??
+    (agentDefinition.executionBudget
+      ? createAgentExecutionBudgetState(agentDefinition.executionBudget)
+      : undefined)
+  const agentAbortController = executionBudgetState
+    ? createChildAbortController(baseAgentAbortController)
+    : baseAgentAbortController
 
   // Execute SubagentStart hooks and collect additional context
   const additionalContexts: string[] = []
@@ -714,6 +763,7 @@ export async function* runAgent({
     shareSetResponseLength: true, // Both sync and async contribute to response metrics
     criticalSystemReminder_EXPERIMENTAL:
       agentDefinition.criticalSystemReminder_EXPERIMENTAL,
+    requireCanUseTool: executionBudgetState !== undefined,
     contentReplacementState,
   })
 
@@ -747,8 +797,26 @@ export async function* runAgent({
 
   // Track the last recorded message UUID for parent chain continuity
   let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
+  const stopBudgetTimers = executionBudgetState
+    ? startAgentBudgetTimers(executionBudgetState, agentAbortController)
+    : undefined
 
   try {
+    if (resolvedModel.fallbackReason) {
+      const unavailableRoute = resolvedModel.profile
+        ? `${resolvedModel.profile} profile`
+        : resolvedModel.catalogRole
+          ? `${resolvedModel.catalogRole} role`
+          : `requested model (${resolvedModel.requestedModel ?? 'unknown'})`
+      const warning =
+        resolvedModel.fallbackReason === 'unsupported_provider_alias'
+          ? `The Claude model alias (${resolvedModel.requestedModel ?? 'unknown'}) is unavailable on the active provider. Using the parent model (${effectiveModel}).`
+          : `No eligible model was advertised for the ${unavailableRoute}. Using the parent model (${effectiveModel})${executionBudgetState ? ' with the agent execution limits enabled' : ''}.`
+      yield createSystemMessage(
+        warning,
+        'warning',
+      )
+    }
     for await (const message of query({
       messages: initialMessages,
       systemPrompt: agentSystemPrompt,
@@ -758,6 +826,7 @@ export async function* runAgent({
       toolUseContext: agentToolUseContext,
       querySource,
       maxTurns: maxTurns ?? agentDefinition.maxTurns,
+      executionBudgetState,
     })) {
       onQueryProgress?.()
       // Forward subagent API request starts to parent's metrics display
@@ -809,7 +878,10 @@ export async function* runAgent({
       }
     }
 
-    if (agentAbortController.signal.aborted) {
+    if (
+      agentAbortController.signal.aborted &&
+      !isAgentBudgetTimeout(agentAbortController.signal)
+    ) {
       throw new AbortError()
     }
 
@@ -818,6 +890,7 @@ export async function* runAgent({
       agentDefinition.callback()
     }
   } finally {
+    stopBudgetTimers?.()
     // Clean up agent-specific MCP servers (runs on normal completion, abort, or error)
     await mcpCleanup()
     // Clean up agent's session hooks

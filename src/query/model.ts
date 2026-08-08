@@ -1,5 +1,10 @@
 import type { PermissionMode } from '../utils/permissions/PermissionMode.js'
 import {
+  parseAgentModelProfileReference,
+  resolveAgentProfileModel,
+} from '../services/api/agentModelProfiles.js'
+import { getCachedVerbooModels } from '../services/api/verbooModels.js'
+import {
   getDefaultMainLoopModelSetting,
   getRuntimeMainLoopModel,
   parseUserSpecifiedModel,
@@ -26,8 +31,12 @@ export function resolveQueryTurnModel({
   sessionModel,
   exceeds200kTokens = false,
 }: ResolveQueryTurnModelParams): string {
+  const turnProfile = parseAgentModelProfileReference(turnModel)
+  const profileModel = turnProfile
+    ? resolveAgentProfileModel(turnProfile, getCachedVerbooModels() ?? [])
+    : null
   const requestedModel =
-    turnModel ??
+    (turnProfile ? profileModel : turnModel) ??
     parseUserSpecifiedModel(
       sessionModel ?? getDefaultMainLoopModelSetting(),
     )

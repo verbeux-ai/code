@@ -1,5 +1,4 @@
 import { feature } from 'bun:bundle';
-import chalk from 'chalk';
 import * as path from 'path';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -2283,7 +2282,7 @@ function PromptInput({
           <Text dimColor>Waiting for permission…</Text>
         </Box>}
       <PromptInputStashNotice hasStash={stashedPrompt !== undefined} />
-      <Box marginTop={1} marginLeft={2} height={1} overflow="hidden">
+      <Box paddingX={2} height={1} overflow="hidden" justifyContent="flex-end">
         {mode === 'prompt' && !exitMessage.show && !isPasting ? <ContextWindowDisplay messages={messages} permissionMode={effectiveToolPermissionContext.mode} /> : <Text> </Text>}
       </Box>
       {swarmBanner ? <>
@@ -2305,7 +2304,7 @@ function PromptInput({
           </Box>
           <Text color={swarmBanner.bgColor}>{'─'.repeat(columns)}</Text>
         </> : <Box width="100%">
-          <Box borderStyle="round" borderColor={getBorderColor()} paddingLeft={1} width="100%">
+          <Box borderStyle="round" borderColor={getBorderColor()} borderText={buildPromptBorderText(mode)} paddingLeft={1} width="100%">
             <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-start">
               <PromptInputModeIndicator mode={mode} isLoading={isLoading} viewingAgentName={viewingAgentName} viewingAgentColor={viewingAgentColor} />
               {showFastIcon && <Text color={getBorderColor()}>{' '}{getFastIconString(true, fastModeCooldown)}{' '}{showFastIconHint && <Text dimColor>/fast</Text>}</Text>}
@@ -2369,14 +2368,12 @@ function getInitialPasteId(messages: Message[]): number {
   }
   return maxId + 1;
 }
-function buildBorderText(showFastIcon: boolean, showFastIconHint: boolean, fastModeCooldown: boolean): BorderTextOptions | undefined {
-  if (!showFastIcon) return undefined;
-  const fastSeg = showFastIconHint ? `${getFastIconString(true, fastModeCooldown)} ${chalk.dim('/fast')}` : getFastIconString(true, fastModeCooldown);
+function buildPromptBorderText(mode: PromptInputMode): BorderTextOptions {
   return {
-    content: ` ${fastSeg} `,
+    content: mode === 'bash' ? ' shell ' : ' prompt ',
     position: 'top',
-    align: 'end',
-    offset: 0
+    align: 'start',
+    offset: 1
   };
 }
 export default React.memo(PromptInput);

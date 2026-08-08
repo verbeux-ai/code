@@ -64,6 +64,33 @@ describe('getAgentModel provider-aware fallback', () => {
   })
 
   describe('Non-Claude-native providers', () => {
+    test.each(['haiku', 'sonnet', 'opus'])(
+      'tool-specified %s alias inherits the Sol parent',
+      async alias => {
+        mock.module('./providers.js', () => ({
+          getAPIProvider: () => 'firstParty',
+          isFirstPartyAnthropicBaseUrl: () => false,
+        }))
+
+        const { getAgentModel } = await import('./agent.js')
+        expect(
+          getAgentModel('inherit', 'gpt-5.6-sol', alias, 'plan'),
+        ).toBe('gpt-5.6-sol')
+      },
+    )
+
+    test('agent-defined opus alias inherits the parent on a non-Claude provider', async () => {
+      mock.module('./providers.js', () => ({
+        getAPIProvider: () => 'firstParty',
+        isFirstPartyAnthropicBaseUrl: () => false,
+      }))
+
+      const { getAgentModel } = await import('./agent.js')
+      expect(
+        getAgentModel('opus', 'gpt-5.6-sol', undefined, 'plan'),
+      ).toBe('gpt-5.6-sol')
+    })
+
     test('haiku alias inherits parent model for OpenAI provider', async () => {
       mock.module('./providers.js', () => ({
         getAPIProvider: () => 'openai',

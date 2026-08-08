@@ -62,8 +62,10 @@ export function usePromptInputPlaceholder({
       promptSuggestionEnabled &&
       !proactiveModule?.isProactiveActive()
     ) {
-      return getExampleCommandFromCache()
+      return getExampleCommandFromCache() ?? 'Describe a task, bug, or idea…'
     }
+
+    return 'Describe a task, bug, or idea…'
   }, [
     input,
     queuedCommands,

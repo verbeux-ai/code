@@ -25,7 +25,9 @@ import { AbortError, errorMessage, toError } from '../../utils/errors.js';
 import type { CacheSafeParams } from '../../utils/forkedAgent.js';
 import { lazySchema } from '../../utils/lazySchema.js';
 import { createUserMessage, extractTextContent, isSyntheticMessage, normalizeMessages } from '../../utils/messages.js';
-import { getAgentModel } from '../../utils/model/agent.js';
+import { resolveAgentExecutionModel } from '../../services/api/agentRouting.js';
+import { getInitialSettings } from '../../utils/settings/settings.js';
+import { createAgentExecutionBudgetState } from '../../query/agentExecutionBudget.js';
 import { permissionModeSchema } from '../../utils/permissions/PermissionMode.js';
 import type { PermissionResult } from '../../utils/permissions/PermissionResult.js';
 import { filterDeniedAgents, getDenyRuleForAgent } from '../../utils/permissions/permissions.js';
@@ -415,11 +417,28 @@ export const AgentTool = buildTool({
       setAgentColor(selectedAgent.agentType, selectedAgent.color);
     }
 
-    // Resolve agent params for logging (these are already resolved in runAgent)
-    const resolvedAgentModel = getAgentModel(selectedAgent.model, toolUseContext.options.mainLoopModel, isForkPath ? undefined : model, permissionMode);
+    // Resolve once so logging, prompts, task UI and the API use the same model.
+    const modelResolution = resolveAgentExecutionModel({
+      agentModel: selectedAgent.model,
+      agentModelRole: selectedAgent.modelRole,
+      parentModel: toolUseContext.options.mainLoopModel,
+      toolSpecifiedModel: isForkPath ? undefined : model,
+      permissionMode,
+      agentName: name,
+      agentType: selectedAgent.agentType,
+      settings: getInitialSettings()
+    });
+    const resolvedAgentModel = modelResolution.effectiveModel;
     logEvent('tengu_agent_tool_selected', {
       agent_type: selectedAgent.agentType as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       model: resolvedAgentModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      model_source: modelResolution.source as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      ...(modelResolution.profile && {
+        model_profile: modelResolution.profile as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      }),
+      ...(modelResolution.fallbackReason && {
+        fallback_reason: modelResolution.fallbackReason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      }),
       source: selectedAgent.source as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       color: selectedAgent.color as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       is_built_in_agent: isBuiltInAgent(selectedAgent),
@@ -540,13 +559,15 @@ export const AgentTool = buildTool({
         content: prompt
       })];
     }
+    const executionBudgetState = selectedAgent.executionBudget ? createAgentExecutionBudgetState(selectedAgent.executionBudget, startTime) : undefined;
     const metadata = {
       prompt,
       resolvedAgentModel,
       isBuiltInAgent: isBuiltInAgent(selectedAgent),
       startTime,
       agentType: selectedAgent.agentType,
-      isAsync: (run_in_background === true || selectedAgent.background === true) && !isBackgroundTasksDisabled
+      isAsync: (run_in_background === true || selectedAgent.background === true) && !isBackgroundTasksDisabled,
+      executionBudgetState
     };
 
     // Use inline env check instead of coordinatorModule to avoid circular
@@ -647,6 +668,8 @@ export const AgentTool = buildTool({
       worktreePath: worktreeInfo?.worktreePath,
       description,
       agentName: name,
+      modelResolution,
+      executionBudgetState,
     };
 
     // Helper to wrap execution with a cwd override: explicit cwd arg (KAIROS)
@@ -704,6 +727,7 @@ export const AgentTool = buildTool({
         description,
         prompt,
         selectedAgent,
+        model: resolvedAgentModel,
         setAppState: rootSetAppState,
         // Don't link to parent's abort controller -- background agents should
         // survive when the user presses ESC to cancel the main thread.
@@ -836,6 +860,7 @@ export const AgentTool = buildTool({
             description,
             prompt,
             selectedAgent,
+            model: resolvedAgentModel,
             setAppState: rootSetAppState,
             toolUseId: toolUseContext.toolUseId,
             autoBackgroundMs: getAutoBackgroundMs() || undefined

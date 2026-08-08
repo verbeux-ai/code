@@ -1,16 +1,17 @@
 /**
- * VERBOO-BRAND: Verboo Code startup screen — filled-block text logo with
- * Verboo purple gradient. Called once at CLI startup before the Ink UI renders.
- *
- * NOTE: cores aqui são RGB hardcoded (NÃO usam theme.ts) — toda mudança
- * de marca neste arquivo é manual.
+ * Minimal Verboo Code identity printed once before the Ink UI renders.
+ * Keep this compact: the terminal is a workspace, not a splash screen.
  */
 
 import { VERBOO_ROUTER_URL, isVerbooMode } from '../constants/oauth.js'
-import { isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
+import { getCachedClaudeNativeModels } from '../services/api/claudeNativeModels.js'
+import { CLAUDE_NATIVE_API_BASE_URL } from '../services/api/claudeNativeConfig.js'
+import { getCachedCodexModels } from '../services/api/codexModels.js'
+import { DEFAULT_CODEX_BASE_URL, isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
 import { getCachedVerbooModels } from '../services/api/verbooModels.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
-import { getDefaultVerbooModel, getUserSpecifiedModelSetting, isClaudeModelLike, parseUserSpecifiedModel } from '../utils/model/model.js'
+import { getActiveModelIdentity } from '../utils/model/activeModelIdentity.js'
+import { getDefaultMainLoopModel, getDefaultVerbooModel, getUserSpecifiedModelSetting, parseUserSpecifiedModel } from '../utils/model/model.js'
 import { containsExactZaiGlmModelId, isZaiBaseUrl } from '../utils/zaiProvider.js'
 
 declare const MACRO: { VERSION: string; DISPLAY_VERSION?: string }
@@ -19,104 +20,33 @@ const ESC = '\x1b['
 const RESET = `${ESC}0m`
 const DIM = `${ESC}2m`
 
-type RGB = [number, number, number]
 const rgb = (r: number, g: number, b: number) => `${ESC}38;2;${r};${g};${b}m`
 
-function lerp(a: RGB, b: RGB, t: number): RGB {
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * t),
-    Math.round(a[1] + (b[1] - a[1]) * t),
-    Math.round(a[2] + (b[2] - a[2]) * t),
-  ]
-}
-
-function gradAt(stops: RGB[], t: number): RGB {
-  const c = Math.max(0, Math.min(1, t))
-  const s = c * (stops.length - 1)
-  const i = Math.floor(s)
-  if (i >= stops.length - 1) return stops[stops.length - 1]
-  return lerp(stops[i], stops[i + 1], s - i)
-}
-
-function paintLine(text: string, stops: RGB[], lineT: number): string {
-  let out = ''
-  for (let i = 0; i < text.length; i++) {
-    const t = text.length > 1 ? lineT * 0.5 + (i / (text.length - 1)) * 0.5 : lineT
-    const [r, g, b] = gradAt(stops, t)
-    out += `${rgb(r, g, b)}${text[i]}`
-  }
-  return out + RESET
-}
-
-// ─── Colors ───────────────────────────────────────────────────────────────────
-
-// VERBOO-BRAND: purple gradient for the logo (was sunset orange)
-const SUNSET_GRAD: RGB[] = [
-  [213, 142, 255], // light purple
-  [193, 92, 255],
-  [173, 52, 254], // brand #AD34FE
-  [146, 1, 243],
-  [110, 0, 200],
-  [80, 0, 150],
-]
-
-const ACCENT: RGB = [173, 52, 254] // VERBOO-BRAND: brand purple
-const CREAM: RGB = [220, 200, 240] // VERBOO-BRAND: soft lavender
-const DIMCOL: RGB = [120, 100, 140] // VERBOO-BRAND: muted cool gray
-const BORDER: RGB = [80, 65, 100] // VERBOO-BRAND: dark cool gray
-
-// ─── Filled Block Text Logo ───────────────────────────────────────────────────
-
-// VERBOO-BRAND: "VERBOO CODE" em uma linha, estilo rounded (cantos \u256d\u256e\u2570\u256f, tra\u00e7os \u2500)
-const LOGO_VERBOO_CODE = [
-  `  \u2588\u2588\u256e   \u2588\u2588\u256e\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256e     \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u256e \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e`,
-  `  \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e   \u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f\u2588\u2588\u256d\u2500\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2500\u2500\u256f`,
-  `  \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u256e  \u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502   \u2588\u2588\u2502   \u2588\u2588\u2502     \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u256e  `,
-  `  \u2570\u2588\u2588\u256e \u2588\u2588\u256d\u256f\u2588\u2588\u256d\u2500\u2500\u256f  \u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u256d\u2500\u2500\u2588\u2588\u256e\u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502   \u2588\u2588\u2502   \u2588\u2588\u2502     \u2588\u2588\u2502   \u2588\u2588\u2502\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u256d\u2500\u2500\u256f  `,
-  `   \u2570\u2588\u2588\u2588\u2588\u256d\u256f \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2588\u2588\u2502  \u2588\u2588\u2502\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f   \u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256e\u2570\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u256d\u256f\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u256e`,
-  `    \u2570\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u2570\u2500\u256f  \u2570\u2500\u256f\u2570\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u256f     \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u256f \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u256f`,
-]
-
-// ─── Verboo ASCII Logo ────────────────────────────────────────────────────────
-
-const VERBOO_LOGO = [
-  `  ▄▀▀▀▀▀▀▀▄  `,
-  `▄▀▀▀▀▀▀▀▀▀▀▀▄`,
-  `▀▀▀ ▀▀▀▀▀ ▀▀▀`,
-  `▀▀▀▀▀▀▀▀▀▀▀▀▀`,
-  `▀▀▀▀▀▄▄▄▀▀▀▀▀`,
-  ` ▀▀▀▀▀▀▀▀▀▀▀ `,
-  `▄▀▀ ▀▀▀▀▀ ▀▀▄`,
-]
-
-// Máscara 1:1 com VERBOO_LOGO — 1 = bg roxo (bloco cheio), 0 = fg só (meio-bloco)
-// Edite os 1/0 para escolher quais caracteres ficam totalmente preenchidos
-const VERBOO_LOGO_MASK = [
-  `  011111110  `,
-  `0111111111110`,
-  `1110111110111`,
-  `1111011101111`,
-  `1111100011111`,
-  ` 11111111111 `,
-  `110 01110 011`,
-]
-
-const STARTUP_LOGO_MIN_COLUMNS = 80
+const ACCENT = [173, 52, 254] as const
+const DIMCOL = [120, 100, 140] as const
+const STARTUP_DEFAULT_COLUMNS = 80
 
 // ─── Provider detection ───────────────────────────────────────────────────────
 
 function resolveVerbooStartupModel(modelOverride?: string): string {
-  const cachedModels = getCachedVerbooModels()
+  const verbooModels = getCachedVerbooModels()
+  const codexModels = getCachedCodexModels()
+  const claudeModels = getCachedClaudeNativeModels()
+  const availableModels = [
+    ...(verbooModels ?? []),
+    ...(codexModels ?? []),
+    ...(claudeModels ?? []),
+  ]
+  const catalogsLoaded =
+    verbooModels !== null || codexModels !== null || claudeModels !== null
   const resolveIfAvailable = (model: unknown): string | undefined => {
     if (typeof model !== 'string') return undefined
     const trimmed = model.trim()
-    if (!trimmed || isClaudeModelLike(trimmed)) return undefined
+    if (!trimmed) return undefined
 
     const resolved = parseUserSpecifiedModel(trimmed)
-    if (isClaudeModelLike(resolved)) return undefined
-
-    if (cachedModels !== null) {
-      return cachedModels.some(m => m.id === resolved && !isClaudeModelLike(m.id))
+    if (catalogsLoaded) {
+      return availableModels.some(model => model.id === resolved)
         ? resolved
         : undefined
     }
@@ -127,20 +57,25 @@ function resolveVerbooStartupModel(modelOverride?: string): string {
   return (
     resolveIfAvailable(modelOverride) ??
     resolveIfAvailable(getUserSpecifiedModelSetting()) ??
-    cachedModels?.find(model => !isClaudeModelLike(model.id))?.id ??
     getDefaultVerbooModel()
   )
 }
 
 export function detectProvider(modelOverride?: string): { name: string; model: string; baseUrl: string; isLocal: boolean } {
   if (isVerbooMode()) {
-    const baseUrl = VERBOO_ROUTER_URL
-    const isLocal = isLocalProviderUrl(baseUrl)
+    const model = resolveVerbooStartupModel(modelOverride)
+    const identity = getActiveModelIdentity(model)
+    const baseUrl =
+      identity.provider === 'Codex'
+        ? DEFAULT_CODEX_BASE_URL
+        : identity.provider === 'Claude'
+          ? CLAUDE_NATIVE_API_BASE_URL
+          : VERBOO_ROUTER_URL
     return {
-      name: 'Verboo',
-      model: resolveVerbooStartupModel(modelOverride),
+      name: identity.provider,
+      model: identity.model,
       baseUrl,
-      isLocal,
+      isLocal: false,
     }
   }
 
@@ -224,19 +159,12 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
     return { name, model: displayModel, baseUrl, isLocal }
   }
 
-  // VERBOO-BRAND: default provider é Verboo. API LLM via router em code.verboo.ai/router.
-  const modelSetting = modelOverride || getDefaultVerbooModel()
+  const modelSetting =
+    modelOverride || getUserSpecifiedModelSetting() || getDefaultMainLoopModel()
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
-  const baseUrl = VERBOO_ROUTER_URL
+  const baseUrl = process.env.ANTHROPIC_BASE_URL || CLAUDE_NATIVE_API_BASE_URL
   const isLocal = isLocalProviderUrl(baseUrl)
-  return { name: 'Verboo', model: resolvedModel, baseUrl, isLocal }
-}
-
-// ─── Box drawing ──────────────────────────────────────────────────────────────
-
-function boxRow(content: string, width: number, rawLen: number): string {
-  const pad = Math.max(0, width - 2 - rawLen)
-  return `${rgb(...BORDER)}\u2502${RESET}${content}${' '.repeat(pad)}${rgb(...BORDER)}\u2502${RESET}`
+  return { name: 'Claude', model: resolvedModel, baseUrl, isLocal }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -254,88 +182,30 @@ export function renderStartupScreen(
   displayCwd: string,
   columns: number,
 ): string {
-  const out: string[] = []
+  const out: string[] = ['']
   const bold = `${ESC}1m`
   const PURPLE = rgb(...ACCENT)
-  const PURPLE_FILL = `${rgb(...ACCENT)}${ESC}48;2;${ACCENT[0]};${ACCENT[1]};${ACCENT[2]}m`
-  const SOFT = rgb(...CREAM)
   const DIMP = `${DIM}${rgb(...DIMCOL)}`
   const STATUS_C = p.isLocal ? rgb(130, 200, 140) : PURPLE
   const statusLabel = p.isLocal ? 'local' : 'cloud'
-  const LOGO_TEXT_PADDING = 2
+  const providerAndModel = `${p.name} · ${p.model}`
+  const shownVersion = truncateStartupText(version, Math.max(1, columns - 22))
+  const model = truncateStartupText(
+    providerAndModel,
+    Math.max(1, columns - statusLabel.length - 10),
+  )
+  const cwd = truncateStartupText(displayCwd, Math.max(1, columns - 5))
 
-  out.push('')
+  out.push(`  ${PURPLE}╭${RESET}  👻  ${bold}${PURPLE}Verboo Code${RESET} ${DIMP}v${shownVersion}${RESET}`)
+  out.push(`  ${PURPLE}│${RESET}  ${STATUS_C}●${RESET} ${DIMP}${model} · ${statusLabel}${RESET}`)
+  out.push(`  ${PURPLE}╰${RESET}  ${DIMP}${cwd}${RESET}`)
 
-  if (columns < STARTUP_LOGO_MIN_COLUMNS) {
-    const compactTextWidth = Math.max(1, columns - 6)
-    const provider = truncateStartupText(`${p.name} \u00b7 ${p.model}`, compactTextWidth)
-    const endpoint = truncateStartupText(p.baseUrl, compactTextWidth)
-    const cwd = truncateStartupText(displayCwd, compactTextWidth)
-
-    out.push(`  ${PURPLE}\ud83d\udc7b${RESET}  ${bold}${SOFT}Verboo Code${RESET} ${DIMP}v${version}${RESET}`)
-    out.push(`      ${DIMP}Tokens ilimitados \u00b7 Privacidade \u00b7 Velocidade${RESET}`)
-    out.push(`      ${DIMP}${provider}${RESET}`)
-    out.push(`      ${DIMP}${endpoint}${RESET}`)
-    out.push(`      ${DIMP}${cwd}${RESET}`)
-  } else {
-    const maxLogoWidth = Math.max(...VERBOO_LOGO.map(line => line.trimEnd().length))
-    const rightTextWidth = Math.max(
-      1,
-      columns - 2 - maxLogoWidth - LOGO_TEXT_PADDING,
-    )
-    const provider = truncateStartupText(`${p.name} \u00b7 ${p.model}`, rightTextWidth)
-    const endpoint = truncateStartupText(p.baseUrl, rightTextWidth)
-    const cwd = truncateStartupText(displayCwd, rightTextWidth)
-    const rightCol = [
-      ``,
-      `${bold}${SOFT}Verboo Code${RESET} ${DIMP}v${version}${RESET}`,
-      `${DIMP}Tokens ilimitados \u00b7 Privacidade \u00b7 Velocidade${RESET}`,
-      `${DIMP}${provider}${RESET}`,
-      `${DIMP}${endpoint}${RESET}`,
-      `${DIMP}${cwd}${RESET}`,
-      ``,
-    ]
-
-    const paintedLogo: { text: string; visualWidth: number }[] = []
-    for (let i = 0; i < VERBOO_LOGO.length; i++) {
-      const line = (VERBOO_LOGO[i] ?? '').trimEnd()
-      const mask = VERBOO_LOGO_MASK[i] ?? ''
-      let painted = ''
-      for (let j = 0; j < line.length; j++) {
-        const ch = line[j] ?? ''
-        const isBlock = ch === '\u2580' || ch === '\u2584'
-        if (isBlock && mask[j] === '1') {
-          painted += `${PURPLE_FILL}${ch}${RESET}`
-        } else if (isBlock) {
-          painted += `${PURPLE}${ch}${RESET}`
-        } else {
-          painted += ch
-        }
-      }
-      paintedLogo.push({ text: painted, visualWidth: line.length })
-    }
-
-    for (let i = 0; i < paintedLogo.length; i++) {
-      const { text, visualWidth } = paintedLogo[i] ?? {
-        text: '',
-        visualWidth: 0,
-      }
-      const gap = ' '.repeat(
-        Math.max(0, maxLogoWidth - visualWidth + LOGO_TEXT_PADDING),
-      )
-      out.push(`  ${text}${gap}${rightCol[i] ?? ''}`)
-    }
-  }
-
-  out.push('')
-  out.push(`  ${STATUS_C}\u25cf${RESET}  ${DIMP}${statusLabel}${RESET}    ${DIMP}Ready \u2014 type ${RESET}${PURPLE}/help${RESET}${DIMP} to begin${RESET}`)
   out.push('')
 
   return `${out.join('\n')}\n`
 }
 
-// VERBOO-BRAND: compact rounded header (replaces giant ASCII splash).
-// Layout inspired by the V2 logo style \u2014 logo + name + meta on the right.
+// VERBOO-BRAND: compact identity shared by every interactive startup.
 export function printStartupScreen(modelOverride?: string): void {
   // Skip in non-interactive / CI / print mode
   if (process.env.CI || !process.stdout.isTTY) return
@@ -348,6 +218,6 @@ export function printStartupScreen(modelOverride?: string): void {
   const displayCwd = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd
 
   const version = MACRO.DISPLAY_VERSION ?? MACRO.VERSION
-  const columns = process.stdout.columns ?? STARTUP_LOGO_MIN_COLUMNS
+  const columns = process.stdout.columns ?? STARTUP_DEFAULT_COLUMNS
   process.stdout.write(renderStartupScreen(p, version, displayCwd, columns))
 }

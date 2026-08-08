@@ -219,22 +219,21 @@ describe('resolveAgentExecutionModel', () => {
     expect(result.providerOverride?.baseURL).toBe('https://api.deepseek.com/v1')
   })
 
-  test('protects non-opted agents from unsupported provider aliases without catalog remapping', () => {
+  test('does not catalog-remap agents that did not opt into a role', () => {
     delete process.env.CLAUDE_CODE_SUBAGENT_MODEL
     expect(
       resolveAgentExecutionModel({
-        agentModel: 'haiku',
+        agentModel: 'custom-worker-model',
         parentModel: 'gpt-5.6-sol',
         permissionMode: 'default',
         agentType: 'claude-code-guide',
         settings: null,
       }),
     ).toEqual({
-      effectiveModel: 'gpt-5.6-sol',
-      requestedModel: 'haiku',
-      source: 'parent_fallback',
+      effectiveModel: 'custom-worker-model',
+      requestedModel: 'custom-worker-model',
+      source: 'agent_definition',
       providerOverride: null,
-      fallbackReason: 'unsupported_provider_alias',
     })
   })
 })

@@ -75,6 +75,7 @@ mock.module('../../services/api/verbooModels.js', () => ({
   clearVerbooModelsCache: () => {},
   fetchVerbooModels: mock(async () => verbooModels),
   getCachedVerbooModels: () => verbooModels,
+  getVerbooAgentModelForRole: () => undefined,
   getVerbooModelMeta: (modelId: string) =>
     verbooModels.find(model => model.id === modelId),
   getVerbooModelReasoning: () => undefined,

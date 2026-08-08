@@ -1,8 +1,4 @@
-import {
-  getVerbooAgentModelForRole,
-  type VerbooAgentModelRole,
-  type VerbooModel,
-} from './verbooModels.js'
+import type { VerbooModel } from './verbooModels.js'
 
 export const AGENT_MODEL_PROFILES = {
   fast: [
@@ -64,16 +60,6 @@ export const AGENT_MODEL_PROFILES = {
 
 export type AgentModelProfile = keyof typeof AGENT_MODEL_PROFILES
 
-const PROFILE_CATALOG_ROLES: Partial<
-  Record<AgentModelProfile, VerbooAgentModelRole>
-> = {
-  fast: 'fast',
-  balanced: 'balanced',
-  review: 'review',
-  coding: 'coding',
-  testing: 'testing',
-}
-
 function canonicalModelName(model: string): string {
   const normalized = model.trim().toLowerCase().replace(/\[1m\]$/i, '')
   return normalized.split('/').at(-1) ?? normalized
@@ -115,13 +101,13 @@ export function parseAgentModelProfileReference(
 export function resolveAgentProfileModel(
   profile: AgentModelProfile,
   availableModels: readonly VerbooModel[],
+  routerRoleModel?: string,
 ): string | null {
-  const catalogRole = PROFILE_CATALOG_ROLES[profile]
-  const roleModel = catalogRole
-    ? getVerbooAgentModelForRole(catalogRole)
-    : undefined
-  if (roleModel) {
-    const entitledRoleModel = findAvailableAgentModel(roleModel, availableModels)
+  if (routerRoleModel) {
+    const entitledRoleModel = findAvailableAgentModel(
+      routerRoleModel,
+      availableModels,
+    )
     if (entitledRoleModel) return entitledRoleModel.id
   }
 

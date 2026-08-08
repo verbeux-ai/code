@@ -70,6 +70,17 @@ function normalize(key: string): string {
   return key.toLowerCase().replace(/[-_]/g, '')
 }
 
+function resolveProfileModel(
+  profile: AgentModelProfile,
+  availableModels: readonly VerbooModel[],
+): string | null {
+  return resolveAgentProfileModel(
+    profile,
+    availableModels,
+    getVerbooAgentModelForRole(profile),
+  )
+}
+
 function findRoutingValue(
   name: string | undefined,
   subagentType: string | undefined,
@@ -131,7 +142,7 @@ export function resolveAgentRoute(
 
     const profile = parseAgentModelProfileReference(`profile:${routingValue}`)
     if (profile) {
-      const model = resolveAgentProfileModel(profile, availableModels)
+      const model = resolveProfileModel(profile, availableModels)
       return model ? { model, source: 'profile', profile } : null
     }
 
@@ -144,7 +155,7 @@ export function resolveAgentRoute(
     return model ? { model: model.id, source: 'verboo-model' } : null
   }
 
-  const model = resolveAgentProfileModel(
+  const model = resolveProfileModel(
     routingValue.profile,
     availableModels,
   )
@@ -279,7 +290,7 @@ export function resolveAgentExecutionModel({
     const availableModels = getCachedVerbooModels() ?? []
     const requestedProfile = parseAgentModelProfileReference(requestedModel)
     if (requestedProfile) {
-      const profileModel = resolveAgentProfileModel(
+      const profileModel = resolveProfileModel(
         requestedProfile,
         availableModels,
       )
@@ -323,7 +334,7 @@ export function resolveAgentExecutionModel({
         }
       }
       if (catalogRole === 'explore') {
-        const compatibleFastModel = resolveAgentProfileModel(
+        const compatibleFastModel = resolveProfileModel(
           'fast',
           availableModels,
         )

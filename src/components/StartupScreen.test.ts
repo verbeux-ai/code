@@ -53,6 +53,7 @@ async function importStartupScreenWithModels(
   }))
   mock.module('../services/api/verbooModels.js', () => ({
     getCachedVerbooModels: () => models,
+    getVerbooAgentModelForRole: () => undefined,
     getVerbooModelMeta: (modelId: string) =>
       models.find(model => model.id === modelId),
   }))

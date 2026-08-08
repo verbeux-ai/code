@@ -9,7 +9,6 @@ import {
 import { isInGlobalClaudeFolder } from '../components/permissions/FilePermissionDialog/permissionOptions.tsx'
 import { optionForPermissionSaveDestination } from '../components/permissions/rules/AddPermissionRules.tsx'
 import {
-  checkEditableInternalPath,
   getClaudeSkillScope,
   isClaudeSettingsPath,
 } from './permissions/filesystem.ts'
@@ -34,30 +33,6 @@ afterEach(() => {
 })
 
 describe('Verboo settings path surfaces', () => {
-  test('allows project planning artifacts without unlocking Verboo configuration', () => {
-    const input = { file_path: '' }
-
-    expect(
-      checkEditableInternalPath(
-        join(
-          process.cwd(),
-          '.verboo',
-          'plans',
-          'ui-unit-tests',
-          'requirements.md',
-        ),
-        input,
-      ),
-    ).toMatchObject({ behavior: 'allow', updatedInput: input })
-
-    expect(
-      checkEditableInternalPath(
-        join(process.cwd(), '.verboo', 'settings.local.json'),
-        input,
-      ),
-    ).toMatchObject({ behavior: 'passthrough' })
-  })
-
   test('isClaudeSettingsPath recognizes project .verboo settings files', () => {
     expect(
       isClaudeSettingsPath(

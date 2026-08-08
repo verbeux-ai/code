@@ -24,6 +24,11 @@
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "desktop:contract:test": "bun test scripts/desktop-release/contract.test.ts",
+    "desktop:package": "bun run scripts/desktop-release/package.ts",
+    "desktop:manifest": "bun run scripts/desktop-release/manifest.ts",
+    "desktop:verify": "bun run scripts/desktop-release/verify-release.ts",
+    "desktop:test": "bun test scripts/desktop-release/*.test.ts",
     "postinstall": "node scripts/postinstall.mjs || true",
     "integrations:generate": "bun run scripts/generate-integrations-artifacts.ts",
     "integrations:check": "bun run scripts/generate-integrations-artifacts.ts --check",

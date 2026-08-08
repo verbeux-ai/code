@@ -5,7 +5,11 @@ import {
   withMemoryCorrectionHint,
 } from 'src/utils/messages.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
-import { findToolByName, type Tools, type ToolUseContext } from '../../Tool.js'
+import {
+  findToolByNameOrUniquePrefix,
+  type Tools,
+  type ToolUseContext,
+} from '../../Tool.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
 import { createChildAbortController } from '../../utils/abortController.js'
@@ -80,7 +84,10 @@ export class StreamingToolExecutor {
    * Add a tool to the execution queue. Will start executing immediately if conditions allow.
    */
   addTool(block: ToolUseBlock, assistantMessage: AssistantMessage): void {
-    const toolDefinition = findToolByName(this.toolDefinitions, block.name)
+    const toolDefinition = findToolByNameOrUniquePrefix(
+      this.toolDefinitions,
+      block.name,
+    )
     if (!toolDefinition) {
       this.tools.push({
         id: block.id,

@@ -60,6 +60,11 @@ describe('desktop CLI release contract', () => {
     expect(releaseWorkflow).toContain("github.repository == 'verbeux-ai/code'")
     expect(releaseWorkflow).toContain('VERBOO_DESKTOP_MINISIGN_SECRET_KEY_B64')
     expect(releaseWorkflow).toContain('VERBOO_DESKTOP_MINISIGN_PUBLIC_KEY')
+    expect(releaseWorkflow).toContain('MINISIGN_VERSION: "0.12"')
+    expect(releaseWorkflow).toContain(
+      '9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73',
+    )
+    expect(releaseWorkflow).not.toContain('apt-get install -y minisign')
     expect(releaseWorkflow).toContain('gh release upload')
     expect(releaseWorkflow).not.toContain('--clobber')
     expect(pullRequestWorkflow).not.toContain('gh release upload')

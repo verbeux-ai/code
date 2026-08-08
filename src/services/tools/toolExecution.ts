@@ -404,10 +404,24 @@ export async function* runToolUse(
   // (e.g., old transcripts calling "KillShell" which is now an alias for "TaskStop")
   // Only fall back for tools where the name matches an alias, not the primary name
   if (!tool) {
-    const fallbackTool = findToolByName(getAllBaseTools(), toolName)
-    // Only use fallback if the tool was found via alias (deprecated name)
-    if (fallbackTool && fallbackTool.aliases?.includes(toolName)) {
+    const fallbackTool = findToolByNameOrUniquePrefix(
+      getAllBaseTools(),
+      toolName,
+    )
+    // A model can only call a tool it received in its schema. Recover an exact
+    // alias or an unambiguous truncated built-in name when filtering removed
+    // the original definition from this execution path.
+    if (
+      fallbackTool &&
+      (fallbackTool.aliases?.includes(toolName) ||
+        (!fallbackTool.isMcp && fallbackTool.name !== toolName))
+    ) {
       tool = fallbackTool
+      if (tool.name !== toolName) {
+        logForDebugging(
+          `Recovered truncated base tool name ${toolName} as ${tool.name}: ${toolUse.id}`,
+        )
+      }
     }
   }
   const messageId = assistantMessage.message.id

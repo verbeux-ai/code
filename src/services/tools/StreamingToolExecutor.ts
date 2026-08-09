@@ -6,6 +6,7 @@ import {
 } from 'src/utils/messages.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
+  findToolByName,
   findToolByNameOrUniquePrefix,
   type Tools,
   type ToolUseContext,

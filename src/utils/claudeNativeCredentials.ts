@@ -17,6 +17,8 @@ import {
   upsertProviderAccount,
 } from './providerAccounts/store.js'
 import { normalizeProviderAccounts } from './providerAccounts/store.js'
+import { AccountWorkRegistry } from './providerAccounts/refreshRegistry.js'
+import type { LocalProviderAccountId } from './providerAccounts/types.js'
 
 export type {
   ClaudeNativeCredentialBlob,
@@ -34,11 +36,13 @@ type RefreshResponse = {
   scope?: string
 }
 
-let inFlightRefresh: Promise<{
+type ClaudeRefreshResult = {
   refreshed: boolean
   credentials?: ClaudeNativeCredentialBlob
-}> | null = null
-let inMemoryLastRefreshFailureAt: number | null = null
+}
+
+const claudeRefreshRegistry = new AccountWorkRegistry<ClaudeRefreshResult>()
+const inMemoryLastRefreshFailureAt = new Map<string, number>()
 
 function trimmed(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -62,14 +66,16 @@ export function hasCurrentClaudeRiskAcceptance(
   )
 }
 
-export function readClaudeNativeCredentials(): ClaudeNativeCredentialBlob | undefined {
+export function readClaudeNativeCredentials(
+  localAccountId?: LocalProviderAccountId,
+): ClaudeNativeCredentialBlob | undefined {
   if (isBareMode()) return undefined
   try {
     const data = storage().read()
     const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const defaultAccountId = providerAccounts?.claude.defaultAccountId
-    const account = defaultAccountId
-      ? providerAccounts?.claude.accounts[defaultAccountId]
+    const accountId = localAccountId ?? providerAccounts?.claude.defaultAccountId
+    const account = accountId
+      ? providerAccounts?.claude.accounts[accountId]
       : undefined
     if (account?.credential) return account.credential
     return normalizeClaudeNativeCredentials(data?.claudeNative)
@@ -78,16 +84,18 @@ export function readClaudeNativeCredentials(): ClaudeNativeCredentialBlob | unde
   }
 }
 
-export async function readClaudeNativeCredentialsAsync(): Promise<
+export async function readClaudeNativeCredentialsAsync(
+  localAccountId?: LocalProviderAccountId,
+): Promise<
   ClaudeNativeCredentialBlob | undefined
 > {
   if (isBareMode()) return undefined
   try {
     const data = await storage().readAsync()
     const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const defaultAccountId = providerAccounts?.claude.defaultAccountId
-    const account = defaultAccountId
-      ? providerAccounts?.claude.accounts[defaultAccountId]
+    const accountId = localAccountId ?? providerAccounts?.claude.defaultAccountId
+    const account = accountId
+      ? providerAccounts?.claude.accounts[accountId]
       : undefined
     if (account?.credential) return account.credential
     return normalizeClaudeNativeCredentials(data?.claudeNative)
@@ -98,6 +106,7 @@ export async function readClaudeNativeCredentialsAsync(): Promise<
 
 export function saveClaudeNativeCredentials(
   credentials: ClaudeNativeCredentialBlob,
+  options?: { localAccountId?: LocalProviderAccountId },
 ): { success: boolean; warning?: string } {
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
@@ -121,7 +130,14 @@ export function saveClaudeNativeCredentials(
       },
     }
     const result = secureStorage.update(next as typeof previousData)
-    if (result.success) inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    if (result.success) {
+      const key = accountRefreshKey(options?.localAccountId, normalized)
+      if (normalized.lastRefreshFailureAt === undefined) {
+        inMemoryLastRefreshFailureAt.delete(key)
+      } else {
+        inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
+      }
+    }
     return result
   }
 
@@ -129,8 +145,13 @@ export function saveClaudeNativeCredentials(
     upsertProviderAccount('claude', {
       ...normalized,
       lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    })
-    inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    }, options)
+    const key = accountRefreshKey(options?.localAccountId, normalized)
+    if (normalized.lastRefreshFailureAt === undefined) {
+      inMemoryLastRefreshFailureAt.delete(key)
+    } else {
+      inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
+    }
     return { success: true }
   } catch (error) {
     return {
@@ -151,7 +172,7 @@ export function clearClaudeNativeCredentials(): {
   if (defaultAccountId) {
     try {
       removeProviderAccount('claude', defaultAccountId)
-      inMemoryLastRefreshFailureAt = null
+      inMemoryLastRefreshFailureAt.clear()
       return { success: true }
     } catch (error) {
       return {
@@ -166,7 +187,7 @@ export function clearClaudeNativeCredentials(): {
   const next = { ...(previous as Record<string, unknown>) }
   delete next[CLAUDE_NATIVE_STORAGE_KEY]
   const result = secureStorage.update(next as typeof previous)
-  if (result.success) inMemoryLastRefreshFailureAt = null
+  if (result.success) inMemoryLastRefreshFailureAt.clear()
   return result
 }
 
@@ -177,21 +198,29 @@ function shouldRefresh(credentials: ClaudeNativeCredentialBlob): boolean {
   )
 }
 
-function coolingDown(credentials: ClaudeNativeCredentialBlob): boolean {
+function accountRefreshKey(
+  localAccountId: LocalProviderAccountId | undefined,
+  credentials: ClaudeNativeCredentialBlob,
+): string {
+  return `claude:${localAccountId ?? credentials.accountId}`
+}
+
+function coolingDown(
+  credentials: ClaudeNativeCredentialBlob,
+  key: string,
+): boolean {
   const failedAt = Math.max(
     credentials.lastRefreshFailureAt ?? 0,
-    inMemoryLastRefreshFailureAt ?? 0,
+    inMemoryLastRefreshFailureAt.get(key) ?? 0,
   )
   return Boolean(failedAt && Date.now() - failedAt < REFRESH_FAILURE_COOLDOWN_MS)
 }
 
 export async function refreshClaudeNativeAccessTokenIfNeeded(options?: {
   force?: boolean
-}): Promise<{
-  refreshed: boolean
-  credentials?: ClaudeNativeCredentialBlob
-}> {
-  const current = await readClaudeNativeCredentialsAsync()
+  localAccountId?: LocalProviderAccountId
+}): Promise<ClaudeRefreshResult> {
+  const current = await readClaudeNativeCredentialsAsync(options?.localAccountId)
   if (!current || !hasCurrentClaudeRiskAcceptance(current)) {
     return { refreshed: false }
   }
@@ -199,12 +228,12 @@ export async function refreshClaudeNativeAccessTokenIfNeeded(options?: {
   if (!options?.force && !shouldRefresh(current)) {
     return { refreshed: false, credentials: current }
   }
-  if (!options?.force && coolingDown(current)) {
+  const refreshKey = accountRefreshKey(options?.localAccountId, current)
+  if (!options?.force && coolingDown(current, refreshKey)) {
     return { refreshed: false, credentials: current }
   }
-  if (inFlightRefresh) return inFlightRefresh
 
-  inFlightRefresh = (async () => {
+  return claudeRefreshRegistry.run(refreshKey, async () => {
     try {
       const form = new URLSearchParams({
         grant_type: 'refresh_token',
@@ -249,18 +278,19 @@ export async function refreshClaudeNativeAccessTokenIfNeeded(options?: {
         lastRefreshAt: Date.now(),
         lastRefreshFailureAt: undefined,
       }
-      const saved = saveClaudeNativeCredentials(next)
+      const saved = saveClaudeNativeCredentials(next, {
+        localAccountId: options?.localAccountId,
+      })
       if (!saved.success) throw new Error(saved.warning)
-      inMemoryLastRefreshFailureAt = null
       return { refreshed: true, credentials: next }
     } catch (error) {
       const failedAt = Date.now()
-      inMemoryLastRefreshFailureAt = failedAt
-      saveClaudeNativeCredentials({ ...current, lastRefreshFailureAt: failedAt })
+      inMemoryLastRefreshFailureAt.set(refreshKey, failedAt)
+      saveClaudeNativeCredentials(
+        { ...current, lastRefreshFailureAt: failedAt },
+        { localAccountId: options?.localAccountId },
+      )
       throw error
-    } finally {
-      inFlightRefresh = null
     }
-  })()
-  return inFlightRefresh
+  })
 }

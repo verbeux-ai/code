@@ -18,6 +18,8 @@ import {
   upsertProviderAccount,
 } from './providerAccounts/store.js'
 import { normalizeProviderAccounts } from './providerAccounts/store.js'
+import { AccountWorkRegistry } from './providerAccounts/refreshRegistry.js'
+import type { LocalProviderAccountId } from './providerAccounts/types.js'
 
 export type { CodexCredentialBlob } from './providerAccounts/credentials.js'
 
@@ -31,13 +33,13 @@ type CodexTokenRefreshResponse = {
   id_token?: string
 }
 
-let inFlightCodexRefresh:
-  | Promise<{
-      refreshed: boolean
-      credentials?: CodexCredentialBlob
-    }>
-  | null = null
-let inMemoryLastRefreshFailureAt: number | null = null
+type CodexRefreshResult = {
+  refreshed: boolean
+  credentials?: CodexCredentialBlob
+}
+
+const codexRefreshRegistry = new AccountWorkRegistry<CodexRefreshResult>()
+const inMemoryLastRefreshFailureAt = new Map<string, number>()
 
 function getCodexSecureStorage() {
   return getSecureStorage({ allowPlainTextFallback: false })
@@ -54,10 +56,11 @@ function shouldRefreshCodexToken(blob: CodexCredentialBlob): boolean {
 function isWithinRefreshFailureCooldown(
   blob: CodexCredentialBlob,
   now = Date.now(),
+  key = 'default',
 ): boolean {
   const lastRefreshFailureAt = Math.max(
     blob.lastRefreshFailureAt ?? 0,
-    inMemoryLastRefreshFailureAt ?? 0,
+    inMemoryLastRefreshFailureAt.get(key) ?? 0,
   )
 
   if (!lastRefreshFailureAt) {
@@ -67,6 +70,13 @@ function isWithinRefreshFailureCooldown(
   return (
     now - lastRefreshFailureAt < CODEX_TOKEN_REFRESH_RETRY_COOLDOWN_MS
   )
+}
+
+function accountRefreshKey(
+  localAccountId: LocalProviderAccountId | undefined,
+  credentials: CodexCredentialBlob,
+): string {
+  return `codex:${localAccountId ?? credentials.accountId ?? 'default'}`
 }
 
 function getRefreshErrorMessage(
@@ -95,15 +105,17 @@ function getRefreshErrorMessage(
   }
 }
 
-export function readCodexCredentials(): CodexCredentialBlob | undefined {
+export function readCodexCredentials(
+  localAccountId?: LocalProviderAccountId,
+): CodexCredentialBlob | undefined {
   if (isBareMode()) return undefined
 
   try {
     const data = getCodexSecureStorage().read()
     const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const defaultAccountId = providerAccounts?.codex.defaultAccountId
-    const account = defaultAccountId
-      ? providerAccounts?.codex.accounts[defaultAccountId]
+    const accountId = localAccountId ?? providerAccounts?.codex.defaultAccountId
+    const account = accountId
+      ? providerAccounts?.codex.accounts[accountId]
       : undefined
     if (account?.credential) return account.credential
     return normalizeCodexCredentialBlob(data?.codex)
@@ -112,7 +124,9 @@ export function readCodexCredentials(): CodexCredentialBlob | undefined {
   }
 }
 
-export async function readCodexCredentialsAsync(): Promise<
+export async function readCodexCredentialsAsync(
+  localAccountId?: LocalProviderAccountId,
+): Promise<
   CodexCredentialBlob | undefined
 > {
   if (isBareMode()) return undefined
@@ -120,9 +134,9 @@ export async function readCodexCredentialsAsync(): Promise<
   try {
     const data = await getCodexSecureStorage().readAsync()
     const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const defaultAccountId = providerAccounts?.codex.defaultAccountId
-    const account = defaultAccountId
-      ? providerAccounts?.codex.accounts[defaultAccountId]
+    const accountId = localAccountId ?? providerAccounts?.codex.defaultAccountId
+    const account = accountId
+      ? providerAccounts?.codex.accounts[accountId]
       : undefined
     if (account?.credential) return account.credential
     return normalizeCodexCredentialBlob(data?.codex)
@@ -134,15 +148,18 @@ export async function readCodexCredentialsAsync(): Promise<
 export function isCodexRefreshFailureCoolingDown(
   blob: Pick<CodexCredentialBlob, 'lastRefreshFailureAt'>,
   now = Date.now(),
+  localAccountId?: LocalProviderAccountId,
 ): boolean {
   return isWithinRefreshFailureCooldown(
     blob as CodexCredentialBlob,
     now,
+    localAccountId ? `codex:${localAccountId}` : 'default',
   )
 }
 
 export function saveCodexCredentials(
   credentials: CodexCredentialBlob,
+  options?: { localAccountId?: LocalProviderAccountId },
 ): { success: boolean; warning?: string } {
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
@@ -167,18 +184,30 @@ export function saveCodexCredentials(
       },
     }
     const result = secureStorage.update(next as typeof previousData)
-    if (result.success) inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    if (result.success) {
+      const key = accountRefreshKey(options?.localAccountId, normalized)
+      if (normalized.lastRefreshFailureAt === undefined) {
+        inMemoryLastRefreshFailureAt.delete(key)
+      } else {
+        inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
+      }
+    }
     return result
   }
 
-  const previous = readCodexCredentials()
+  const previous = readCodexCredentials(options?.localAccountId)
   try {
     upsertProviderAccount('codex', {
       ...normalized,
       profileId: normalized.profileId ?? previous?.profileId,
       lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    })
-    inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    }, options)
+    const key = accountRefreshKey(options?.localAccountId, normalized)
+    if (normalized.lastRefreshFailureAt === undefined) {
+      inMemoryLastRefreshFailureAt.delete(key)
+    } else {
+      inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
+    }
     return { success: true }
   } catch (error) {
     return {
@@ -213,13 +242,17 @@ export function attachCodexProfileIdToStoredCredentials(profileId: string): {
 function persistCodexRefreshFailure(
   credentials: CodexCredentialBlob,
   occurredAt: number,
+  localAccountId?: LocalProviderAccountId,
 ): void {
   const result = saveCodexCredentials({
     ...credentials,
     lastRefreshFailureAt: occurredAt,
-  })
+  }, { localAccountId })
   if (!result.success) {
-    inMemoryLastRefreshFailureAt = occurredAt
+    inMemoryLastRefreshFailureAt.set(
+      accountRefreshKey(localAccountId, credentials),
+      occurredAt,
+    )
   }
 }
 
@@ -237,7 +270,7 @@ export function clearCodexCredentials(): {
   if (defaultAccountId) {
     try {
       removeProviderAccount('codex', defaultAccountId)
-      inMemoryLastRefreshFailureAt = null
+      inMemoryLastRefreshFailureAt.clear()
       return { success: true }
     } catch (error) {
       return {
@@ -252,17 +285,15 @@ export function clearCodexCredentials(): {
   const next = { ...(previous as Record<string, unknown>) }
   delete next[CODEX_STORAGE_KEY]
   const result = secureStorage.update(next as typeof previous)
-  if (result.success) inMemoryLastRefreshFailureAt = null
+  if (result.success) inMemoryLastRefreshFailureAt.clear()
   return result
 }
 
 export async function refreshCodexAccessTokenIfNeeded(options?: {
   force?: boolean
   ignoreEnvironment?: boolean
-}): Promise<{
-  refreshed: boolean
-  credentials?: CodexCredentialBlob
-}> {
+  localAccountId?: LocalProviderAccountId
+}): Promise<CodexRefreshResult> {
   if (isBareMode()) {
     return { refreshed: false }
   }
@@ -271,7 +302,7 @@ export async function refreshCodexAccessTokenIfNeeded(options?: {
     return { refreshed: false }
   }
 
-  const current = await readCodexCredentialsAsync()
+  const current = await readCodexCredentialsAsync(options?.localAccountId)
   if (!current) {
     return { refreshed: false }
   }
@@ -285,15 +316,12 @@ export async function refreshCodexAccessTokenIfNeeded(options?: {
     return { refreshed: false, credentials: current }
   }
 
-  if (!options?.force && isWithinRefreshFailureCooldown(current)) {
+  const refreshKey = accountRefreshKey(options?.localAccountId, current)
+  if (!options?.force && isWithinRefreshFailureCooldown(current, Date.now(), refreshKey)) {
     return { refreshed: false, credentials: current }
   }
 
-  if (inFlightCodexRefresh) {
-    return inFlightCodexRefresh
-  }
-
-  inFlightCodexRefresh = (async () => {
+  return codexRefreshRegistry.run(refreshKey, async () => {
     const refreshAttemptedAt = Date.now()
 
     try {
@@ -352,7 +380,9 @@ export async function refreshCodexAccessTokenIfNeeded(options?: {
         ).catch(() => undefined)
       }
 
-      const saveResult = saveCodexCredentials(next)
+      const saveResult = saveCodexCredentials(next, {
+        localAccountId: options?.localAccountId,
+      })
       if (!saveResult.success) {
         throw new Error(
           saveResult.warning ??
@@ -365,12 +395,12 @@ export async function refreshCodexAccessTokenIfNeeded(options?: {
         credentials: next,
       }
     } catch (error) {
-      persistCodexRefreshFailure(current, refreshAttemptedAt)
+      persistCodexRefreshFailure(
+        current,
+        refreshAttemptedAt,
+        options?.localAccountId,
+      )
       throw error
-    } finally {
-      inFlightCodexRefresh = null
     }
-  })()
-
-  return inFlightCodexRefresh
+  })
 }

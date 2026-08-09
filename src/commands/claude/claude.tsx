@@ -28,18 +28,21 @@ import {
   readClaudeNativeCredentialsAsync,
   type ClaudeNativeCredentialBlob,
 } from '../../utils/claudeNativeCredentials.js'
+import { parseProviderLoginArgs } from '../../utils/providerAccounts/loginArgs.js'
 
 function ClaudeLogin({
   acceptedAt,
   onDone,
+  reconnectLocalAccountId,
 }: {
   acceptedAt: string
   onDone: LocalJSXCommandOnDone
+  reconnectLocalAccountId?: string
 }) {
   const handleAuthenticated = React.useCallback(
     async (
       _tokens: unknown,
-      persistCredentials: () => void,
+      persistCredentials: (options?: { reconnectLocalAccountId?: string }) => void,
       candidateCredentials: ClaudeNativeCredentialBlob,
     ) => {
       clearClaudeNativeModelsCache()
@@ -53,7 +56,7 @@ function ClaudeLogin({
         )
       }
       try {
-        persistCredentials()
+        persistCredentials({ reconnectLocalAccountId })
       } catch (error) {
         // Do not leave an in-memory Claude catalog unlocked when secure
         // persistence failed. A failed optional login must not affect Verboo.
@@ -68,6 +71,8 @@ function ClaudeLogin({
     [onDone],
   )
   const status = useClaudeNativeOAuthFlow({
+    additive: true,
+    reconnectLocalAccountId,
     acceptedAt,
     onAuthenticated: handleAuthenticated,
   })
@@ -112,9 +117,23 @@ function ClaudeLogin({
   )
 }
 
-function ClaudeRiskDisclosure({ onDone }: { onDone: LocalJSXCommandOnDone }) {
+function ClaudeRiskDisclosure({
+  onDone,
+  reconnectLocalAccountId,
+}: {
+  onDone: LocalJSXCommandOnDone
+  reconnectLocalAccountId?: string
+}) {
   const [acceptedAt, setAcceptedAt] = React.useState<string | null>(null)
-  if (acceptedAt) return <ClaudeLogin acceptedAt={acceptedAt} onDone={onDone} />
+  if (acceptedAt) {
+    return (
+      <ClaudeLogin
+        acceptedAt={acceptedAt}
+        onDone={onDone}
+        reconnectLocalAccountId={reconnectLocalAccountId}
+      />
+    )
+  }
 
   const cancel = () =>
     onDone('Claude não habilitado. O Verboo continua disponível.', {
@@ -172,8 +191,8 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  const action = args.trim().toLowerCase() || 'login'
-  if (action === 'status') {
+  const action = parseProviderLoginArgs(args)
+  if (action.action === 'status') {
     const credentials = await readClaudeNativeCredentialsAsync()
     onDone(
       credentials
@@ -184,7 +203,7 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  if (action === 'logout') {
+  if (action.action === 'logout') {
     const claudeIds = new Set(
       (getCachedClaudeNativeModels() ?? []).map(model => model.id),
     )
@@ -219,9 +238,14 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  if (action !== 'login') {
+  if (action.action !== 'login') {
     onDone('Uso: /claude [login|status|logout]', { display: 'system' })
     return
   }
-  return <ClaudeRiskDisclosure onDone={onDone} />
+  return (
+    <ClaudeRiskDisclosure
+      onDone={onDone}
+      reconnectLocalAccountId={action.reconnectLocalAccountId}
+    />
+  )
 }

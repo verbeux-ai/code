@@ -165,3 +165,64 @@ test('cancel stops OAuth and ignores a late completion', async () => {
   }
   expect(cleanup).toHaveBeenCalledTimes(1)
 })
+
+test('persists an additive Claude login against the requested local account id', async () => {
+  const saveCredentials = mock(() => ({ success: true }))
+  const cleanup = mock(() => {})
+  const onAuthenticated = mock(
+    async (
+      _tokens: typeof TOKENS,
+      persistCredentials: (options?: { reconnectLocalAccountId?: string }) => void,
+      _candidate: unknown,
+    ) => persistCredentials({ reconnectLocalAccountId: 'local-claude-2' }),
+  )
+  const deps = {
+    createOAuthService: () => ({
+      async startOAuthFlow(
+        onAuthorizationUrl: (url: string) => void | Promise<void>,
+      ) {
+        await onAuthorizationUrl('https://claude.com/cai/oauth/authorize')
+        return TOKENS
+      },
+      cleanup,
+    }),
+    openBrowser: async () => true,
+    saveCredentials,
+    isBareMode: () => false,
+  }
+  const { useClaudeNativeOAuthFlow } = await import(
+    `./useClaudeNativeOAuthFlow.js?additive-${Date.now()}-${Math.random()}`
+  )
+
+  function Harness(): React.ReactNode {
+    const handler = React.useCallback(onAuthenticated, [onAuthenticated])
+    useClaudeNativeOAuthFlow({
+      additive: true,
+      reconnectLocalAccountId: 'local-claude-2',
+      acceptedAt: '2026-08-06T00:00:00.000Z',
+      onAuthenticated: handler,
+      deps,
+    })
+    return <Text>waiting</Text>
+  }
+
+  const streams = createTestStreams()
+  const root = await createRoot({
+    stdout: streams.stdout as unknown as NodeJS.WriteStream,
+    stdin: streams.stdin as unknown as NodeJS.ReadStream,
+    patchConsole: false,
+  })
+  root.render(<Harness />)
+  try {
+    await waitFor(() => saveCredentials.mock.calls.length === 1)
+    expect(saveCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: TOKENS.accountId }),
+      { localAccountId: 'local-claude-2', additive: true },
+    )
+  } finally {
+    root.unmount()
+    streams.stdin.end()
+    streams.stdout.end()
+    await Bun.sleep(0)
+  }
+})

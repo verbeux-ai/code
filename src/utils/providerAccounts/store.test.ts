@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import type { SecureStorageData } from '../secureStorage/index.js'
 import { migrateProviderAccounts } from './store.js'
 
 describe('migrateProviderAccounts', () => {
@@ -51,7 +52,10 @@ describe('migrateProviderAccounts', () => {
       codex: { accessToken: 'legacy-token', accountId: 'legacy-account' },
     }
 
-    const result = migrateProviderAccounts(malformed, () => 'new-id')
+    const result = migrateProviderAccounts(
+      malformed as unknown as SecureStorageData,
+      () => 'new-id',
+    )
 
     expect(result.mode).toBe('v1')
     expect(result.data.providerAccounts?.codex.accounts['new-id']).toBeDefined()
@@ -86,7 +90,10 @@ describe('migrateProviderAccounts', () => {
       },
     }
 
-    const result = migrateProviderAccounts(malformed, () => 'new-id')
+    const result = migrateProviderAccounts(
+      malformed as unknown as SecureStorageData,
+      () => 'new-id',
+    )
 
     expect(result.mode).toBe('legacy')
     expect(result.data.providerAccounts).toEqual(malformed.providerAccounts)

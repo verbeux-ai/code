@@ -26,6 +26,7 @@ export type CodexOAuthFlowStatus = CodexOAuthFlowState & {
 
 type PersistCodexOAuthCredentials = (options?: {
   profileId?: string
+  reconnectLocalAccountId?: string
 }) => void
 
 type CodexOAuthFlowDependencies = {
@@ -46,6 +47,8 @@ function createDefaultOAuthService(): Pick<
 }
 
 export function useCodexOAuthFlow(options: {
+  additive?: boolean
+  reconnectLocalAccountId?: string
   onAuthenticated: (
     tokens: CodexOAuthTokens,
     persistCredentials: PersistCodexOAuthCredentials,
@@ -104,15 +107,26 @@ export function useCodexOAuthFlow(options: {
       .then(async tokens => {
         if (cancelled) return
 
-        const persistCredentials: PersistCodexOAuthCredentials = options => {
-          const saved = saveCredentials({
+        const persistCredentials: PersistCodexOAuthCredentials = persistOptions => {
+          const localAccountId =
+            persistOptions?.reconnectLocalAccountId ?? options.reconnectLocalAccountId
+          const saveOptions = options.additive || localAccountId
+            ? {
+                localAccountId,
+                additive: Boolean(options.additive || localAccountId),
+              }
+            : undefined
+          const credentials = {
             apiKey: tokens.apiKey,
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
             idToken: tokens.idToken,
             accountId: tokens.accountId,
-            profileId: options?.profileId,
-          })
+            profileId: persistOptions?.profileId,
+          }
+          const saved = saveOptions
+            ? saveCredentials(credentials, saveOptions)
+            : saveCredentials(credentials)
           if (!saved.success) {
             throw new Error(
               saved.warning ??
@@ -136,10 +150,12 @@ export function useCodexOAuthFlow(options: {
       cancelRef.current = () => {}
     }
   }, [
+    options.additive,
     createOAuthService,
     isBareModeFn,
     onAuthenticated,
     openBrowserFn,
+    options.reconnectLocalAccountId,
     saveCredentials,
   ])
 

@@ -19,7 +19,9 @@ type FlowState =
 
 export type ClaudeNativeOAuthFlowStatus = FlowState & { cancel: () => void }
 
-type PersistCredentials = () => ClaudeNativeCredentialBlob
+type PersistCredentials = (options?: {
+  reconnectLocalAccountId?: string
+}) => ClaudeNativeCredentialBlob
 
 type Dependencies = {
   createOAuthService?: () => Pick<
@@ -36,6 +38,8 @@ function createDefaultOAuthService() {
 }
 
 export function useClaudeNativeOAuthFlow(options: {
+  additive?: boolean
+  reconnectLocalAccountId?: string
   acceptedAt: string
   onAuthenticated: (
     tokens: ClaudeNativeOAuthTokens,
@@ -97,8 +101,20 @@ export function useClaudeNativeOAuthFlow(options: {
             accountId: tokens.accountId,
           },
         }
-        const persistCredentials = (): ClaudeNativeCredentialBlob => {
-          const saved = saveCredentials(candidateCredentials)
+        const persistCredentials = (persistOptions?: {
+          reconnectLocalAccountId?: string
+        }): ClaudeNativeCredentialBlob => {
+          const localAccountId =
+            persistOptions?.reconnectLocalAccountId ?? options.reconnectLocalAccountId
+          const saveOptions = options.additive || localAccountId
+            ? {
+                localAccountId,
+                additive: Boolean(options.additive || localAccountId),
+              }
+            : undefined
+          const saved = saveOptions
+            ? saveCredentials(candidateCredentials, saveOptions)
+            : saveCredentials(candidateCredentials)
           if (!saved.success) {
             throw new Error(
               saved.warning ??
@@ -126,11 +142,13 @@ export function useClaudeNativeOAuthFlow(options: {
       cancelRef.current = () => {}
     }
   }, [
+    options.additive,
     createOAuthService,
     isBareModeFn,
     openBrowserFn,
     options.acceptedAt,
     options.onAuthenticated,
+    options.reconnectLocalAccountId,
     saveCredentials,
   ])
 

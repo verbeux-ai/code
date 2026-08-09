@@ -16,15 +16,21 @@ import {
   clearCodexCredentials,
   readCodexCredentialsAsync,
 } from '../../utils/codexCredentials.js'
+import { parseProviderLoginArgs } from '../../utils/providerAccounts/loginArgs.js'
 
 function CodexLogin({
   onDone,
+  reconnectLocalAccountId,
 }: {
   onDone: LocalJSXCommandOnDone
+  reconnectLocalAccountId?: string
 }) {
   const handleAuthenticated = React.useCallback(
-    async (_tokens: CodexOAuthTokens, persistCredentials: () => void) => {
-      persistCredentials()
+    async (
+      _tokens: CodexOAuthTokens,
+      persistCredentials: (options?: { reconnectLocalAccountId?: string }) => void,
+    ) => {
+      persistCredentials({ reconnectLocalAccountId })
       clearCodexModelsCache()
       const models = await fetchCodexModels({ force: true })
       if (models.length === 0) {
@@ -42,7 +48,11 @@ function CodexLogin({
     [onDone],
   )
 
-  const status = useCodexOAuthFlow({ onAuthenticated: handleAuthenticated })
+  const status = useCodexOAuthFlow({
+    additive: true,
+    reconnectLocalAccountId,
+    onAuthenticated: handleAuthenticated,
+  })
   const handleCancel = React.useCallback(() => {
     status.cancel()
     onDone('Login Codex cancelado. O Verboo continua disponível.', {
@@ -103,9 +113,9 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  const action = args.trim().toLowerCase() || 'login'
+  const action = parseProviderLoginArgs(args)
 
-  if (action === 'status') {
+  if (action.action === 'status') {
     const credentials = await readCodexCredentialsAsync()
     onDone(
       credentials
@@ -116,7 +126,7 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  if (action === 'logout') {
+  if (action.action === 'logout') {
     const codexModelIds = new Set(
       (getCachedCodexModels() ?? []).map(model => model.id),
     )
@@ -143,10 +153,15 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
 
-  if (action !== 'login') {
+  if (action.action !== 'login') {
     onDone('Uso: /codex [login|status|logout]', { display: 'system' })
     return
   }
 
-  return <CodexLogin onDone={onDone} />
+  return (
+    <CodexLogin
+      onDone={onDone}
+      reconnectLocalAccountId={action.reconnectLocalAccountId}
+    />
+  )
 }

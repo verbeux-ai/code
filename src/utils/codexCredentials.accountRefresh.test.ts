@@ -75,6 +75,7 @@ test('refreshing two Codex accounts concurrently persists both results independe
   }) as unknown as typeof fetch
 
   try {
+    // @ts-expect-error cache-busting query string for Bun module mocks
     const { refreshCodexAccessTokenIfNeeded } = await import(
       './codexCredentials.js?account-refresh-isolation'
     )

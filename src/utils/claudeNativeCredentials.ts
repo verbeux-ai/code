@@ -106,7 +106,7 @@ export async function readClaudeNativeCredentialsAsync(
 
 export function saveClaudeNativeCredentials(
   credentials: ClaudeNativeCredentialBlob,
-  options?: { localAccountId?: LocalProviderAccountId },
+  options?: { localAccountId?: LocalProviderAccountId; additive?: boolean },
 ): { success: boolean; warning?: string } {
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
@@ -121,7 +121,7 @@ export function saveClaudeNativeCredentials(
   const secureStorage = storage()
   const previousData = secureStorage.read() || {}
   const providerAccounts = normalizeProviderAccounts(previousData.providerAccounts)
-  if (!providerAccounts) {
+  if (!providerAccounts && !options?.additive) {
     const next = {
       ...(previousData as Record<string, unknown>),
       [CLAUDE_NATIVE_STORAGE_KEY]: {
@@ -145,7 +145,7 @@ export function saveClaudeNativeCredentials(
     upsertProviderAccount('claude', {
       ...normalized,
       lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    }, options)
+    }, { reconnectLocalAccountId: options?.localAccountId })
     const key = accountRefreshKey(options?.localAccountId, normalized)
     if (normalized.lastRefreshFailureAt === undefined) {
       inMemoryLastRefreshFailureAt.delete(key)

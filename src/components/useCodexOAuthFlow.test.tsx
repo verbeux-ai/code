@@ -283,3 +283,64 @@ test('cancel stops the pending OAuth service and ignores a late completion', asy
 
   expect(cleanup).toHaveBeenCalledTimes(1)
 })
+
+test('persists an additive login against the requested local account id', async () => {
+  const saveCodexCredentials = mock(() => ({ success: true }))
+  const cleanup = mock(() => {})
+  const onAuthenticated = mock(
+    async (
+      _tokens: typeof TOKENS,
+      persistCredentials: (options?: { reconnectLocalAccountId?: string }) => void,
+    ) => {
+      persistCredentials({ reconnectLocalAccountId: 'local-2' })
+    },
+  )
+  const deps = {
+    createOAuthService: () => ({
+      async startOAuthFlow(
+        onAuthorizationUrl: (authUrl: string) => void | Promise<void>,
+      ) {
+        await onAuthorizationUrl('https://chatgpt.com/codex')
+        return TOKENS
+      },
+      cleanup,
+    }),
+    openBrowser: async () => true,
+    saveCodexCredentials,
+    isBareMode: () => false,
+  }
+  const { useCodexOAuthFlow } = await import(
+    `./useCodexOAuthFlow.js?additive-${Date.now()}-${Math.random()}`
+  )
+
+  function Harness(): React.ReactNode {
+    const handler = React.useCallback(onAuthenticated, [onAuthenticated])
+    useCodexOAuthFlow({
+      additive: true,
+      reconnectLocalAccountId: 'local-2',
+      onAuthenticated: handler,
+      deps,
+    })
+    return <Text>waiting</Text>
+  }
+
+  const streams = createTestStreams()
+  const root = await createRoot({
+    stdout: streams.stdout as unknown as NodeJS.WriteStream,
+    stdin: streams.stdin as unknown as NodeJS.ReadStream,
+    patchConsole: false,
+  })
+  root.render(<Harness />)
+  try {
+    await waitForCondition(() => saveCodexCredentials.mock.calls.length === 1)
+    expect(saveCodexCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: TOKENS.accountId }),
+      { localAccountId: 'local-2', additive: true },
+    )
+  } finally {
+    root.unmount()
+    streams.stdin.end()
+    streams.stdout.end()
+    await Bun.sleep(0)
+  }
+})

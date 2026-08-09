@@ -21,6 +21,15 @@ describe('desktop CLI release contract', () => {
     expect(new Set(DESKTOP_TARGETS.map(item => item.target)).size).toBe(4)
   })
 
+  test('provider account protocol keeps the signed four-target matrix', () => {
+    expect(DESKTOP_TARGETS.map(target => target.target)).toEqual([
+      'aarch64-apple-darwin',
+      'x86_64-apple-darwin',
+      'x86_64-pc-windows-msvc',
+      'x86_64-unknown-linux-gnu',
+    ])
+  })
+
   test('uses target-qualified immutable artifact names', () => {
     expect(artifactName('0.15.5', 'aarch64-apple-darwin')).toBe(
       'verboo-cli-0.15.5-aarch64-apple-darwin.tar.gz',

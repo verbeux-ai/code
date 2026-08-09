@@ -73,7 +73,10 @@ export async function runProviderAccountsCommand(
   try {
     const command = argv[0] ?? 'capabilities'
     if (command === 'capabilities') {
-      return success({ protocols: [...PROTOCOLS] })
+      return success({
+        protocols: [...PROTOCOLS],
+        loginTransport: 'pty-slash-v1',
+      })
     }
 
     if (command === 'list') {

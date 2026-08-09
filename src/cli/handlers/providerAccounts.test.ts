@@ -72,6 +72,34 @@ test('list returns only sanitized account fields', async () => {
   expect(JSON.stringify(output)).not.toContain('provider-secret')
 })
 
+test('capabilities advertises the versioned protocols and PTY login transport', async () => {
+  mock.module('../../utils/providerAccounts/store.js', () => ({
+    readProviderAccounts: () => ({ schemaVersion: 1, codex: { accounts: {} }, claude: { accounts: {} } }),
+    listProviderAccountSummaries: () => [],
+    resolveProviderAccount: () => undefined,
+    normalizeProviderAccounts: () => undefined,
+    resolveProviderAccountByLocalId: () => undefined,
+    removeProviderAccount: () => {},
+    setDefaultProviderAccount: () => {},
+    upsertProviderAccount: () => ({ localAccountId: 'local-a', created: false }),
+  }))
+
+  // @ts-expect-error cache-busting query string for Bun module mocks
+  const { runProviderAccountsCommand } = await import('./providerAccounts.js?capabilities')
+  await expect(
+    runProviderAccountsCommand(['capabilities'], {
+      ensureAuthenticated: async () => {},
+    }),
+  ).resolves.toEqual({
+    schemaVersion: 1,
+    ok: true,
+    data: {
+      protocols: ['provider_accounts_v1', 'provider_usage_v1'],
+      loginTransport: 'pty-slash-v1',
+    },
+  })
+})
+
 test('unknown account fails closed with a stable code', async () => {
   mock.module('../../utils/providerAccounts/store.js', () => ({
     readProviderAccounts: () => accountState(),

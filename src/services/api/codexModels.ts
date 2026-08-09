@@ -8,6 +8,8 @@ import {
 import { parseChatgptAccountId } from './codexOAuthShared.js'
 import { DEFAULT_CODEX_BASE_URL } from './providerConfig.js'
 import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
+import type { LocalProviderAccountId } from '../../utils/providerAccounts/types.js'
+import { getSelectedProviderAccount } from '../../utils/providerAccounts/selection.js'
 
 const CACHE_TTL_MS = 5 * 60 * 1_000
 
@@ -148,15 +150,31 @@ async function requestModels(
   }
 }
 
-async function loadModels(force: boolean): Promise<CodexModel[]> {
+function cacheKey(
+  localAccountId: LocalProviderAccountId | undefined,
+  providerAccountId: string,
+): string {
+  return localAccountId ?? `legacy:${providerAccountId}`
+}
+
+async function loadModels(
+  force: boolean,
+  localAccountId?: LocalProviderAccountId,
+): Promise<CodexModel[]> {
+  const effectiveLocalAccountId =
+    localAccountId ??
+    (getSelectedProviderAccount()?.provider === 'codex'
+      ? getSelectedProviderAccount()?.accountId
+      : undefined)
   const generation = cacheGeneration
-  let stored = await readCodexCredentialsAsync()
+  let stored = await readCodexCredentialsAsync(effectiveLocalAccountId)
   if (!stored) {
     throw new Error('Codex não autenticado. Execute `/codex login`.')
   }
 
   const initial = resolveCredentials(stored)
-  const previous = cacheByAccount.get(initial.accountId)
+  const selectedCacheKey = cacheKey(effectiveLocalAccountId, initial.accountId)
+  const previous = cacheByAccount.get(selectedCacheKey)
   if (!force && previous && Date.now() - previous.fetchedAt < CACHE_TTL_MS) {
     return previous.models
   }
@@ -164,7 +182,7 @@ async function loadModels(force: boolean): Promise<CodexModel[]> {
   try {
     const entry = await requestModels(stored, previous)
     if (generation === cacheGeneration) {
-      cacheByAccount.set(initial.accountId, entry)
+      cacheByAccount.set(selectedCacheKey, entry)
     }
     return entry.models
   } catch (error) {
@@ -172,13 +190,15 @@ async function loadModels(force: boolean): Promise<CodexModel[]> {
     const refreshed = await refreshCodexAccessTokenIfNeeded({
       force: true,
       ignoreEnvironment: true,
+      localAccountId: effectiveLocalAccountId,
     })
-    stored = refreshed.credentials ?? (await readCodexCredentialsAsync())
+    stored = refreshed.credentials ?? (await readCodexCredentialsAsync(effectiveLocalAccountId))
     if (!stored) throw error
     const resolved = resolveCredentials(stored)
-    const entry = await requestModels(stored, cacheByAccount.get(resolved.accountId))
+    const refreshedCacheKey = cacheKey(effectiveLocalAccountId, resolved.accountId)
+    const entry = await requestModels(stored, cacheByAccount.get(refreshedCacheKey))
     if (generation === cacheGeneration) {
-      cacheByAccount.set(resolved.accountId, entry)
+      cacheByAccount.set(refreshedCacheKey, entry)
     }
     return entry.models
   }
@@ -186,11 +206,23 @@ async function loadModels(force: boolean): Promise<CodexModel[]> {
 
 export async function fetchCodexModels(options?: {
   force?: boolean
+  localAccountId?: LocalProviderAccountId
 }): Promise<CodexModel[]> {
-  return loadModels(options?.force === true)
+  return loadModels(options?.force === true, options?.localAccountId)
 }
 
-export function getCachedCodexModels(): CodexModel[] | null {
+export function getCachedCodexModels(
+  localAccountId?: LocalProviderAccountId,
+): CodexModel[] | null {
+  const effectiveLocalAccountId =
+    localAccountId ??
+    (getSelectedProviderAccount()?.provider === 'codex'
+      ? getSelectedProviderAccount()?.accountId
+      : undefined)
+  if (effectiveLocalAccountId) {
+    const selected = cacheByAccount.get(effectiveLocalAccountId)
+    if (selected) return selected.models
+  }
   for (const entry of cacheByAccount.values()) {
     return entry.models
   }
@@ -202,13 +234,19 @@ export function clearCodexModelsCache(): void {
   cacheByAccount.clear()
 }
 
-export function getCodexModel(modelId: string): CodexModel | undefined {
-  return getCachedCodexModels()?.find(model => model.id === modelId)
+export function getCodexModel(
+  modelId: string,
+  localAccountId?: LocalProviderAccountId,
+): CodexModel | undefined {
+  return getCachedCodexModels(localAccountId)?.find(model => model.id === modelId)
 }
 
-export function getCodexReasoningLevels(modelId: string): string[] {
+export function getCodexReasoningLevels(
+  modelId: string,
+  localAccountId?: LocalProviderAccountId,
+): string[] {
   return (
-    getCodexModel(modelId)?.supportedReasoningLevels.map(level => level.effort) ??
+    getCodexModel(modelId, localAccountId)?.supportedReasoningLevels.map(level => level.effort) ??
     []
   )
 }
@@ -216,10 +254,11 @@ export function getCodexReasoningLevels(modelId: string): string[] {
 export function getCodexReasoningEffort(
   modelId: string,
   requested: string,
+  localAccountId?: LocalProviderAccountId,
 ): string | undefined {
   const normalized = requested.trim().toLowerCase()
   const apiValue = normalized === 'max' ? 'xhigh' : normalized
-  return getCodexReasoningLevels(modelId).find(
+  return getCodexReasoningLevels(modelId, localAccountId).find(
     level => level.toLowerCase() === apiValue,
   )
 }
@@ -239,7 +278,10 @@ export function requireCodexModel(
   return match
 }
 
-export async function assertCodexModelAvailable(model: string): Promise<CodexModel> {
-  const models = await fetchCodexModels()
+export async function assertCodexModelAvailable(
+  model: string,
+  localAccountId?: LocalProviderAccountId,
+): Promise<CodexModel> {
+  const models = await fetchCodexModels({ localAccountId })
   return requireCodexModel(models, model)
 }

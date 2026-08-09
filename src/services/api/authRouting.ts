@@ -4,7 +4,13 @@ import {
   isFirstPartyAnthropicBaseUrl,
 } from 'src/utils/model/providers.js'
 
-export type ProviderOverride = { model: string; baseURL: string; apiKey: string }
+export type ProviderOverride = {
+  model: string
+  baseURL: string
+  apiKey: string
+  /** Opaque local account selected for this process, when using provider OAuth. */
+  localAccountId?: string
+}
 
 export function shouldUseFirstPartyAnthropicAuthForProvider({
   providerOverride,

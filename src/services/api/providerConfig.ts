@@ -9,6 +9,7 @@ import {
   readCodexCredentials,
   type CodexCredentialBlob,
 } from '../../utils/codexCredentials.js'
+import type { LocalProviderAccountId } from '../../utils/providerAccounts/types.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import {
@@ -931,12 +932,18 @@ function resolveEnvOrAuthJsonCodexCredentials(
 
 export function resolveRuntimeCodexCredentials(options?: {
   env?: NodeJS.ProcessEnv
+  localAccountId?: LocalProviderAccountId
   storedCredentials?: Pick<
     CodexCredentialBlob,
     'apiKey' | 'accessToken' | 'idToken' | 'accountId'
   >
 }): ResolvedCodexCredentials {
   const env = options?.env ?? process.env
+  const selectedStoredCredentials =
+    options?.storedCredentials ??
+    (options?.localAccountId
+      ? readCodexCredentials(options.localAccountId)
+      : undefined)
   const explicitCredentials = resolveEnvOrAuthJsonCodexCredentials(env, {
     explicitAuthPathOnly: true,
   })
@@ -945,7 +952,8 @@ export function resolveRuntimeCodexCredentials(options?: {
   )
   const hasStoredCredentialsOption = Boolean(
     options &&
-      Object.prototype.hasOwnProperty.call(options, 'storedCredentials'),
+      (Object.prototype.hasOwnProperty.call(options, 'storedCredentials') ||
+        options.localAccountId),
   )
 
   if (
@@ -956,9 +964,9 @@ export function resolveRuntimeCodexCredentials(options?: {
     return explicitCredentials
   }
 
-  if (options?.storedCredentials?.accessToken) {
+  if (selectedStoredCredentials?.accessToken) {
     return resolveStoredCodexCredentials({
-      storedCredentials: options.storedCredentials,
+      storedCredentials: selectedStoredCredentials,
       envAccountId:
         asTrimmedString(env.CODEX_ACCOUNT_ID) ??
         asTrimmedString(env.CHATGPT_ACCOUNT_ID),

@@ -68,6 +68,7 @@ import {
   shouldUseFirstPartyAnthropicAuth,
   type ProviderOverride,
 } from './authRouting.js'
+import { getSelectedProviderAccount } from '../../utils/providerAccounts/selection.js'
 
 const importRuntimeModule = new Function(
   'specifier',
@@ -307,6 +308,15 @@ export async function getAnthropicClient({
     await assertCLIEntitlement()
     const requestedModel =
       model?.trim().replace(/\[1m\]$/i, '') || getDefaultVerbooModel()
+    const selectedAccount = getSelectedProviderAccount()
+    const selectedCodexAccountId =
+      selectedAccount?.provider === 'codex'
+        ? selectedAccount.accountId
+        : undefined
+    const selectedClaudeAccountId =
+      selectedAccount?.provider === 'claude'
+        ? selectedAccount.accountId
+        : undefined
     const { createOpenAIShimClient } = await import('./openaiShim.js')
 
     const verbooModel = getCachedVerbooModels()?.find(
@@ -334,8 +344,15 @@ export async function getAnthropicClient({
       }) as unknown as Anthropic
     }
 
-    if (getCodexModel(requestedModel)) {
-      const codexModel = await assertCodexModelAvailable(requestedModel)
+    const codexModel =
+      !selectedAccount || selectedAccount.provider === 'codex'
+        ? getCodexModel(requestedModel, selectedCodexAccountId)
+        : undefined
+    if (codexModel) {
+      const availableCodexModel = await assertCodexModelAvailable(
+        requestedModel,
+        selectedCodexAccountId,
+      )
       return createOpenAIShimClient({
         defaultHeaders,
         maxRetries,
@@ -343,18 +360,29 @@ export async function getAnthropicClient({
         reasoningEffort: shimReasoningEffort,
         suppressReasoningEffort,
         providerOverride: {
-          model: codexModel.id,
+          model: availableCodexModel.id,
           baseURL: DEFAULT_CODEX_BASE_URL,
           apiKey: '',
+          localAccountId: selectedCodexAccountId,
         },
       }) as unknown as Anthropic
     }
 
-    if (getClaudeNativeModel(requestedModel)) {
-      await assertClaudeNativeModelAvailable(requestedModel)
-      const refreshed = await refreshClaudeNativeAccessTokenIfNeeded()
+    const claudeModel =
+      !selectedAccount || selectedAccount.provider === 'claude'
+        ? getClaudeNativeModel(requestedModel, selectedClaudeAccountId)
+        : undefined
+    if (claudeModel) {
+      await assertClaudeNativeModelAvailable(
+        requestedModel,
+        selectedClaudeAccountId,
+      )
+      const refreshed = await refreshClaudeNativeAccessTokenIfNeeded({
+        localAccountId: selectedClaudeAccountId,
+      })
       const credentials =
-        refreshed.credentials ?? (await readClaudeNativeCredentialsAsync())
+        refreshed.credentials ??
+        (await readClaudeNativeCredentialsAsync(selectedClaudeAccountId))
       if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
         throw new Error(
           'Login Claude ausente ou aceite de risco desatualizado. Execute `/claude login`.',
@@ -388,6 +416,7 @@ export async function getAnthropicClient({
         try {
           const retry = await refreshClaudeNativeAccessTokenIfNeeded({
             force: true,
+            localAccountId: selectedClaudeAccountId,
           })
           if (!retry.credentials?.accessToken) return response
           const retryHeaders = new Headers(init?.headers)

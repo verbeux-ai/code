@@ -1863,6 +1863,8 @@ type ShimProviderOverride = {
   model: string
   baseURL: string
   apiKey: string
+  /** Opaque local account selected for this process, when using Codex OAuth. */
+  localAccountId?: string
   /** Reads a credential lazily so a refreshed OAuth token is used by an existing client. */
   getApiKey?: () => string
   /** Returns a replacement credential after an authentication failure. */
@@ -2131,8 +2133,10 @@ class OpenAIShimMessages {
     }
 
     if (request.transport === 'codex_responses' && !isGithubMode) {
+      const localAccountId = this.providerOverride?.localAccountId
       const refreshResult = await refreshCodexAccessTokenIfNeeded({
         ignoreEnvironment: isVerbooMode(),
+        localAccountId,
       }).catch(
         async (error) => {
           logForDebugging(
@@ -2141,7 +2145,7 @@ class OpenAIShimMessages {
           )
           return {
             refreshed: false,
-            credentials: await readCodexCredentialsAsync(),
+            credentials: await readCodexCredentialsAsync(localAccountId),
           }
         },
       )
@@ -2200,6 +2204,7 @@ class OpenAIShimMessages {
         const refreshed = await refreshCodexAccessTokenIfNeeded({
           force: true,
           ignoreEnvironment: isVerbooMode(),
+          localAccountId,
         })
         if (!refreshed.credentials) throw error
         const retryCredentials = isVerbooMode()

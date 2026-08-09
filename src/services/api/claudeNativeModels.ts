@@ -12,6 +12,8 @@ import {
   CLAUDE_NATIVE_OAUTH_BETA,
 } from './claudeNativeConfig.js'
 import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
+import type { LocalProviderAccountId } from '../../utils/providerAccounts/types.js'
+import { getSelectedProviderAccount } from '../../utils/providerAccounts/selection.js'
 
 const CACHE_TTL_MS = 5 * 60 * 1_000
 
@@ -157,39 +159,60 @@ async function requestAllModels(
 
 export async function fetchClaudeNativeModels(options?: {
   force?: boolean
+  localAccountId?: LocalProviderAccountId
   credentials?: ClaudeNativeCredentialBlob
 }): Promise<ClaudeNativeModel[]> {
+  const effectiveLocalAccountId =
+    options?.localAccountId ??
+    (getSelectedProviderAccount()?.provider === 'claude'
+      ? getSelectedProviderAccount()?.accountId
+      : undefined)
   const generation = cacheGeneration
-  let credentials = options?.credentials ?? (await readClaudeNativeCredentialsAsync())
+  let credentials = options?.credentials ?? (await readClaudeNativeCredentialsAsync(effectiveLocalAccountId))
   if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
     throw new Error('Claude não autenticado. Execute `/claude login`.')
   }
-  const previous = cacheByAccount.get(credentials.accountId)
+  const cacheKey = effectiveLocalAccountId ?? `legacy:${credentials.accountId}`
+  const previous = cacheByAccount.get(cacheKey)
   if (!options?.force && previous && Date.now() - previous.fetchedAt < CACHE_TTL_MS) {
     return previous.models
   }
   try {
     const models = await requestAllModels(credentials)
     if (generation === cacheGeneration) {
-      cacheByAccount.set(credentials.accountId, { fetchedAt: Date.now(), models })
+      cacheByAccount.set(cacheKey, { fetchedAt: Date.now(), models })
     }
     return models
   } catch (error) {
     if (options?.credentials || (error as { status?: number }).status !== 401) {
       throw error
     }
-    const refreshed = await refreshClaudeNativeAccessTokenIfNeeded({ force: true })
-    credentials = refreshed.credentials ?? (await readClaudeNativeCredentialsAsync())
+    const refreshed = await refreshClaudeNativeAccessTokenIfNeeded({
+      force: true,
+      localAccountId: effectiveLocalAccountId,
+    })
+    credentials = refreshed.credentials ?? (await readClaudeNativeCredentialsAsync(effectiveLocalAccountId))
     if (!credentials) throw error
     const models = await requestAllModels(credentials)
     if (generation === cacheGeneration) {
-      cacheByAccount.set(credentials.accountId, { fetchedAt: Date.now(), models })
+      cacheByAccount.set(cacheKey, { fetchedAt: Date.now(), models })
     }
     return models
   }
 }
 
-export function getCachedClaudeNativeModels(): ClaudeNativeModel[] | null {
+export function getCachedClaudeNativeModels(
+  localAccountId?: LocalProviderAccountId,
+): ClaudeNativeModel[] | null {
+  const effectiveLocalAccountId =
+    localAccountId ??
+    (getSelectedProviderAccount()?.provider === 'claude'
+      ? getSelectedProviderAccount()?.accountId
+      : undefined)
+  if (effectiveLocalAccountId) {
+    const selected = cacheByAccount.get(effectiveLocalAccountId)
+    if (selected) return selected.models
+  }
   for (const entry of cacheByAccount.values()) return entry.models
   return null
 }
@@ -199,16 +222,20 @@ export function clearClaudeNativeModelsCache(): void {
   cacheByAccount.clear()
 }
 
-export function getClaudeNativeModel(modelId: string): ClaudeNativeModel | undefined {
-  return getCachedClaudeNativeModels()?.find(model => model.id === modelId)
+export function getClaudeNativeModel(
+  modelId: string,
+  localAccountId?: LocalProviderAccountId,
+): ClaudeNativeModel | undefined {
+  return getCachedClaudeNativeModels(localAccountId)?.find(model => model.id === modelId)
 }
 
 export function getClaudeNativeReasoningEffort(
   modelId: string,
   requested: string,
+  localAccountId?: LocalProviderAccountId,
 ): string | undefined {
   const normalized = requested.trim().toLowerCase()
-  return getClaudeNativeModel(modelId)?.supportedReasoningLevels.find(
+  return getClaudeNativeModel(modelId, localAccountId)?.supportedReasoningLevels.find(
     level => level.toLowerCase() === normalized,
   )
 }
@@ -228,6 +255,10 @@ export function requireClaudeNativeModel(
 
 export async function assertClaudeNativeModelAvailable(
   modelId: string,
+  localAccountId?: LocalProviderAccountId,
 ): Promise<ClaudeNativeModel> {
-  return requireClaudeNativeModel(await fetchClaudeNativeModels(), modelId)
+  return requireClaudeNativeModel(
+    await fetchClaudeNativeModels({ localAccountId }),
+    modelId,
+  )
 }

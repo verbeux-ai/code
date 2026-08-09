@@ -494,3 +494,21 @@ export function resolveProviderAccount(
   const id = localAccountId ?? collection.defaultAccountId
   return id ? collection.accounts[id] : undefined
 }
+
+export type ResolvedProviderAccount = {
+  provider: ProviderId
+  accountId: LocalProviderAccountId
+  record: ProviderAccountRecord<CodexCredentialBlob | ClaudeNativeCredentialBlob>
+}
+
+/** Resolve an opaque local ID without allowing the caller to infer provider subjects. */
+export function resolveProviderAccountByLocalId(
+  localAccountId: LocalProviderAccountId,
+  data: ProviderAccountsV1 = readProviderAccounts(),
+): ResolvedProviderAccount | undefined {
+  const matches = (['codex', 'claude'] as const).flatMap(provider => {
+    const record = data[provider].accounts[localAccountId]
+    return record ? [{ provider, accountId: localAccountId, record }] : []
+  })
+  return matches.length === 1 ? matches[0] : undefined
+}

@@ -8,6 +8,7 @@ import { registerKeybindingsSkill } from './keybindings.js'
 import { registerLoopSkill } from './loop.js'
 import { registerSimplifySkill } from './simplify.js'
 import { registerUpdateConfigSkill } from './updateConfig.js'
+import { registerVerbooInChromeSkill } from './verbooInChrome.js'
 
 /**
  * Initialize all bundled skills.
@@ -25,6 +26,7 @@ export function initBundledSkills(): void {
   registerSimplifySkill()
   registerKarpathyGuidelinesSkill()
   registerBatchSkill()
+  registerVerbooInChromeSkill()
   if (feature('KAIROS') || feature('KAIROS_DREAM')) {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const { registerDreamSkill } = require('./dream.js')

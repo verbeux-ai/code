@@ -47,6 +47,19 @@ verboo /login
 - **Tool calling**: Multi-step tool loops with model calls, tool execution, and follow-up responses
 - **Images**: URL and base64 image inputs for providers that support vision
 
+## Verboo in Chrome
+
+The Verboo desktop app installs and maintains the local `verboo-in-chrome` MCP
+on macOS, Windows, and Linux. Configure it in **Settings > Integrations >
+Chrome**. Once the managed MCP entry is present, the CLI connects to it
+automatically and exposes the `verboo-in-chrome` skill for browser tasks.
+
+Use `verboo --no-chrome` to disable the integration for one session,
+`verboo --chrome` to require it for one session, and `/chrome` to inspect its
+status. The transport stays local, does not copy CLI credentials into the
+extension, and continues to enforce the extension's site permissions and
+approval flow.
+
 ## Web Search and Fetch
 
 `WebSearch` uses DuckDuckGo by default.

@@ -111,6 +111,7 @@ import type { Message as MessageType } from './types/message.js';
 import { assertMinVersion } from './utils/autoUpdater.js';
 import { CLAUDE_IN_CHROME_SKILL_HINT, CLAUDE_IN_CHROME_SKILL_HINT_WITH_WEBBROWSER } from './utils/claudeInChrome/prompt.js';
 import { setupClaudeInChrome, shouldAutoEnableClaudeInChrome, shouldEnableClaudeInChrome } from './utils/claudeInChrome/setup.js';
+import { getVerbooInChromePrompt, resolveVerbooInChromeMcpConfigs } from './utils/verbooInChrome.js';
 import { getContextWindowForModel } from './utils/context.js';
 import { loadConversationForResume } from './utils/conversationRecovery.js';
 import { buildDeepLinkBanner } from './utils/deepLink/banner.js';
@@ -1597,14 +1598,17 @@ async function run(): Promise<CommanderCommand> {
       }
     }
 
-    // Extract Claude in Chrome option and enforce claude.ai subscriber check (unless user is ant)
+    // The Verboo build uses the desktop-managed `verboo-in-chrome` MCP loaded
+    // with the other user configs below. Keep the inherited Claude transport
+    // available only outside Verboo mode so --chrome never installs or starts
+    // the unrelated Anthropic native host.
     const chromeOpts = options as {
       chrome?: boolean;
     };
     // Store the explicit CLI flag so teammates can inherit it
     setChromeFlagOverride(chromeOpts.chrome);
-    const enableClaudeInChrome = shouldEnableClaudeInChrome(chromeOpts.chrome) && ("external" === 'ant' || isClaudeAISubscriber());
-    const autoEnableClaudeInChrome = !enableClaudeInChrome && shouldAutoEnableClaudeInChrome();
+    const enableClaudeInChrome = !isVerbooMode() && shouldEnableClaudeInChrome(chromeOpts.chrome) && ("external" === 'ant' || isClaudeAISubscriber());
+    const autoEnableClaudeInChrome = !isVerbooMode() && !enableClaudeInChrome && shouldAutoEnableClaudeInChrome();
     if (enableClaudeInChrome) {
       const platform = getPlatform();
       try {
@@ -2455,10 +2459,20 @@ async function run(): Promise<CommanderCommand> {
       servers: existingMcpConfigs
     } = await mcpConfigPromise;
     // CLI flag (--mcp-config) should override file-based configs, matching settings precedence
-    const allMcpConfigs = {
+    const mergedMcpConfigs = {
       ...existingMcpConfigs,
       ...dynamicMcpConfig
     };
+    const chromeResolution = resolveVerbooInChromeMcpConfigs(mergedMcpConfigs, chromeOpts.chrome);
+    if (chromeResolution.requestedButMissing) {
+      process.stderr.write('Error: Verboo in Chrome is not configured. Open Verboo desktop > Settings > Integrations > Chrome, then install or repair the integration.\n');
+      process.exit(1);
+    }
+    if (chromeResolution.enabled) {
+      const chromeSystemPrompt = getVerbooInChromePrompt();
+      appendSystemPrompt = appendSystemPrompt ? `${appendSystemPrompt}\n\n${chromeSystemPrompt}` : chromeSystemPrompt;
+    }
+    const allMcpConfigs = chromeResolution.configs;
 
     // Separate SDK configs from regular MCP configs
     const sdkMcpConfigs: Record<string, McpSdkServerConfig> = {};

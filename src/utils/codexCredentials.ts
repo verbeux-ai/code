@@ -7,23 +7,18 @@ import {
   exchangeCodexIdTokenForApiKey,
   getCodexOAuthClientId,
   parseChatgptAccountId,
-  decodeJwtPayload,
 } from '../services/api/codexOAuthShared.js'
+import {
+  codexTokenExpiryMs,
+  normalizeCodexCredentialBlob,
+  type CodexCredentialBlob,
+} from './providerAccounts/credentials.js'
+
+export type { CodexCredentialBlob } from './providerAccounts/credentials.js'
 
 export const CODEX_STORAGE_KEY = 'codex' as const
 const CODEX_TOKEN_REFRESH_SKEW_MS = 60_000
 const CODEX_TOKEN_REFRESH_RETRY_COOLDOWN_MS = 60_000
-
-export type CodexCredentialBlob = {
-  apiKey?: string
-  accessToken: string
-  refreshToken?: string
-  idToken?: string
-  accountId?: string
-  profileId?: string
-  lastRefreshAt?: number
-  lastRefreshFailureAt?: number
-}
 
 type CodexTokenRefreshResponse = {
   access_token?: string
@@ -43,60 +38,8 @@ function getCodexSecureStorage() {
   return getSecureStorage({ allowPlainTextFallback: false })
 }
 
-function parseJwtExpiryMs(token: string | undefined): number | undefined {
-  if (!token) return undefined
-  const payload = decodeJwtPayload(token)
-  const exp = payload?.exp
-  if (typeof exp === 'number' && Number.isFinite(exp)) {
-    return exp * 1000
-  }
-  return undefined
-}
-
-function normalizeCodexCredentialBlob(
-  value: unknown,
-): CodexCredentialBlob | undefined {
-  if (!value || typeof value !== 'object') return undefined
-
-  const record = value as Record<string, unknown>
-  const apiKey = asTrimmedString(record.apiKey)
-  const accessToken = asTrimmedString(record.accessToken)
-  if (!accessToken) return undefined
-
-  const refreshToken = asTrimmedString(record.refreshToken)
-  const idToken = asTrimmedString(record.idToken)
-  const accountId =
-    asTrimmedString(record.accountId) ??
-    parseChatgptAccountId(idToken) ??
-    parseChatgptAccountId(accessToken)
-  const profileId = asTrimmedString(record.profileId)
-
-  const lastRefreshAt =
-    typeof record.lastRefreshAt === 'number' &&
-    Number.isFinite(record.lastRefreshAt)
-      ? record.lastRefreshAt
-      : undefined
-  const lastRefreshFailureAt =
-    typeof record.lastRefreshFailureAt === 'number' &&
-    Number.isFinite(record.lastRefreshFailureAt)
-      ? record.lastRefreshFailureAt
-      : undefined
-
-  return {
-    apiKey,
-    accessToken,
-    refreshToken,
-    idToken,
-    accountId,
-    profileId,
-    lastRefreshAt,
-    lastRefreshFailureAt,
-  }
-}
-
 function shouldRefreshCodexToken(blob: CodexCredentialBlob): boolean {
-  const expiresAt =
-    parseJwtExpiryMs(blob.accessToken) ?? parseJwtExpiryMs(blob.idToken)
+  const expiresAt = codexTokenExpiryMs(blob)
   if (expiresAt === undefined) {
     return false
   }

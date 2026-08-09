@@ -7,29 +7,20 @@ import {
   CLAUDE_NATIVE_TOKEN_URL,
   CLAUDE_RISK_NOTICE_VERSION,
 } from '../services/api/claudeNativeConfig.js'
+import {
+  normalizeClaudeNativeCredentials,
+  type ClaudeNativeCredentialBlob,
+  type ClaudeRiskAcceptance,
+} from './providerAccounts/credentials.js'
+
+export type {
+  ClaudeNativeCredentialBlob,
+  ClaudeRiskAcceptance,
+} from './providerAccounts/credentials.js'
 
 export const CLAUDE_NATIVE_STORAGE_KEY = 'claudeNative' as const
 const REFRESH_SKEW_MS = 60_000
 const REFRESH_FAILURE_COOLDOWN_MS = 60_000
-
-export type ClaudeRiskAcceptance = {
-  version: number
-  acceptedAt: string
-  accountId: string
-}
-
-export type ClaudeNativeCredentialBlob = {
-  accessToken: string
-  refreshToken?: string
-  expiresAt?: number
-  scopes: string[]
-  accountId: string
-  email?: string
-  organizationId?: string
-  riskAcceptance: ClaudeRiskAcceptance
-  lastRefreshAt?: number
-  lastRefreshFailureAt?: number
-}
 
 type RefreshResponse = {
   access_token?: string
@@ -52,41 +43,6 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function normalizeRiskAcceptance(value: unknown): ClaudeRiskAcceptance | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const record = value as Record<string, unknown>
-  const version = finiteNumber(record.version)
-  const acceptedAt = trimmed(record.acceptedAt)
-  const accountId = trimmed(record.accountId)
-  if (version === undefined || !acceptedAt || !accountId) return undefined
-  return { version, acceptedAt, accountId }
-}
-
-function normalizeCredentials(value: unknown): ClaudeNativeCredentialBlob | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const record = value as Record<string, unknown>
-  const accessToken = trimmed(record.accessToken)
-  const accountId = trimmed(record.accountId)
-  const riskAcceptance = normalizeRiskAcceptance(record.riskAcceptance)
-  if (!accessToken || !accountId || !riskAcceptance) return undefined
-  if (riskAcceptance.accountId !== accountId) return undefined
-
-  return {
-    accessToken,
-    refreshToken: trimmed(record.refreshToken),
-    expiresAt: finiteNumber(record.expiresAt),
-    scopes: Array.isArray(record.scopes)
-      ? record.scopes.filter((scope): scope is string => typeof scope === 'string')
-      : [],
-    accountId,
-    email: trimmed(record.email),
-    organizationId: trimmed(record.organizationId),
-    riskAcceptance,
-    lastRefreshAt: finiteNumber(record.lastRefreshAt),
-    lastRefreshFailureAt: finiteNumber(record.lastRefreshFailureAt),
-  }
-}
-
 function storage() {
   return getSecureStorage({ allowPlainTextFallback: false })
 }
@@ -104,7 +60,7 @@ export function hasCurrentClaudeRiskAcceptance(
 export function readClaudeNativeCredentials(): ClaudeNativeCredentialBlob | undefined {
   if (isBareMode()) return undefined
   try {
-    return normalizeCredentials(storage().read()?.claudeNative)
+    return normalizeClaudeNativeCredentials(storage().read()?.claudeNative)
   } catch {
     return undefined
   }
@@ -115,7 +71,7 @@ export async function readClaudeNativeCredentialsAsync(): Promise<
 > {
   if (isBareMode()) return undefined
   try {
-    return normalizeCredentials((await storage().readAsync())?.claudeNative)
+    return normalizeClaudeNativeCredentials((await storage().readAsync())?.claudeNative)
   } catch {
     return undefined
   }
@@ -127,7 +83,7 @@ export function saveClaudeNativeCredentials(
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
   }
-  const normalized = normalizeCredentials(credentials)
+  const normalized = normalizeClaudeNativeCredentials(credentials)
   if (!normalized || !hasCurrentClaudeRiskAcceptance(normalized)) {
     return {
       success: false,

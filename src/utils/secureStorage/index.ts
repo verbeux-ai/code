@@ -5,6 +5,7 @@ import { windowsCredentialStorage } from './windowsCredentialStorage.js'
 import { plainTextStorage } from './plainTextStorage.js'
 
 export interface SecureStorageData {
+	providerAccounts?: import('../providerAccounts/types.js').ProviderAccountsV1
 	// Random app-installation identity used only to bind the native Verboo OAuth
 	// session. It is not a hardware fingerprint and contains no user data.
 	verbooInstallationId?: string

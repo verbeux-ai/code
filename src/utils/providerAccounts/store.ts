@@ -1,4 +1,7 @@
-import { getSecureStorage, type SecureStorageData } from '../secureStorage/index.js'
+import {
+  getSecureStorage,
+  type SecureStorageData,
+} from '../secureStorage/index.js'
 import {
   normalizeClaudeNativeCredentials,
   normalizeCodexCredentialBlob,
@@ -204,6 +207,80 @@ function storage() {
   return getSecureStorage({ allowPlainTextFallback: false })
 }
 
+export function readSecureData(): SecureStorageData {
+  try {
+    return storage().read() ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function commitSecureData(data: SecureStorageData): void {
+  const result = storage().update(data)
+  if (!result.success) {
+    throw new Error(result.warning ?? 'secure_storage_write_failed')
+  }
+}
+
+function prepareMutableState(): {
+  data: SecureStorageData
+  accounts: ProviderAccountsV1
+} {
+  const data = readSecureData()
+  const migration = migrateProviderAccounts(data)
+  const accounts = normalizeProviderAccounts(migration.data.providerAccounts)
+    ?? emptyProviderAccounts()
+  return {
+    data: { ...migration.data, providerAccounts: accounts },
+    accounts,
+  }
+}
+
+function nextDisplayLabel(
+  provider: ProviderId,
+  collection: ProviderAccountCollection<unknown>,
+): string {
+  const prefix = provider === 'codex' ? 'Codex' : 'Claude'
+  const used = Object.values(collection.accounts)
+    .map(account => {
+      const match = new RegExp(`^${prefix} (\\d+)$`).exec(account.displayLabel)
+      return match ? Number(match[1]) : 0
+    })
+    .filter(Number.isFinite)
+  const next = (used.length ? Math.max(...used) : 0) + 1
+  return `${prefix} ${next}`
+}
+
+function normalizeCredentialForProvider(
+  provider: ProviderId,
+  credential: CodexCredentialBlob | ClaudeNativeCredentialBlob,
+): CodexCredentialBlob | ClaudeNativeCredentialBlob {
+  const normalized = provider === 'codex'
+    ? normalizeCodexCredentialBlob(credential)
+    : normalizeClaudeNativeCredentials(credential)
+  if (!normalized || !normalized.accountId) {
+    throw new Error('provider_identity_missing')
+  }
+  return normalized
+}
+
+function mirrorDefaultCredential(
+  data: SecureStorageData,
+  provider: ProviderId,
+  account: ProviderAccountRecord<CodexCredentialBlob | ClaudeNativeCredentialBlob> | undefined,
+): SecureStorageData {
+  const next = { ...data }
+  if (provider === 'codex') {
+    if (account) next.codex = account.credential as CodexCredentialBlob
+    else delete next.codex
+  } else if (account) {
+    next.claudeNative = account.credential as ClaudeNativeCredentialBlob
+  } else {
+    delete next.claudeNative
+  }
+  return next
+}
+
 export function readProviderAccounts(): ProviderAccountsV1 {
   let data: SecureStorageData | null = null
   try {
@@ -250,6 +327,142 @@ export async function readProviderAccountsAsync(): Promise<ProviderAccountsV1> {
   return normalized
 }
 
+export function upsertProviderAccount(
+  provider: ProviderId,
+  credential: CodexCredentialBlob | ClaudeNativeCredentialBlob,
+  options?: { reconnectLocalAccountId?: LocalProviderAccountId },
+): { localAccountId: LocalProviderAccountId; created: boolean } {
+  const normalized = normalizeCredentialForProvider(provider, credential)
+  const { data, accounts } = prepareMutableState()
+  const collection = {
+    ...accounts[provider],
+    accounts: { ...accounts[provider].accounts },
+  } as ProviderAccountCollection<CodexCredentialBlob | ClaudeNativeCredentialBlob>
+  const providerSubjectId = normalized.accountId!
+  const existingBySubject = Object.values(collection.accounts).find(
+    account => account.providerSubjectId === providerSubjectId,
+  )
+  const requestedId = options?.reconnectLocalAccountId
+  if (requestedId && !collection.accounts[requestedId]) {
+    throw new Error('provider_account_not_found')
+  }
+  if (
+    requestedId &&
+    collection.accounts[requestedId] &&
+    collection.accounts[requestedId].providerSubjectId !== providerSubjectId
+  ) {
+    throw new Error('provider_identity_mismatch')
+  }
+  if (
+    requestedId &&
+    existingBySubject &&
+    existingBySubject.localAccountId !== requestedId
+  ) {
+    throw new Error('provider_identity_mismatch')
+  }
+  const existing = requestedId
+    ? collection.accounts[requestedId]
+    : existingBySubject
+  const localAccountId = existing?.localAccountId ?? crypto.randomUUID()
+  const account: ProviderAccountRecord<
+    CodexCredentialBlob | ClaudeNativeCredentialBlob
+  > = {
+    localAccountId,
+    providerSubjectId,
+    displayLabel: existing?.displayLabel ?? nextDisplayLabel(provider, collection),
+    credential: normalized,
+    connectionState: 'connected',
+    planId: existing?.planId,
+    planDisplayName: existing?.planDisplayName,
+    lastValidatedAt: existing?.lastValidatedAt,
+  }
+  collection.accounts[localAccountId] = account as never
+  const nextAccounts = {
+    ...accounts,
+    [provider]: collection,
+  } as ProviderAccountsV1
+  if (!collection.defaultAccountId) {
+    collection.defaultAccountId = localAccountId
+  }
+  const defaultAccount = collection.accounts[collection.defaultAccountId]
+  commitSecureData(
+    mirrorDefaultCredential(
+      { ...data, providerAccounts: nextAccounts },
+      provider,
+      defaultAccount,
+    ),
+  )
+  return { localAccountId, created: !existing }
+}
+
+export function reconnectProviderAccount(
+  provider: ProviderId,
+  localAccountId: LocalProviderAccountId,
+  credential: CodexCredentialBlob | ClaudeNativeCredentialBlob,
+): { localAccountId: LocalProviderAccountId; created: boolean } {
+  return upsertProviderAccount(provider, credential, {
+    reconnectLocalAccountId: localAccountId,
+  })
+}
+
+export function setDefaultProviderAccount(
+  provider: ProviderId,
+  localAccountId: LocalProviderAccountId,
+): void {
+  const { data, accounts } = prepareMutableState()
+  const collection = {
+    ...accounts[provider],
+    accounts: { ...accounts[provider].accounts },
+  }
+  const account = collection.accounts[localAccountId]
+  if (!account) throw new Error('provider_account_not_found')
+  collection.defaultAccountId = localAccountId
+  const nextAccounts = {
+    ...accounts,
+    [provider]: collection,
+  }
+  commitSecureData(
+    mirrorDefaultCredential(
+      { ...data, providerAccounts: nextAccounts },
+      provider,
+      account,
+    ),
+  )
+}
+
+export function removeProviderAccount(
+  provider: ProviderId,
+  localAccountId: LocalProviderAccountId,
+): void {
+  const { data, accounts } = prepareMutableState()
+  const collection = {
+    ...accounts[provider],
+    accounts: { ...accounts[provider].accounts },
+  }
+  if (!collection.accounts[localAccountId]) {
+    throw new Error('provider_account_not_found')
+  }
+  const wasDefault = collection.defaultAccountId === localAccountId
+  delete collection.accounts[localAccountId]
+  if (wasDefault) {
+    collection.defaultAccountId = Object.keys(collection.accounts).sort()[0]
+  }
+  const nextAccounts = {
+    ...accounts,
+    [provider]: collection,
+  }
+  const defaultAccount = collection.defaultAccountId
+    ? collection.accounts[collection.defaultAccountId]
+    : undefined
+  commitSecureData(
+    mirrorDefaultCredential(
+      { ...data, providerAccounts: nextAccounts },
+      provider,
+      defaultAccount,
+    ),
+  )
+}
+
 export function listProviderAccountSummaries(
   data: ProviderAccountsV1 = readProviderAccounts(),
 ): ProviderAccountSummary[] {
@@ -281,4 +494,3 @@ export function resolveProviderAccount(
   const id = localAccountId ?? collection.defaultAccountId
   return id ? collection.accounts[id] : undefined
 }
-

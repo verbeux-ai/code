@@ -13,6 +13,11 @@ import {
   normalizeCodexCredentialBlob,
   type CodexCredentialBlob,
 } from './providerAccounts/credentials.js'
+import {
+  removeProviderAccount,
+  upsertProviderAccount,
+} from './providerAccounts/store.js'
+import { normalizeProviderAccounts } from './providerAccounts/store.js'
 
 export type { CodexCredentialBlob } from './providerAccounts/credentials.js'
 
@@ -95,6 +100,12 @@ export function readCodexCredentials(): CodexCredentialBlob | undefined {
 
   try {
     const data = getCodexSecureStorage().read()
+    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
+    const defaultAccountId = providerAccounts?.codex.defaultAccountId
+    const account = defaultAccountId
+      ? providerAccounts?.codex.accounts[defaultAccountId]
+      : undefined
+    if (account?.credential) return account.credential
     return normalizeCodexCredentialBlob(data?.codex)
   } catch {
     return undefined
@@ -108,6 +119,12 @@ export async function readCodexCredentialsAsync(): Promise<
 
   try {
     const data = await getCodexSecureStorage().readAsync()
+    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
+    const defaultAccountId = providerAccounts?.codex.defaultAccountId
+    const account = defaultAccountId
+      ? providerAccounts?.codex.accounts[defaultAccountId]
+      : undefined
+    if (account?.credential) return account.credential
     return normalizeCodexCredentialBlob(data?.codex)
   } catch {
     return undefined
@@ -137,22 +154,38 @@ export function saveCodexCredentials(
   }
 
   const secureStorage = getCodexSecureStorage()
-  const previous = secureStorage.read() || {}
-  const previousCodex = normalizeCodexCredentialBlob(previous[CODEX_STORAGE_KEY])
-  const next = {
-    ...(previous as Record<string, unknown>),
-    [CODEX_STORAGE_KEY]: {
+  const previousData = secureStorage.read() || {}
+  const providerAccounts = normalizeProviderAccounts(previousData.providerAccounts)
+  if (!providerAccounts) {
+    const previousCodex = normalizeCodexCredentialBlob(previousData[CODEX_STORAGE_KEY])
+    const next = {
+      ...(previousData as Record<string, unknown>),
+      [CODEX_STORAGE_KEY]: {
+        ...normalized,
+        profileId: normalized.profileId ?? previousCodex?.profileId,
+        lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
+      },
+    }
+    const result = secureStorage.update(next as typeof previousData)
+    if (result.success) inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    return result
+  }
+
+  const previous = readCodexCredentials()
+  try {
+    upsertProviderAccount('codex', {
       ...normalized,
-      profileId: normalized.profileId ?? previousCodex?.profileId,
+      profileId: normalized.profileId ?? previous?.profileId,
       lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    },
+    })
+    inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    return { success: true }
+  } catch (error) {
+    return {
+      success: false,
+      warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+    }
   }
-  const result = secureStorage.update(next as typeof previous)
-  if (result.success) {
-    const storedCodex = normalizeCodexCredentialBlob(next[CODEX_STORAGE_KEY])
-    inMemoryLastRefreshFailureAt = storedCodex?.lastRefreshFailureAt ?? null
-  }
-  return result
 }
 
 export function attachCodexProfileIdToStoredCredentials(profileId: string): {
@@ -198,14 +231,28 @@ export function clearCodexCredentials(): {
     return { success: true }
   }
 
+  const raw = getCodexSecureStorage().read() || {}
+  const providerAccounts = normalizeProviderAccounts(raw.providerAccounts)
+  const defaultAccountId = providerAccounts?.codex.defaultAccountId
+  if (defaultAccountId) {
+    try {
+      removeProviderAccount('codex', defaultAccountId)
+      inMemoryLastRefreshFailureAt = null
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+      }
+    }
+  }
+
   const secureStorage = getCodexSecureStorage()
-  const previous = secureStorage.read() || {}
+  const previous = raw
   const next = { ...(previous as Record<string, unknown>) }
   delete next[CODEX_STORAGE_KEY]
   const result = secureStorage.update(next as typeof previous)
-  if (result.success) {
-    inMemoryLastRefreshFailureAt = null
-  }
+  if (result.success) inMemoryLastRefreshFailureAt = null
   return result
 }
 

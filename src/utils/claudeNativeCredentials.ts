@@ -12,6 +12,11 @@ import {
   type ClaudeNativeCredentialBlob,
   type ClaudeRiskAcceptance,
 } from './providerAccounts/credentials.js'
+import {
+  removeProviderAccount,
+  upsertProviderAccount,
+} from './providerAccounts/store.js'
+import { normalizeProviderAccounts } from './providerAccounts/store.js'
 
 export type {
   ClaudeNativeCredentialBlob,
@@ -60,7 +65,14 @@ export function hasCurrentClaudeRiskAcceptance(
 export function readClaudeNativeCredentials(): ClaudeNativeCredentialBlob | undefined {
   if (isBareMode()) return undefined
   try {
-    return normalizeClaudeNativeCredentials(storage().read()?.claudeNative)
+    const data = storage().read()
+    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
+    const defaultAccountId = providerAccounts?.claude.defaultAccountId
+    const account = defaultAccountId
+      ? providerAccounts?.claude.accounts[defaultAccountId]
+      : undefined
+    if (account?.credential) return account.credential
+    return normalizeClaudeNativeCredentials(data?.claudeNative)
   } catch {
     return undefined
   }
@@ -71,7 +83,14 @@ export async function readClaudeNativeCredentialsAsync(): Promise<
 > {
   if (isBareMode()) return undefined
   try {
-    return normalizeClaudeNativeCredentials((await storage().readAsync())?.claudeNative)
+    const data = await storage().readAsync()
+    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
+    const defaultAccountId = providerAccounts?.claude.defaultAccountId
+    const account = defaultAccountId
+      ? providerAccounts?.claude.accounts[defaultAccountId]
+      : undefined
+    if (account?.credential) return account.credential
+    return normalizeClaudeNativeCredentials(data?.claudeNative)
   } catch {
     return undefined
   }
@@ -91,19 +110,34 @@ export function saveClaudeNativeCredentials(
     }
   }
   const secureStorage = storage()
-  const previous = secureStorage.read() || {}
-  const next = {
-    ...(previous as Record<string, unknown>),
-    [CLAUDE_NATIVE_STORAGE_KEY]: {
+  const previousData = secureStorage.read() || {}
+  const providerAccounts = normalizeProviderAccounts(previousData.providerAccounts)
+  if (!providerAccounts) {
+    const next = {
+      ...(previousData as Record<string, unknown>),
+      [CLAUDE_NATIVE_STORAGE_KEY]: {
+        ...normalized,
+        lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
+      },
+    }
+    const result = secureStorage.update(next as typeof previousData)
+    if (result.success) inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    return result
+  }
+
+  try {
+    upsertProviderAccount('claude', {
       ...normalized,
       lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    },
-  }
-  const result = secureStorage.update(next as typeof previous)
-  if (result.success) {
+    })
     inMemoryLastRefreshFailureAt = normalized.lastRefreshFailureAt ?? null
+    return { success: true }
+  } catch (error) {
+    return {
+      success: false,
+      warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+    }
   }
-  return result
 }
 
 export function clearClaudeNativeCredentials(): {
@@ -111,8 +145,24 @@ export function clearClaudeNativeCredentials(): {
   warning?: string
 } {
   if (isBareMode()) return { success: true }
+  const raw = storage().read() || {}
+  const providerAccounts = normalizeProviderAccounts(raw.providerAccounts)
+  const defaultAccountId = providerAccounts?.claude.defaultAccountId
+  if (defaultAccountId) {
+    try {
+      removeProviderAccount('claude', defaultAccountId)
+      inMemoryLastRefreshFailureAt = null
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+      }
+    }
+  }
+
   const secureStorage = storage()
-  const previous = secureStorage.read() || {}
+  const previous = raw
   const next = { ...(previous as Record<string, unknown>) }
   delete next[CLAUDE_NATIVE_STORAGE_KEY]
   const result = secureStorage.update(next as typeof previous)

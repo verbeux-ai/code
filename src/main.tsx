@@ -4225,6 +4225,54 @@ async function run(): Promise<CommanderCommand> {
     });
   }
 
+  // Versioned provider account/usage protocol consumed by Verboo Desktop.
+  // Keep handlers lazy so normal interactive startup does not load quota APIs.
+  const providerAccounts = program
+    .command('provider-accounts')
+    .description('Manage connected Claude and Codex accounts')
+  const runProviderAccounts = async (argv: string[]) => {
+    const { runProviderAccountsCommand } = await import(
+      './cli/handlers/providerAccounts.js'
+    )
+    const output = await runProviderAccountsCommand(argv)
+    process.stdout.write(`${JSON.stringify(output)}\n`)
+  }
+  providerAccounts.action(async () => runProviderAccounts(['capabilities']))
+  providerAccounts
+    .command('capabilities')
+    .description('Show supported provider account protocols')
+    .action(async () => runProviderAccounts(['capabilities']))
+  providerAccounts
+    .command('list')
+    .description('List connected provider accounts')
+    .action(async () => runProviderAccounts(['list']))
+  providerAccounts
+    .command('usage')
+    .description('Show usage windows for one provider account')
+    .requiredOption('--provider <provider>', 'Provider: codex or claude')
+    .option('--account <opaque-id>', 'Opaque local account ID')
+    .action(async (options: { provider?: string; account?: string }) => {
+      const argv = ['usage', '--provider', options.provider ?? '']
+      if (options.account) argv.push('--account', options.account)
+      return runProviderAccounts(argv)
+    })
+  for (const command of ['set-default', 'remove'] as const) {
+    providerAccounts
+      .command(command)
+      .description(command === 'remove' ? 'Remove a provider account' : 'Select the default provider account')
+      .requiredOption('--provider <provider>', 'Provider: codex or claude')
+      .requiredOption('--account <opaque-id>', 'Opaque local account ID')
+      .action(async (options: { provider?: string; account?: string }) =>
+        runProviderAccounts([
+          command,
+          '--provider',
+          options.provider ?? '',
+          '--account',
+          options.account ?? '',
+        ]),
+      )
+  }
+
   // claude auth
 
   const auth = program.command('auth').description('Manage authentication').configureHelp(createSortedHelpConfig());

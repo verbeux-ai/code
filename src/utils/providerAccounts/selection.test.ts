@@ -53,9 +53,7 @@ describe('provider account selection', () => {
     })
 
     // @ts-expect-error cache-busting query string for Bun module isolation
-    const { resolveProviderAccountSelection } = await import(
-      './selection.js?provider-mismatch'
-    )
+    const { resolveProviderAccountSelection } = await import('./selection.js?provider-mismatch')
     expect(() =>
       resolveProviderAccountSelection('claude', 'local-codex'),
     ).toThrow('provider_account_mismatch')
@@ -77,9 +75,7 @@ describe('provider account selection', () => {
     })
 
     // @ts-expect-error cache-busting query string for Bun module isolation
-    const { resolveProviderAccountSelection } = await import(
-      './selection.js?provider-contexts'
-    )
+    const { resolveProviderAccountSelection } = await import('./selection.js?provider-contexts')
     expect(
       resolveProviderAccountSelection('codex', 'local-a').credential.accessToken,
     ).toBe('token-a')

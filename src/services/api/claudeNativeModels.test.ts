@@ -128,9 +128,7 @@ test('fetches and refreshes models for the explicitly selected local account', a
 
   try {
     // @ts-expect-error cache-busting query string for Bun module isolation
-    const { fetchClaudeNativeModels } = await import(
-      './claudeNativeModels.js?selected-account'
-    )
+    const { fetchClaudeNativeModels } = await import('./claudeNativeModels.js?selected-account')
     const models = await fetchClaudeNativeModels({
       force: true,
       localAccountId: 'local-b',

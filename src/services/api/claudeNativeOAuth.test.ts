@@ -10,7 +10,20 @@ import {
 import {
   buildClaudeNativeAuthorizeUrl,
   ClaudeNativeOAuthService,
+  normalizeClaudePlanHint,
 } from './claudeNativeOAuth.js'
+
+test('accepts only explicit Pro or Max plan hints from the authenticated profile', () => {
+  expect(normalizeClaudePlanHint({ id: 'max', display_name: 'Max' })).toEqual({
+    id: 'max',
+    displayName: 'Max',
+  })
+  expect(normalizeClaudePlanHint({ tier: 'pro' })).toEqual({
+    id: 'pro',
+    displayName: 'Pro',
+  })
+  expect(normalizeClaudePlanHint({ name: 'enterprise' })).toBeUndefined()
+})
 
 test('uses only the fixed native Claude OAuth endpoint and PKCE callback', () => {
   const value = buildClaudeNativeAuthorizeUrl({
@@ -90,7 +103,10 @@ test('exchanges state-bound tokens and serves a local Verboo completion page', a
       })
     }
     if (url === `${CLAUDE_NATIVE_API_BASE_URL}/api/oauth/profile`) {
-      return Response.json({ account: { uuid: 'account-1' } })
+      return Response.json({
+        account: { uuid: 'account-1' },
+        plan: { id: 'max', display_name: 'Max' },
+      })
     }
     return new Response('unexpected request', { status: 500 })
   }) as unknown as typeof fetch
@@ -109,6 +125,8 @@ test('exchanges state-bound tokens and serves a local Verboo completion page', a
     const tokenForm = new URLSearchParams(requests[0]?.body)
 
     expect(tokens.accountId).toBe('account-1')
+    expect(tokens.planId).toBe('max')
+    expect(tokens.planDisplayName).toBe('Max')
     expect(requests.map(request => request.url)).toEqual([
       CLAUDE_NATIVE_TOKEN_URL,
       `${CLAUDE_NATIVE_API_BASE_URL}/api/oauth/profile`,

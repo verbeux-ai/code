@@ -28,3 +28,21 @@ export type ProviderAccountsV1 = {
   codex: ProviderAccountCollection<CodexCredentialBlob>
   claude: ProviderAccountCollection<ClaudeNativeCredentialBlob>
 }
+
+export type ProviderUsageWindowV1 = {
+  id: string
+  kind: 'session' | 'weekly' | 'model-scoped-weekly' | 'unknown'
+  displayLabel: string
+  modelScope?: string
+  usedPercent: number
+  resetsAt?: string
+}
+
+export type ProviderUsageSnapshotV1 = {
+  schemaVersion: 1
+  provider: ProviderId
+  accountId: LocalProviderAccountId
+  plan?: { id: string; displayName: string }
+  windows: ProviderUsageWindowV1[]
+  fetchedAt: string
+}

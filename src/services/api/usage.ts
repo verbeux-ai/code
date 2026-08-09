@@ -28,6 +28,13 @@ export type Utilization = {
   seven_day_opus?: RateLimit | null
   seven_day_sonnet?: RateLimit | null
   extra_usage?: ExtraUsage | null
+  scoped_limits?: Array<{
+    id: string
+    modelScope: string
+    utilization: number
+    windowMinutes?: number
+    resetsAt?: string
+  }>
 }
 
 export async function fetchUtilization(): Promise<Utilization | null> {

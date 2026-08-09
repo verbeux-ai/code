@@ -20,11 +20,20 @@ type NativeTokenResponse = {
   scope?: string
   account?: { uuid?: string; email_address?: string }
   organization?: { uuid?: string }
+  plan?: unknown
+  subscription?: unknown
 }
 
 type NativeProfileResponse = {
   account?: { uuid?: string; email?: string; email_address?: string }
-  organization?: { uuid?: string }
+  organization?: { uuid?: string; plan?: unknown; subscription?: unknown }
+  plan?: unknown
+  subscription?: unknown
+}
+
+export type ClaudePlanHint = {
+  id: 'pro' | 'max'
+  displayName: 'Pro' | 'Max'
 }
 
 export type ClaudeNativeOAuthTokens = {
@@ -35,6 +44,8 @@ export type ClaudeNativeOAuthTokens = {
   accountId: string
   email?: string
   organizationId?: string
+  planId?: ClaudePlanHint['id']
+  planDisplayName?: ClaudePlanHint['displayName']
 }
 
 type Listener = Pick<
@@ -55,6 +66,45 @@ type Options = {
 
 function trimmed(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+export function normalizeClaudePlanHint(value: unknown): ClaudePlanHint | undefined {
+  const candidates = typeof value === 'string'
+    ? [value]
+    : value && typeof value === 'object'
+      ? [
+          (value as Record<string, unknown>).id,
+          (value as Record<string, unknown>).plan_id,
+          (value as Record<string, unknown>).planId,
+          (value as Record<string, unknown>).tier,
+          (value as Record<string, unknown>).type,
+          (value as Record<string, unknown>).plan_type,
+          (value as Record<string, unknown>).planType,
+          (value as Record<string, unknown>).subscription_type,
+          (value as Record<string, unknown>).subscriptionType,
+          (value as Record<string, unknown>).name,
+          (value as Record<string, unknown>).display_name,
+          (value as Record<string, unknown>).displayName,
+        ]
+      : []
+  for (const candidate of candidates) {
+    const normalized = trimmed(candidate)?.toLowerCase().replaceAll('_', '-').replaceAll(' ', '-')
+    if (normalized === 'pro' || normalized === 'claude-pro') {
+      return { id: 'pro', displayName: 'Pro' }
+    }
+    if (normalized === 'max' || normalized === 'claude-max') {
+      return { id: 'max', displayName: 'Max' }
+    }
+  }
+  return undefined
+}
+
+function profilePlanHint(profile: NativeProfileResponse | undefined): ClaudePlanHint | undefined {
+  if (!profile) return undefined
+  return normalizeClaudePlanHint(profile.plan) ??
+    normalizeClaudePlanHint(profile.subscription) ??
+    normalizeClaudePlanHint(profile.organization?.plan) ??
+    normalizeClaudePlanHint(profile.organization?.subscription)
 }
 
 function escapeHtml(value: string): string {
@@ -181,6 +231,14 @@ async function exchangeCode(options: {
     organizationId:
       trimmed(payload.organization?.uuid) ??
       trimmed(profile?.organization?.uuid),
+    planId:
+      profilePlanHint(profile)?.id ??
+      normalizeClaudePlanHint(payload.plan)?.id ??
+      normalizeClaudePlanHint(payload.subscription)?.id,
+    planDisplayName:
+      profilePlanHint(profile)?.displayName ??
+      normalizeClaudePlanHint(payload.plan)?.displayName ??
+      normalizeClaudePlanHint(payload.subscription)?.displayName,
   }
 }
 

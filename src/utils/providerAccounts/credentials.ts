@@ -25,6 +25,8 @@ export type ClaudeNativeCredentialBlob = {
   accountId: string
   email?: string
   organizationId?: string
+  planId?: string
+  planDisplayName?: string
   riskAcceptance: ClaudeRiskAcceptance
   lastRefreshAt?: number
   lastRefreshFailureAt?: number
@@ -65,6 +67,8 @@ export function normalizeClaudeNativeCredentials(
     accountId,
     email: asTrimmedString(record.email),
     organizationId: asTrimmedString(record.organizationId),
+    planId: asTrimmedString(record.planId),
+    planDisplayName: asTrimmedString(record.planDisplayName),
     riskAcceptance,
     lastRefreshAt: finiteNumber(record.lastRefreshAt),
     lastRefreshFailureAt: finiteNumber(record.lastRefreshFailureAt),

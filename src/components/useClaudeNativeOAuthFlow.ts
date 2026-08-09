@@ -95,6 +95,8 @@ export function useClaudeNativeOAuthFlow(options: {
           accountId: tokens.accountId,
           email: tokens.email,
           organizationId: tokens.organizationId,
+          planId: tokens.planId,
+          planDisplayName: tokens.planDisplayName,
           riskAcceptance: {
             version: CLAUDE_RISK_NOTICE_VERSION,
             acceptedAt: options.acceptedAt,

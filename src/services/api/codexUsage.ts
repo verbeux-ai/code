@@ -398,8 +398,12 @@ export function getCodexUsageUrl(baseUrl = DEFAULT_CODEX_BASE_URL): string {
   return new URL('/backend-api/wham/usage', baseUrl).toString()
 }
 
-export async function fetchCodexUsage(): Promise<CodexUsageData> {
-  const refreshResult = await refreshCodexAccessTokenIfNeeded().catch(
+export async function fetchCodexUsage(options?: {
+  localAccountId?: string
+}): Promise<CodexUsageData> {
+  const refreshResult = await refreshCodexAccessTokenIfNeeded({
+    localAccountId: options?.localAccountId,
+  }).catch(
     async error => {
       logForDebugging(
         `[codex] access token refresh failed before usage fetch: ${error instanceof Error ? error.message : String(error)}`,
@@ -407,7 +411,7 @@ export async function fetchCodexUsage(): Promise<CodexUsageData> {
       )
       return {
         refreshed: false,
-        credentials: await readCodexCredentialsAsync(),
+        credentials: await readCodexCredentialsAsync(options?.localAccountId),
       }
     },
   )
@@ -426,6 +430,7 @@ export async function fetchCodexUsage(): Promise<CodexUsageData> {
 
   const credentials = resolveRuntimeCodexCredentials({
     storedCredentials: refreshResult.credentials,
+    localAccountId: options?.localAccountId,
   })
   if (!credentials.apiKey) {
     // VERBOO-BRAND: /provider command unregistered; route users to admin

@@ -20,6 +20,14 @@ export type ClaudeNativeUsageRow = {
 
 type RecordLike = Record<string, unknown>
 
+export type ClaudeNativeScopedUsage = {
+  id: string
+  modelScope: string
+  utilization: number
+  windowMinutes?: number
+  resetsAt?: string
+}
+
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === 'object' && value !== null
 }
@@ -34,6 +42,38 @@ function asBoolean(value: unknown): boolean | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function normalizeScopedUsage(value: unknown): ClaudeNativeScopedUsage[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    if (!isRecord(item)) return []
+    const id = asString(item.id) ?? asString(item.limit_id) ?? asString(item.limitId)
+    const modelScope =
+      asString(item.model_scope) ??
+      asString(item.modelScope) ??
+      asString(item.scope)
+    const utilization =
+      asNumber(item.utilization) ??
+      asNumber(item.used_percentage) ??
+      asNumber(item.usedPercent)
+    if (!id || !modelScope || utilization === undefined) return []
+    const windowMinutes =
+      asNumber(item.window_minutes) ??
+      asNumber(item.windowMinutes) ??
+      (() => {
+        const seconds =
+          asNumber(item.window_seconds) ?? asNumber(item.windowSeconds)
+        return seconds === undefined ? undefined : Math.round(seconds / 60)
+      })()
+    return [{
+      id,
+      modelScope,
+      utilization,
+      windowMinutes,
+      resetsAt: asString(item.resets_at) ?? asString(item.resetsAt),
+    }]
+  })
 }
 
 function field(
@@ -76,7 +116,7 @@ function normalizeExtraUsage(value: unknown): ExtraUsage | null | undefined {
 
 export function normalizeClaudeNativeUsagePayload(payload: unknown): Utilization {
   if (!isRecord(payload)) return {}
-  return {
+  const usage: Utilization = {
     five_hour: normalizeRateLimit(field(payload, 'five_hour', 'fiveHour')),
     seven_day: normalizeRateLimit(field(payload, 'seven_day', 'sevenDay')),
     seven_day_oauth_apps: normalizeRateLimit(
@@ -90,6 +130,14 @@ export function normalizeClaudeNativeUsagePayload(payload: unknown): Utilization
     ),
     extra_usage: normalizeExtraUsage(field(payload, 'extra_usage', 'extraUsage')),
   }
+  const scoped = normalizeScopedUsage(
+    field(payload, 'limits', 'limits') ??
+      field(payload, 'scoped_limits', 'scopedLimits'),
+  )
+  if (scoped.length) {
+    usage.scoped_limits = scoped
+  }
+  return usage
 }
 
 export function buildClaudeNativeUsageRows(
@@ -162,8 +210,12 @@ function usageError(status: number, body: string): Error {
   )
 }
 
-export async function fetchClaudeNativeUsage(): Promise<Utilization> {
-  const refreshResult = await refreshClaudeNativeAccessTokenIfNeeded().catch(
+export async function fetchClaudeNativeUsage(options?: {
+  localAccountId?: string
+}): Promise<Utilization> {
+  const refreshResult = await refreshClaudeNativeAccessTokenIfNeeded({
+    localAccountId: options?.localAccountId,
+  }).catch(
     async error => {
       logForDebugging(
         `[claude] access token refresh failed before usage fetch: ${error instanceof Error ? error.message : String(error)}`,
@@ -171,21 +223,26 @@ export async function fetchClaudeNativeUsage(): Promise<Utilization> {
       )
       return {
         refreshed: false,
-        credentials: await readClaudeNativeCredentialsAsync(),
+        credentials: await readClaudeNativeCredentialsAsync(options?.localAccountId),
       }
     },
   )
   let credentials =
-    refreshResult.credentials ?? (await readClaudeNativeCredentialsAsync())
+    refreshResult.credentials ??
+    (await readClaudeNativeCredentialsAsync(options?.localAccountId))
   if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
     throw new Error('Claude auth is required. Execute /claude login.')
   }
 
   let response = await requestClaudeNativeUsage(credentials)
   if (response.status === 401) {
-    const retried = await refreshClaudeNativeAccessTokenIfNeeded({ force: true })
+    const retried = await refreshClaudeNativeAccessTokenIfNeeded({
+      force: true,
+      localAccountId: options?.localAccountId,
+    })
     credentials =
-      retried.credentials ?? (await readClaudeNativeCredentialsAsync())
+      retried.credentials ??
+      (await readClaudeNativeCredentialsAsync(options?.localAccountId))
     if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
       throw usageError(response.status, response.body)
     }

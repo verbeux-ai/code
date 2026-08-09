@@ -372,8 +372,14 @@ export function upsertProviderAccount(
     displayLabel: existing?.displayLabel ?? nextDisplayLabel(provider, collection),
     credential: normalized,
     connectionState: 'connected',
-    planId: existing?.planId,
-    planDisplayName: existing?.planDisplayName,
+    planId:
+      (provider === 'claude' && 'planId' in normalized
+        ? normalized.planId
+        : undefined) ?? existing?.planId,
+    planDisplayName:
+      (provider === 'claude' && 'planDisplayName' in normalized
+        ? normalized.planDisplayName
+        : undefined) ?? existing?.planDisplayName,
     lastValidatedAt: existing?.lastValidatedAt,
   }
   collection.accounts[localAccountId] = account as never

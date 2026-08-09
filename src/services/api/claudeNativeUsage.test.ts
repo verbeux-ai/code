@@ -69,4 +69,29 @@ describe('Claude native usage helpers', () => {
       'anthropic-beta': 'oauth-2025-04-20',
     })
   })
+
+  test('retains only explicitly reported model-scoped weekly limits', () => {
+    const usage = normalizeClaudeNativeUsagePayload({
+      limits: [
+        {
+          id: 'fable',
+          model_scope: 'fable',
+          window_seconds: 604_800,
+          utilization: 25,
+          resets_at: '2026-08-16T20:00:00.000Z',
+        },
+        { id: 'malformed', model_scope: 'spark', utilization: 'unknown' },
+      ],
+    })
+
+    expect(usage.scoped_limits).toEqual([
+      {
+        id: 'fable',
+        modelScope: 'fable',
+        utilization: 25,
+        windowMinutes: 10_080,
+        resetsAt: '2026-08-16T20:00:00.000Z',
+      },
+    ])
+  })
 })

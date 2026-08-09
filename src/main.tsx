@@ -4256,6 +4256,16 @@ async function run(): Promise<CommanderCommand> {
       if (options.account) argv.push('--account', options.account)
       return runProviderAccounts(argv)
     })
+  providerAccounts
+    .command('models')
+    .description('List models available to one connected provider account')
+    .requiredOption('--provider <provider>', 'Provider: codex or claude')
+    .option('--account <opaque-id>', 'Opaque local account ID')
+    .action(async (options: { provider?: string; account?: string }) => {
+      const argv = ['models', '--provider', options.provider ?? '']
+      if (options.account) argv.push('--account', options.account)
+      return runProviderAccounts(argv)
+    })
   for (const command of ['set-default', 'remove'] as const) {
     providerAccounts
       .command(command)

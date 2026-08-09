@@ -204,3 +204,40 @@ test('usage resolves the requested opaque account and returns protocol v1 data',
     data: { provider: 'codex', accountId: 'local-a', schemaVersion: 1 },
   })
 })
+
+test('models resolves the requested account without exposing provider credentials', async () => {
+  const state = accountState()
+  let modelsAccountId = ''
+  mock.module('../../utils/providerAccounts/store.js', () => ({
+    readProviderAccounts: () => state,
+    resolveProviderAccount: (provider: string, accountId: string) =>
+      provider === 'codex' && accountId === 'local-a' ? state.codex.accounts['local-a'] : undefined,
+    listProviderAccountSummaries: () => [],
+    resolveProviderAccountByLocalId: () => undefined,
+    normalizeProviderAccounts: () => undefined,
+    removeProviderAccount: () => {},
+    setDefaultProviderAccount: () => {},
+    upsertProviderAccount: () => ({ localAccountId: 'local-a', created: false }),
+  }))
+  mock.module('../../services/api/codexModels.js', () => ({
+    fetchCodexModels: async (options?: { localAccountId?: string }) => {
+      modelsAccountId = options?.localAccountId ?? ''
+      return [{ id: 'gpt-5.6', displayName: 'GPT-5.6', contextWindow: 272_000 }]
+    },
+  }))
+
+  // @ts-expect-error cache-busting query string for Bun module mocks
+  const { runProviderAccountsCommand } = await import('./providerAccounts.js?models')
+  const output = await runProviderAccountsCommand(
+    ['models', '--provider', 'codex', '--account', 'local-a'],
+    { ensureAuthenticated: async () => {} },
+  )
+
+  expect(modelsAccountId).toBe('local-a')
+  expect(output).toEqual({
+    schemaVersion: 1,
+    ok: true,
+    data: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', contextWindow: 272_000, provider: 'codex', raw: {} }],
+  })
+  expect(JSON.stringify(output)).not.toContain('token-secret')
+})

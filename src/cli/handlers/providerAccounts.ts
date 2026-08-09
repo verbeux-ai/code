@@ -114,6 +114,42 @@ export async function runProviderAccountsCommand(
       return success(await fetchProviderUsage(provider, accountId))
     }
 
+    if (command === 'models') {
+      const provider = providerValue(optionValue(argv, '--provider'))
+      if (!provider) {
+        return failure(
+          'provider_argument_required',
+          'Informe --provider codex ou --provider claude.',
+        )
+      }
+      const accountId = accountValue(argv, provider)
+      if (!accountId || !resolveProviderAccount(provider, accountId)) {
+        return failure('provider_account_not_found', 'Conta não encontrada.')
+      }
+      if (provider === 'codex') {
+        const { fetchCodexModels } = await import('../../services/api/codexModels.js')
+        const models = await fetchCodexModels({ force: true, localAccountId: accountId })
+        return success(models.map(model => ({
+          id: model.id,
+          displayName: model.displayName,
+          contextWindow: model.contextWindow,
+          provider,
+          raw: {},
+        })))
+      }
+      const { fetchClaudeNativeModels } = await import('../../services/api/claudeNativeModels.js')
+      const models = await fetchClaudeNativeModels({ force: true, localAccountId: accountId })
+      return success(models.map(model => ({
+        id: model.id,
+        displayName: model.displayName,
+        contextWindow: model.contextWindow,
+        maxOutputTokens: model.maxOutputTokens,
+        supportsVision: model.vision,
+        provider,
+        raw: {},
+      })))
+    }
+
     if (command === 'set-default' || command === 'remove') {
       const provider = providerValue(optionValue(argv, '--provider'))
       const accountId = optionValue(argv, '--account')

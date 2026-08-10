@@ -42,7 +42,7 @@ describe('migrateProviderAccounts', () => {
     expect(result.data.providerAccounts?.codex.accounts['local-1']).toBeDefined()
   })
 
-  test('rejects malformed v1 state instead of creating a new account', () => {
+  test('fails closed for malformed v1 state instead of creating a new account', () => {
     const malformed = {
       providerAccounts: {
         schemaVersion: 9,
@@ -57,8 +57,8 @@ describe('migrateProviderAccounts', () => {
       () => 'new-id',
     )
 
-    expect(result.mode).toBe('v1')
-    expect(result.data.providerAccounts?.codex.accounts['new-id']).toBeDefined()
+    expect(result.mode).toBe('invalid')
+    expect(result.data as unknown).toEqual(malformed)
   })
 
   test('rejects Claude records whose risk acceptance belongs to another identity', () => {
@@ -95,7 +95,7 @@ describe('migrateProviderAccounts', () => {
       () => 'new-id',
     )
 
-    expect(result.mode).toBe('legacy')
-    expect(result.data.providerAccounts).toEqual(malformed.providerAccounts)
+    expect(result.mode).toBe('invalid')
+    expect(result.data.providerAccounts as unknown).toEqual(malformed.providerAccounts)
   })
 })

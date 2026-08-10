@@ -1,7 +1,9 @@
 import {
   getSecureStorage,
+  type SecureStorageReadResult,
   type SecureStorageData,
 } from '../secureStorage/index.js'
+import { withSecureStorageMutationLock } from '../secureStorageMutationLock.js'
 import {
   normalizeClaudeNativeCredentials,
   normalizeCodexCredentialBlob,
@@ -183,9 +185,15 @@ function addMigratedClaude(
 export function migrateProviderAccounts(
   data: SecureStorageData,
   makeId: () => LocalProviderAccountId = () => crypto.randomUUID(),
-): { data: SecureStorageData; mode: 'v1' | 'legacy' } {
+): { data: SecureStorageData; mode: 'v1' | 'legacy' | 'invalid' } {
   const existing = normalizeProviderAccounts(data.providerAccounts)
   if (existing) return { data: { ...data, providerAccounts: existing }, mode: 'v1' }
+
+  // A present but invalid field belongs to a newer or corrupted writer. Do
+  // not reinterpret it as a legacy install and overwrite all accounts.
+  if (Object.prototype.hasOwnProperty.call(data, 'providerAccounts')) {
+    return { data, mode: 'invalid' }
+  }
 
   const next = emptyProviderAccounts()
   const codex = normalizeCodexCredentialBlob(data.codex)
@@ -208,15 +216,31 @@ function storage() {
 }
 
 export function readSecureData(): SecureStorageData {
+  const current = storage()
+  const classified: SecureStorageReadResult | undefined = current.readResult?.()
+  if (classified) {
+    if (classified.kind === 'ok') return classified.data
+    if (classified.kind === 'missing') return {}
+    throw new Error('provider_storage_read_failed')
+  }
   try {
-    return storage().read() ?? {}
+    const legacy = current.read()
+    if (legacy === null) throw new Error('provider_storage_read_failed')
+    return legacy
   } catch {
-    return {}
+    throw new Error('provider_storage_read_failed')
   }
 }
 
+export function withProviderAccountsLock<T>(work: () => T): T {
+  return withSecureStorageMutationLock(work)
+}
+
 function commitSecureData(data: SecureStorageData): void {
-  const result = storage().update(data)
+  const result = storage().update(data, {
+    preserveProviderAccounts: false,
+    lockHeld: true,
+  })
   if (!result.success) {
     throw new Error(result.warning ?? 'secure_storage_write_failed')
   }
@@ -228,6 +252,9 @@ function prepareMutableState(): {
 } {
   const data = readSecureData()
   const migration = migrateProviderAccounts(data)
+  if (migration.mode === 'invalid') {
+    throw new Error('provider_storage_schema_unsupported')
+  }
   const accounts = normalizeProviderAccounts(migration.data.providerAccounts)
     ?? emptyProviderAccounts()
   return {
@@ -282,22 +309,24 @@ function mirrorDefaultCredential(
 }
 
 export function readProviderAccounts(): ProviderAccountsV1 {
-  let data: SecureStorageData | null = null
-  try {
-    data = storage().read()
-  } catch {
-    return emptyProviderAccounts()
-  }
+  return withProviderAccountsLock(() => readProviderAccountsUnlocked())
+}
 
-  const migration = migrateProviderAccounts(data ?? {})
+function readProviderAccountsUnlocked(): ProviderAccountsV1 {
+  const data = readSecureData()
+
+  const migration = migrateProviderAccounts(data)
+  if (migration.mode === 'invalid') {
+    throw new Error('provider_storage_schema_unsupported')
+  }
   const normalized = normalizeProviderAccounts(migration.data.providerAccounts)
   if (!normalized) return emptyProviderAccounts()
 
   if (!data?.providerAccounts && migration.mode === 'v1') {
     try {
-      storage().update(migration.data)
+      commitSecureData(migration.data)
     } catch {
-      // The scalar record remains authoritative until the next successful write.
+      throw new Error('provider_storage_migration_failed')
     }
   }
 
@@ -305,29 +334,20 @@ export function readProviderAccounts(): ProviderAccountsV1 {
 }
 
 export async function readProviderAccountsAsync(): Promise<ProviderAccountsV1> {
-  let data: SecureStorageData | null = null
-  try {
-    data = await storage().readAsync()
-  } catch {
-    return emptyProviderAccounts()
-  }
-
-  const migration = migrateProviderAccounts(data ?? {})
-  const normalized = normalizeProviderAccounts(migration.data.providerAccounts)
-  if (!normalized) return emptyProviderAccounts()
-
-  if (!data?.providerAccounts && migration.mode === 'v1') {
-    try {
-      storage().update(migration.data)
-    } catch {
-      // Keep the in-memory migrated view; the scalar mirror is still intact.
-    }
-  }
-
-  return normalized
+  // Keep one read/migration path so async callers get the same lock and
+  // fail-closed behavior as synchronous CLI commands.
+  return readProviderAccounts()
 }
 
 export function upsertProviderAccount(
+  provider: ProviderId,
+  credential: CodexCredentialBlob | ClaudeNativeCredentialBlob,
+  options?: { reconnectLocalAccountId?: LocalProviderAccountId },
+): { localAccountId: LocalProviderAccountId; created: boolean } {
+  return withProviderAccountsLock(() => upsertProviderAccountUnlocked(provider, credential, options))
+}
+
+function upsertProviderAccountUnlocked(
   provider: ProviderId,
   credential: CodexCredentialBlob | ClaudeNativeCredentialBlob,
   options?: { reconnectLocalAccountId?: LocalProviderAccountId },
@@ -415,6 +435,13 @@ export function setDefaultProviderAccount(
   provider: ProviderId,
   localAccountId: LocalProviderAccountId,
 ): void {
+  withProviderAccountsLock(() => setDefaultProviderAccountUnlocked(provider, localAccountId))
+}
+
+function setDefaultProviderAccountUnlocked(
+  provider: ProviderId,
+  localAccountId: LocalProviderAccountId,
+): void {
   const { data, accounts } = prepareMutableState()
   const collection = {
     ...accounts[provider],
@@ -437,6 +464,13 @@ export function setDefaultProviderAccount(
 }
 
 export function removeProviderAccount(
+  provider: ProviderId,
+  localAccountId: LocalProviderAccountId,
+): void {
+  withProviderAccountsLock(() => removeProviderAccountUnlocked(provider, localAccountId))
+}
+
+function removeProviderAccountUnlocked(
   provider: ProviderId,
   localAccountId: LocalProviderAccountId,
 ): void {

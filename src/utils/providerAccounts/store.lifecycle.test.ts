@@ -44,23 +44,63 @@ function seededData(): SecureStorageData {
 async function loadStore(
   suffix: string,
   initial: SecureStorageData,
-): Promise<{ store: typeof import('./store.js'); readState: () => SecureStorageData }> {
+  options: {
+    readError?: Error
+    readResult?: { kind: 'ok'; data: SecureStorageData } | { kind: 'missing' } | { kind: 'error'; warning?: string }
+    updateResult?: { success: boolean; warning?: string }
+  } = {},
+): Promise<{
+  store: typeof import('./store.js')
+  readState: () => SecureStorageData
+  updateCalls: () => number
+  lockCalls: () => number
+}> {
   let state = initial
+  let updateCalls = 0
+  let lockCalls = 0
   mock.module('../secureStorage/index.js', () => ({
     getSecureStorage: () => ({
       name: 'test-secure-storage',
-      read: () => state,
+      read: () => {
+        if (options.readError) throw options.readError
+        return state
+      },
       readAsync: async () => state,
+      readResult: () => {
+        if (options.readError) return { kind: 'error', warning: options.readError.message }
+        return options.readResult ?? { kind: 'ok', data: state }
+      },
       update: (next: SecureStorageData) => {
+        updateCalls += 1
+        if (options.updateResult && !options.updateResult.success) {
+          return options.updateResult
+        }
         state = next
         return { success: true }
       },
       delete: () => true,
     }),
   }))
+  mock.module('../lockfile.js', () => ({
+    lockSync: () => {
+      lockCalls += 1
+      return () => undefined
+    },
+  }))
+  mock.module('../envUtils.js', () => ({
+    getClaudeConfigHomeDir: () => '/tmp/verboo-provider-account-store-test',
+  }))
+  mock.module('../fsOperations.js', () => ({
+    getFsImplementation: () => ({ mkdirSync: () => undefined }),
+  }))
 
   const store = await import(`./store.js?${suffix}`)
-  return { store, readState: () => state }
+  return {
+    store,
+    readState: () => state,
+    updateCalls: () => updateCalls,
+    lockCalls: () => lockCalls,
+  }
 }
 
 afterEach(() => {
@@ -143,5 +183,52 @@ describe('provider account lifecycle', () => {
     expect(readState().providerAccounts!.claude.defaultAccountId).toBe(
       result.localAccountId,
     )
+  })
+
+  test('serializes provider account mutations across CLI processes', async () => {
+    const { store, lockCalls } = await loadStore('cross-process-lock', seededData())
+
+    store.upsertProviderAccount('codex', {
+      accessToken: 'new-token',
+      accountId: 'provider-1',
+    })
+
+    expect(lockCalls()).toBeGreaterThan(0)
+  })
+
+  test('fails closed when the secure store cannot be read', async () => {
+    const { store, updateCalls } = await loadStore('read-failure', seededData(), {
+      readError: new Error('keychain unavailable'),
+    })
+
+    expect(() =>
+      store.upsertProviderAccount('codex', {
+        accessToken: 'should-not-write',
+        accountId: 'provider-1',
+      }),
+    ).toThrow('provider_storage_read_failed')
+    expect(updateCalls()).toBe(0)
+  })
+
+  test('uses a fresh classified secure-store read instead of treating null as empty', async () => {
+    const { store, updateCalls } = await loadStore('classified-read-failure', seededData(), {
+      readResult: { kind: 'error', warning: 'keychain locked' },
+    })
+
+    expect(() => store.readProviderAccounts()).toThrow('provider_storage_read_failed')
+    expect(updateCalls()).toBe(0)
+  })
+
+  test('does not expose a migrated account when migration persistence fails', async () => {
+    const legacyOnly = seededData()
+    delete legacyOnly.providerAccounts
+    const { store, updateCalls } = await loadStore('migration-failure', legacyOnly, {
+      updateResult: { success: false, warning: 'keychain denied write' },
+    })
+
+    expect(() => store.readProviderAccounts()).toThrow(
+      'provider_storage_migration_failed',
+    )
+    expect(updateCalls()).toBe(1)
   })
 })

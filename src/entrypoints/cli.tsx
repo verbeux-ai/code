@@ -421,12 +421,17 @@ async function main(): Promise<void> {
   // - auth <qualquer>: login, logout, status precisam funcionar offline.
   // - logout: alias top-level para `auth logout`.
   // - update: atualização do binário não precisa de sessão.
+  // - provider-accounts: protocolo versionado do desktop. capabilities é
+  //   intencionalmente auth-free; os demais subcomandos devolvem envelope
+  //   JSON verboo_auth_required (handler responsável pelo gate, não o
+  //   processo) para o smoke headless não abortar com exit(1).
   const skipsAuth =
     args.includes('--help') ||
     args.includes('-h') ||
     args[0] === 'auth' ||
     args[0] === 'logout' ||
-    args[0] === 'update';
+    args[0] === 'update' ||
+    args[0] === 'provider-accounts';
   if (isVerbooMode() && !skipsAuth) {
     const { ensureVerbooAuthenticated } = await import(
       '../services/oauth/verbooStartupAuth.js'

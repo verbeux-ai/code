@@ -28,6 +28,7 @@ beforeAll(() => {
   }))
   mock.module('./lockfile.js', () => ({
     lock: async () => async () => {},
+    lockSync: () => () => {},
   }))
   mock.module('../services/oauth/getOauthProfile.js', () => ({
     getOauthProfileFromOauthToken: async () => null,

@@ -4236,6 +4236,11 @@ async function run(): Promise<CommanderCommand> {
     )
     const output = await runProviderAccountsCommand(argv)
     process.stdout.write(`${JSON.stringify(output)}\n`)
+    // process.exit (not return) — startup telemetry/analytics sockets can
+    // leave event loop handles alive after the envelope is flushed. Headless
+    // protocol commands must terminate deterministically for release smokes.
+    // eslint-disable-next-line custom-rules/no-process-exit
+    process.exit(0)
   }
   providerAccounts.action(async () => runProviderAccounts(['capabilities']))
   providerAccounts

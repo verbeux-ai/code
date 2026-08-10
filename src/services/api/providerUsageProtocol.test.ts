@@ -34,38 +34,129 @@ test('Codex Plus keeps only its provider-reported base weekly window', () => {
   ])
 })
 
-test('Claude Pro has no Fable row while Max retains a reported scoped row', () => {
-  const pro = normalizeClaudeProviderUsage(
-    'local-pro',
+test('Claude native limits schema (percent + scope.model.display_name) surfaces a Fable weekly window', () => {
+  // Fixture capturada do payload real de /api/oauth/usage: o array `limits`
+  // usa `percent` (não utilization), `scope.model.display_name` (não
+  // model_scope) e não carrega `id` nem `window_seconds`.
+  const snapshot = normalizeClaudeProviderUsage(
+    'local-claude',
     { id: 'pro', displayName: 'Pro' },
     {
-      five_hour: { utilization: 15 },
-      seven_day: { utilization: 20 },
-    },
-  )
-  const max = normalizeClaudeProviderUsage(
-    'local-max',
-    { id: 'max', displayName: 'Max' },
-    {
-      five_hour: { utilization: 10 },
-      seven_day: { utilization: 30 },
+      five_hour: {
+        utilization: 8,
+        resets_at: '2026-08-10T16:00:00.500089+00:00',
+      },
+      seven_day: {
+        utilization: 5,
+        resets_at: '2026-08-16T21:00:00.500115+00:00',
+      },
       limits: [
         {
-          id: 'fable',
-          model_scope: 'fable',
-          window_seconds: 604_800,
-          utilization: 25,
+          kind: 'session',
+          group: 'session',
+          percent: 8,
+          severity: 'normal',
+          resets_at: '2026-08-10T16:00:00.500089+00:00',
+          scope: null,
+          is_active: false,
+        },
+        {
+          kind: 'weekly_all',
+          group: 'weekly',
+          percent: 5,
+          severity: 'normal',
+          resets_at: '2026-08-16T21:00:00.500115+00:00',
+          scope: null,
+          is_active: false,
+        },
+        {
+          kind: 'weekly_scoped',
+          group: 'weekly',
+          percent: 9,
+          severity: 'normal',
+          resets_at: '2026-08-16T21:00:00.500504+00:00',
+          scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+          is_active: true,
         },
       ],
     },
   )
 
-  expect(pro.windows.map(window => window.kind)).toEqual(['session', 'weekly'])
-  expect(max.windows.at(-1)).toMatchObject({
+  expect(snapshot.windows.map(window => window.kind)).toEqual([
+    'session',
+    'weekly',
+    'model-scoped-weekly',
+  ])
+  expect(snapshot.windows.at(-1)).toMatchObject({
+    id: 'claude:weekly-fable',
     kind: 'model-scoped-weekly',
+    displayLabel: 'Fable Weekly',
     modelScope: 'fable',
-    usedPercent: 25,
+    usedPercent: 9,
+    resetsAt: '2026-08-16T21:00:00.500504+00:00',
   })
+})
+
+test('scoped Fable window sanitizes internal model ids from the scope object', () => {
+  const snapshot = normalizeClaudeProviderUsage(
+    'local-claude',
+    { id: 'pro', displayName: 'Pro' },
+    {
+      five_hour: null,
+      seven_day: null,
+      limits: [
+        {
+          kind: 'weekly_scoped',
+          group: 'weekly',
+          percent: 12,
+          severity: 'normal',
+          resets_at: '2026-08-16T21:00:00.500504+00:00',
+          scope: {
+            model: { id: 'internal-model-mdrv-0123', display_name: 'Fable' },
+            surface: 'chat',
+          },
+          is_active: true,
+        },
+      ],
+    },
+  )
+
+  const json = JSON.stringify(snapshot)
+  expect(json).not.toContain('internal-model-mdrv-0123')
+  expect(json).not.toContain('surface')
+  expect(snapshot.windows.at(-1)).toMatchObject({
+    displayLabel: 'Fable Weekly',
+    modelScope: 'fable',
+    usedPercent: 12,
+  })
+})
+
+test('Claude Pro payload without scoped limits fabricates no Fable row', () => {
+  // Payload sem limits[]/scoped_limits: o protocolo NÃO pode inventar uma
+  // janela model-scoped-weekly — exatamente [session, weekly].
+  const snapshot = normalizeClaudeProviderUsage(
+    'local-pro',
+    { id: 'pro', displayName: 'Pro' },
+    {
+      five_hour: { utilization: 8 },
+      seven_day: { utilization: 20 },
+    },
+  )
+
+  expect(snapshot.windows).toEqual([
+    {
+      id: 'claude:five-hour',
+      kind: 'session',
+      displayLabel: '5 hours',
+      usedPercent: 8,
+    },
+    {
+      id: 'claude:weekly',
+      kind: 'weekly',
+      displayLabel: 'Weekly',
+      usedPercent: 20,
+    },
+  ])
 })
 
 test('normalization drops malformed or missing-reset windows without inventing values', () => {

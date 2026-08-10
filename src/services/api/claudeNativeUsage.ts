@@ -44,20 +44,40 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+function slugifyScope(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 function normalizeScopedUsage(value: unknown): ClaudeNativeScopedUsage[] {
   if (!Array.isArray(value)) return []
   return value.flatMap(item => {
     if (!isRecord(item)) return []
-    const id = asString(item.id) ?? asString(item.limit_id) ?? asString(item.limitId)
+    // Schema real de /api/oauth/usage (limits[]): `percent`,
+    // `scope.model.display_name` e `kind`; sem `id` nem `window_seconds`.
+    // Schema legado (scoped_limits[]): `id`/`model_scope`/`utilization`.
+    // Só o display_name do scope é lido — ids internos do modelo nunca vazam.
+    const scopeRecord = isRecord(item.scope) ? item.scope : undefined
+    const modelRecord =
+      scopeRecord && isRecord(scopeRecord.model) ? scopeRecord.model : undefined
+    const displayName =
+      asString(modelRecord?.display_name) ?? asString(modelRecord?.displayName)
     const modelScope =
       asString(item.model_scope) ??
       asString(item.modelScope) ??
-      asString(item.scope)
+      asString(item.scope) ??
+      displayName
+    const legacyId =
+      asString(item.id) ?? asString(item.limit_id) ?? asString(item.limitId)
     const utilization =
+      asNumber(item.percent) ??
       asNumber(item.utilization) ??
       asNumber(item.used_percentage) ??
       asNumber(item.usedPercent)
-    if (!id || !modelScope || utilization === undefined) return []
+    const resolvedScope = modelScope ? slugifyScope(modelScope) : undefined
+    if (!resolvedScope || utilization === undefined) return []
     const windowMinutes =
       asNumber(item.window_minutes) ??
       asNumber(item.windowMinutes) ??
@@ -65,10 +85,14 @@ function normalizeScopedUsage(value: unknown): ClaudeNativeScopedUsage[] {
         const seconds =
           asNumber(item.window_seconds) ?? asNumber(item.windowSeconds)
         return seconds === undefined ? undefined : Math.round(seconds / 60)
-      })()
+      })() ??
+      // O raw limits[] não carrega a janela; weekly_scoped é sempre semanal.
+      (item.kind === 'weekly_scoped' ? 10_080 : undefined)
     return [{
-      id,
-      modelScope,
+      // id estável derivado do display_name quando o raw não o fornece
+      // (ex.: claude:weekly-fable no protocolo).
+      id: legacyId ?? `weekly-${resolvedScope}`,
+      modelScope: resolvedScope,
       utilization,
       windowMinutes,
       resetsAt: asString(item.resets_at) ?? asString(item.resetsAt),

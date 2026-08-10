@@ -1,4 +1,4 @@
-import type { SecureStorage, SecureStorageData } from './index.js'
+import type { SecureStorage, SecureStorageData, SecureStorageReadResult } from './index.js'
 
 /**
  * Creates a fallback storage that tries to use the primary storage first,
@@ -17,12 +17,43 @@ export function createFallbackStorage(
       }
       return secondary.read() || {}
     },
+    readResult(): SecureStorageReadResult {
+      const result = primary.readResult?.()
+      if (result?.kind === 'ok') return result
+      const fallback = secondary.readResult?.()
+      if (result?.kind === 'error') {
+        // A secondary plaintext record is an intentional migration fallback,
+        // but an empty secondary store must not turn an unavailable native
+        // vault into a false "missing" result.
+        if (fallback?.kind === 'ok') return fallback
+        return { kind: 'error', warning: result.warning ?? fallback?.warning }
+      }
+      if (fallback) return fallback
+      const legacy = secondary.read()
+      return legacy ? { kind: 'ok', data: legacy } : { kind: 'missing' }
+    },
     async readAsync(): Promise<SecureStorageData | null> {
       const result = await primary.readAsync()
       if (result !== null && result !== undefined) {
         return result
       }
       return (await secondary.readAsync()) || {}
+    },
+    async readResultAsync(): Promise<SecureStorageReadResult> {
+      const result = primary.readResultAsync
+        ? await primary.readResultAsync()
+        : primary.read() ? { kind: 'ok' as const, data: primary.read()! } : { kind: 'missing' as const }
+      if (result.kind === 'ok') return result
+      if (secondary.readResultAsync) {
+        const fallback = await secondary.readResultAsync()
+        if (result.kind === 'error' && fallback.kind !== 'ok') {
+          return { kind: 'error', warning: result.warning ?? fallback.warning }
+        }
+        return fallback
+      }
+      const fallback = await secondary.readAsync()
+      if (fallback) return { kind: 'ok', data: fallback }
+      return result.kind === 'error' ? result : { kind: 'missing' }
     },
     update(data: SecureStorageData): { success: boolean; warning?: string } {
       // Capture state before update

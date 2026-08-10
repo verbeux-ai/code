@@ -2,14 +2,18 @@
 import { expect, test, mock, describe, beforeEach, afterEach } from "bun:test";
 import { linuxSecretStorage } from "./linuxSecretStorage.js";
 import { windowsCredentialStorage } from "./windowsCredentialStorage.js";
-import { getSecureStorageServiceName, CREDENTIALS_SERVICE_SUFFIX } from "./macOsKeychainHelpers.js";
+import { macOsKeychainStorage } from "./macOsKeychainStorage.js";
+import { getSecureStorageServiceName, CREDENTIALS_SERVICE_SUFFIX, keychainCacheState } from "./macOsKeychainHelpers.js";
 import {
   acquireSharedMutationLock,
   releaseSharedMutationLock,
 } from "../../test/sharedMutationLock.js";
 
-// Mock execaSync
-const mockExecaSync = mock(() => ({ exitCode: 0, stdout: "" }));
+// Mock execaSync. Keep the call tuple explicit so command assertions stay
+// type-safe without weakening production code.
+type MockExecaCall = [string, string[], { input?: string; reject?: boolean }]
+const mockExecaSync = mock((..._args: unknown[]): { exitCode: number; stdout: string; stderr?: string } => ({ exitCode: 0, stdout: "" }));
+const execaCalls = (): MockExecaCall[] => mockExecaSync.mock.calls as unknown as MockExecaCall[]
 mock.module("execa", () => ({
   execaSync: mockExecaSync,
 }));
@@ -62,8 +66,26 @@ describe("Secure Storage Platform Implementations", () => {
 
       linuxSecretStorage.update(testData);
 
-      const args = mockExecaSync.mock.calls[0];
+      const args = execaCalls()[0];
       expect(args[1]).toContain(expectedName);
+    });
+
+    test("Linux classified reads distinguish a missing item", () => {
+      mockExecaSync.mockReturnValue({ exitCode: 1, stdout: "", stderr: "" });
+      expect(linuxSecretStorage.readResult?.()).toEqual({ kind: "missing" });
+    });
+
+    test("Windows classified reads distinguish a missing DPAPI file", () => {
+      mockExecaSync.mockReturnValue({ exitCode: 2, stdout: "", stderr: "" });
+      expect(windowsCredentialStorage.readResult?.()).toEqual({ kind: "missing" });
+    });
+
+    test("Keychain classified reads bypass the process cache", () => {
+      keychainCacheState.cache = { data: { mcpOAuth: {} }, cachedAt: Date.now() };
+      const fresh = { mcpOAuth: { fresh: testData.mcpOAuth["test-server"] } };
+      mockExecaSync.mockReturnValue({ exitCode: 0, stdout: JSON.stringify(fresh), stderr: "" });
+
+      expect(macOsKeychainStorage.readResult?.()).toEqual({ kind: "ok", data: fresh });
     });
 
     test("Windows storage uses scoped resource name", () => {
@@ -72,8 +94,8 @@ describe("Secure Storage Platform Implementations", () => {
 
       windowsCredentialStorage.update(testData);
 
-      const script = mockExecaSync.mock.calls[0][1][1];
-      const options = mockExecaSync.mock.calls[0][2];
+      const script = execaCalls()[0][1][1];
+      const options = execaCalls()[0][2];
       expect(script).toContain(expectedName);
       expect(script).toContain("ProtectedData");
       expect(options.input).toContain("secret-token");
@@ -95,28 +117,28 @@ describe("Secure Storage Platform Implementations", () => {
 
       windowsCredentialStorage.update(dataWithDollar);
 
-      const script = mockExecaSync.mock.calls[0][1][1];
-      const options = mockExecaSync.mock.calls[0][2];
+      const script = execaCalls()[0][1][1];
+      const options = execaCalls()[0][2];
       expect(script).toContain("[Console]::In.ReadToEnd()");
       expect(options.input).toContain("token-with-$env:USERNAME");
 
       const dataWithQuote = { mcpOAuth: { "s": { accessToken: "token'quote", expiresAt: 1, serverName: "s", serverUrl: "u" } } };
       windowsCredentialStorage.update(dataWithQuote);
-      const options2 = mockExecaSync.mock.calls[1][2];
+      const options2 = execaCalls()[1][2];
       expect(options2.input).toContain("token'quote");
     });
 
     test("delete() skips legacy PasswordVault by default", () => {
       windowsCredentialStorage.delete();
       expect(mockExecaSync).toHaveBeenCalledTimes(1);
-      const script = mockExecaSync.mock.calls[0][1][1];
+      const script = execaCalls()[0][1][1];
       expect(script).not.toContain("System.Runtime.WindowsRuntime");
     });
 
     test("delete() includes legacy assembly load when explicitly enabled", () => {
       process.env.VERBOO_ENABLE_LEGACY_WINDOWS_PASSWORDVAULT = "1";
       windowsCredentialStorage.delete();
-      const script = mockExecaSync.mock.calls[1][1][1];
+      const script = execaCalls()[1][1][1];
       expect(script).toContain("Add-Type -AssemblyName System.Runtime.WindowsRuntime");
     });
 
@@ -124,7 +146,7 @@ describe("Secure Storage Platform Implementations", () => {
       process.env.VERBOO_ENABLE_LEGACY_WINDOWS_PASSWORDVAULT = "1";
       process.env.USER = 'user"name';
       windowsCredentialStorage.read();
-      const script = mockExecaSync.mock.calls[1][1][1];
+      const script = execaCalls()[1][1][1];
       expect(script).toContain('user`"name');
       expect(script).not.toContain('user"name');
     });
@@ -170,7 +192,7 @@ describe("Secure Storage Platform Implementations", () => {
     test("update passes payload via stdin", () => {
       linuxSecretStorage.update(testData);
 
-      const options = mockExecaSync.mock.calls[0][2];
+      const options = execaCalls()[0][2];
       expect(options.input).toContain("secret-token");
     });
 

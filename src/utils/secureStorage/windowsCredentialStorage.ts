@@ -7,7 +7,7 @@ import {
   getSecureStorageServiceName,
   getUsername,
 } from './macOsKeychainHelpers.js'
-import type { SecureStorage, SecureStorageData } from './index.js'
+import type { SecureStorage, SecureStorageData, SecureStorageReadResult } from './index.js'
 
 /**
  * Windows-specific secure storage implementation using DPAPI for new writes,
@@ -52,7 +52,7 @@ function getFailureWarning(
   result: ReturnType<typeof execaSync> | null,
   fallback: string,
 ): string {
-  const stderr = result?.stderr?.trim()
+  const stderr = typeof result?.stderr === 'string' ? result.stderr.trim() : ''
   if (stderr) {
     return stderr
   }
@@ -84,9 +84,10 @@ function readLegacyPasswordVault(): SecureStorageData | null {
   `
 
   const result = runPowerShell(script)
-  if (result?.exitCode === 0 && result.stdout) {
+  const stdout = typeof result?.stdout === 'string' ? result.stdout : ''
+  if (result?.exitCode === 0 && stdout) {
     try {
-      return jsonParse(result.stdout)
+      return jsonParse(stdout)
     } catch {
       return null
     }
@@ -134,15 +135,51 @@ export const windowsCredentialStorage: SecureStorage = {
     `
 
     const result = runPowerShell(script)
-    if (result?.exitCode === 0 && result.stdout) {
+    const stdout = typeof result?.stdout === 'string' ? result.stdout : ''
+    if (result?.exitCode === 0 && stdout) {
       try {
-        return jsonParse(result.stdout)
+        return jsonParse(stdout)
       } catch {
         return readLegacyPasswordVault()
       }
     }
 
     return readLegacyPasswordVault()
+  },
+  readResult(): SecureStorageReadResult {
+    const filePath = escapePowerShellSingleQuoted(getWindowsSecureStorageFilePath())
+    const entropy = escapePowerShellSingleQuoted(getWindowsSecureStorageEntropy())
+    const script = `
+      try {
+        Add-Type -AssemblyName System.Security
+        $path = '${filePath}'
+        if (!(Test-Path -LiteralPath $path)) { exit 2 }
+        $protectedBase64 = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8).Trim()
+        if (-not $protectedBase64) { exit 3 }
+        $protectedBytes = [Convert]::FromBase64String($protectedBase64)
+        $entropyBytes = [System.Text.Encoding]::UTF8.GetBytes('${entropy}')
+        $bytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+          $protectedBytes, $entropyBytes,
+          [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+        [Console]::Out.Write([System.Text.Encoding]::UTF8.GetString($bytes))
+      } catch { exit 3 }
+    `
+    const result = runPowerShell(script)
+    const stdout = typeof result?.stdout === 'string' ? result.stdout : ''
+    if (result?.exitCode === 0 && stdout) {
+      try {
+        return { kind: 'ok', data: jsonParse(stdout) }
+      } catch {
+        return { kind: 'error', warning: 'DPAPI returned malformed JSON.' }
+      }
+    }
+    if (result?.exitCode === 2) return { kind: 'missing' }
+    if (result?.exitCode === 3 && shouldUseLegacyPasswordVault()) {
+      const legacy = readLegacyPasswordVault()
+      if (legacy) return { kind: 'ok', data: legacy }
+    }
+    return { kind: 'error', warning: getFailureWarning(result, 'Windows DPAPI read failed') }
   },
   async readAsync(): Promise<SecureStorageData | null> {
     return this.read()

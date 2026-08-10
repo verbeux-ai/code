@@ -8,7 +8,7 @@ import {
   jsonStringify,
   writeFileSync_DEPRECATED,
 } from '../slowOperations.js'
-import type { SecureStorage, SecureStorageData } from './index.js'
+import type { SecureStorage, SecureStorageData, SecureStorageReadResult } from './index.js'
 
 function getStoragePath(): { storageDir: string; storagePath: string } {
   const storageDir = getClaudeConfigHomeDir()
@@ -30,6 +30,16 @@ export const plainTextStorage = {
       return null
     }
   },
+  readResult(): SecureStorageReadResult {
+    const { storagePath } = getStoragePath()
+    try {
+      const data = getFsImplementation().readFileSync(storagePath, { encoding: 'utf8' })
+      return { kind: 'ok', data: jsonParse(data) }
+    } catch (error: unknown) {
+      if (getErrnoCode(error) === 'ENOENT') return { kind: 'missing' }
+      return { kind: 'error' }
+    }
+  },
   async readAsync(): Promise<SecureStorageData | null> {
     const { storagePath } = getStoragePath()
     try {
@@ -39,6 +49,16 @@ export const plainTextStorage = {
       return jsonParse(data)
     } catch {
       return null
+    }
+  },
+  async readResultAsync(): Promise<SecureStorageReadResult> {
+    const { storagePath } = getStoragePath()
+    try {
+      const data = await getFsImplementation().readFile(storagePath, { encoding: 'utf8' })
+      return { kind: 'ok', data: jsonParse(data) }
+    } catch (error: unknown) {
+      if (getErrnoCode(error) === 'ENOENT') return { kind: 'missing' }
+      return { kind: 'error' }
     }
   },
   update(data: SecureStorageData): { success: boolean; warning?: string } {

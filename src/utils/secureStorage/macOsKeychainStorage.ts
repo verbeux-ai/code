@@ -11,7 +11,7 @@ import {
   KEYCHAIN_CACHE_TTL_MS,
   keychainCacheState,
 } from './macOsKeychainHelpers.js'
-import type { SecureStorage, SecureStorageData } from './index.js'
+import type { SecureStorage, SecureStorageData, SecureStorageReadResult } from './index.js'
 
 // `security -i` reads stdin with a 4096-byte fgets() buffer (BUFSIZ on darwin).
 // A command line longer than this is truncated mid-argument: the first 4096
@@ -63,6 +63,42 @@ export const macOsKeychainStorage = {
     }
     keychainCacheState.cache = { data: null, cachedAt: Date.now() }
     return null
+  },
+  /**
+   * Provider-account mutations use this path while holding their lock. It
+   * deliberately bypasses the 30s process cache so another Verboo process
+   * cannot be overwritten with an older snapshot.
+   */
+  readResult(): SecureStorageReadResult {
+    try {
+      const storageServiceName = getMacOsKeychainStorageServiceName(
+        CREDENTIALS_SERVICE_SUFFIX,
+      )
+      const username = getUsername()
+      const result = execaSync(
+        'security',
+        ['find-generic-password', '-a', username, '-w', '-s', storageServiceName],
+        { stdio: ['ignore', 'pipe', 'pipe'], reject: false },
+      )
+      if (result.exitCode === 0 && result.stdout) {
+        try {
+          const data = jsonParse(result.stdout.trim())
+          keychainCacheState.cache = { data, cachedAt: Date.now() }
+          return { kind: 'ok', data }
+        } catch {
+          return { kind: 'error', warning: 'Keychain returned malformed JSON.' }
+        }
+      }
+      // `security` uses 44 for a missing generic-password item. Other exit
+      // codes include a locked keychain or an unavailable security service.
+      if (result.exitCode === 44) {
+        keychainCacheState.cache = { data: null, cachedAt: Date.now() }
+        return { kind: 'missing' }
+      }
+      return { kind: 'error', warning: result.stderr?.trim() || 'Keychain read failed.' }
+    } catch {
+      return { kind: 'error', warning: 'Keychain read failed.' }
+    }
   },
   async readAsync(): Promise<SecureStorageData | null> {
     const prev = keychainCacheState.cache

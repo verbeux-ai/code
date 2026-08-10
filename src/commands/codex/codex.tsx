@@ -14,9 +14,10 @@ import { ensureVerbooAuthenticated } from '../../services/oauth/verbooStartupAut
 import type { LocalJSXCommandCall, LocalJSXCommandOnDone } from '../../types/command.js'
 import {
   clearCodexCredentials,
-  readCodexCredentialsAsync,
 } from '../../utils/codexCredentials.js'
 import { parseProviderLoginArgs } from '../../utils/providerAccounts/loginArgs.js'
+import { listProviderAccountSummaries } from '../../utils/providerAccounts/store.js'
+import { formatProviderAccountStatus } from '../../utils/providerAccounts/status.js'
 
 function CodexLogin({
   onDone,
@@ -116,13 +117,11 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
   const action = parseProviderLoginArgs(args)
 
   if (action.action === 'status') {
-    const credentials = await readCodexCredentialsAsync()
-    onDone(
-      credentials
-        ? `Codex conectado${credentials.accountId ? ` (conta ${credentials.accountId})` : ''}. Use /codex login para trocar de conta ou /codex logout para sair.`
-        : 'Codex não conectado. Execute /codex para desbloquear os modelos adicionais.',
-      { display: 'system' },
-    )
+    try {
+      onDone(formatProviderAccountStatus('codex', listProviderAccountSummaries()), { display: 'system' })
+    } catch {
+      onDone('Não foi possível consultar as contas Codex no armazenamento seguro. Tente novamente.', { display: 'system' })
+    }
     return
   }
 

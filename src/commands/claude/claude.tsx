@@ -29,6 +29,8 @@ import {
   type ClaudeNativeCredentialBlob,
 } from '../../utils/claudeNativeCredentials.js'
 import { parseProviderLoginArgs } from '../../utils/providerAccounts/loginArgs.js'
+import { listProviderAccountSummaries } from '../../utils/providerAccounts/store.js'
+import { formatProviderAccountStatus } from '../../utils/providerAccounts/status.js'
 
 function ClaudeLogin({
   acceptedAt,
@@ -193,13 +195,21 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
 
   const action = parseProviderLoginArgs(args)
   if (action.action === 'status') {
-    const credentials = await readClaudeNativeCredentialsAsync()
-    onDone(
-      credentials
-        ? `Claude conectado${credentials.email ? ` (${credentials.email})` : ''}. Aceite de risco v${credentials.riskAcceptance.version}${hasCurrentClaudeRiskAcceptance(credentials) ? ' válido' : ' desatualizado'}. Use /claude login para trocar de conta ou /claude logout para sair.`
-        : 'Claude não conectado. Execute /claude para desbloquear modelos adicionais.',
-      { display: 'system' },
-    )
+    try {
+      const accounts = listProviderAccountSummaries()
+      const status = formatProviderAccountStatus('claude', accounts)
+      if (!accounts.some(account => account.provider === 'claude')) {
+        onDone(status, { display: 'system' })
+        return
+      }
+      const credentials = await readClaudeNativeCredentialsAsync()
+      const risk = credentials
+        ? ` Aceite de risco v${credentials.riskAcceptance.version}${hasCurrentClaudeRiskAcceptance(credentials) ? ' válido' : ' desatualizado'}.`
+        : ''
+      onDone(`${status}${risk}`, { display: 'system' })
+    } catch {
+      onDone('Não foi possível consultar as contas Claude no armazenamento seguro. Tente novamente.', { display: 'system' })
+    }
     return
   }
 

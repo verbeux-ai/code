@@ -1,4 +1,5 @@
 import { assertCLIEntitlement } from '../../services/oauth/cliEntitlement.js'
+import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import {
   listProviderAccountSummaries,
   readProviderAccounts,
@@ -17,6 +18,7 @@ export type ProviderCommandEnvelope<T> =
 
 export type ProviderAccountsCommandDependencies = {
   ensureAuthenticated?: () => Promise<unknown>
+  fetchProviderUsage?: (provider: ProviderId, accountId: LocalProviderAccountId) => Promise<unknown>
 }
 
 const PROTOCOLS = ['provider_accounts_v1', 'provider_usage_v1'] as const
@@ -59,6 +61,24 @@ export async function runProviderAccountsCommand(
   argv: string[],
   dependencies: ProviderAccountsCommandDependencies = {},
 ): Promise<ProviderCommandEnvelope<unknown>> {
+  const command = argv[0] ?? 'capabilities'
+  // Capabilities are non-secret and intentionally auth-free so release
+  // builders can verify the protocol and native storage adapter without a
+  // user's session.
+  if (command === 'capabilities') {
+    const secureStorage = getSecureStorage({ allowPlainTextFallback: false })
+    const secureStorageRead = secureStorage.readResult?.()
+    return success({
+      protocols: [...PROTOCOLS],
+      loginTransport: 'pty-slash-v1',
+      secureStorage: {
+        native: secureStorage.name !== 'plaintext' && secureStorage.name !== 'unavailable-secure-storage',
+        backend: secureStorage.name,
+        probe: secureStorageRead?.kind ?? 'error',
+      },
+    })
+  }
+
   try {
     await (dependencies.ensureAuthenticated ?? (async () => {
       await assertCLIEntitlement()
@@ -71,14 +91,6 @@ export async function runProviderAccountsCommand(
   }
 
   try {
-    const command = argv[0] ?? 'capabilities'
-    if (command === 'capabilities') {
-      return success({
-        protocols: [...PROTOCOLS],
-        loginTransport: 'pty-slash-v1',
-      })
-    }
-
     if (command === 'list') {
       return success({
         protocols: [...PROTOCOLS],
@@ -108,9 +120,9 @@ export async function runProviderAccountsCommand(
       if (!accountId || !resolveProviderAccount(provider, accountId)) {
         return failure('provider_account_not_found', 'Conta não encontrada.')
       }
-      const { fetchProviderUsage } = await import(
+      const fetchProviderUsage = dependencies.fetchProviderUsage ?? (await import(
         '../../services/api/providerUsageProtocol.js'
-      )
+      )).fetchProviderUsage
       return success(await fetchProviderUsage(provider, accountId))
     }
 

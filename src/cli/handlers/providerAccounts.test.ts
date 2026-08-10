@@ -96,6 +96,7 @@ test('capabilities advertises the versioned protocols and PTY login transport', 
     data: {
       protocols: ['provider_accounts_v1', 'provider_usage_v1'],
       loginTransport: 'pty-slash-v1',
+      secureStorage: { native: true, backend: expect.any(String), probe: expect.stringMatching(/^(ok|missing|error)$/) },
     },
   })
 })
@@ -178,8 +179,7 @@ test('usage resolves the requested opaque account and returns protocol v1 data',
     setDefaultProviderAccount: () => {},
     upsertProviderAccount: () => ({ localAccountId: 'local-a', created: false }),
   }))
-  mock.module('../../services/api/providerUsageProtocol.js', () => ({
-    fetchProviderUsage: async (provider: string, accountId: string) => {
+  const fetchProviderUsage = async (provider: string, accountId: string) => {
       usageAccountId = `${provider}:${accountId}`
       return {
         schemaVersion: 1,
@@ -188,14 +188,13 @@ test('usage resolves the requested opaque account and returns protocol v1 data',
         windows: [],
         fetchedAt: '2026-08-09T00:00:00.000Z',
       }
-    },
-  }))
+  }
 
   // @ts-expect-error cache-busting query string for Bun module mocks
   const { runProviderAccountsCommand } = await import('./providerAccounts.js?usage')
   const output = await runProviderAccountsCommand(
     ['usage', '--provider', 'codex', '--account', 'local-a'],
-    { ensureAuthenticated: async () => {} },
+    { ensureAuthenticated: async () => {}, fetchProviderUsage },
   )
 
   expect(usageAccountId).toBe('codex:local-a')

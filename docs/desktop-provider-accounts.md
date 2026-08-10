@@ -13,15 +13,18 @@ The CLI exposes one versioned JSON envelope for each command:
 ```text
 verboo provider-accounts capabilities
 verboo provider-accounts list
+verboo provider-accounts models --provider codex|claude --account <opaque-id>
 verboo provider-accounts usage --provider codex|claude [--account <opaque-id>]
 verboo provider-accounts set-default --provider <provider> --account <opaque-id>
 verboo provider-accounts remove --provider <provider> --account <opaque-id>
 ```
 
 Every response has `schemaVersion: 1` and either `ok: true, data` or
-`ok: false, error: { code, message }`. `capabilities` returns
-`provider_accounts_v1`, `provider_usage_v1`, and `loginTransport:
-pty-slash-v1`. Provider login remains additive: `/codex login` and
+`ok: false, error: { code, message }`. `capabilities` is safe to query before
+authentication and returns `provider_accounts_v1`, `provider_usage_v1`,
+`loginTransport: pty-slash-v1`, and a non-secret `secureStorage` descriptor
+(`native: true` plus the platform adapter name) with a classified read probe
+(`ok`, `missing`, or `error`) that never includes credential data. Provider login remains additive: `/codex login` and
 `/claude login` add a new account when its provider identity is new; a
 reconnect explicitly names the opaque local account.
 
@@ -72,10 +75,15 @@ Storage uses the existing native adapters on every supported desktop:
 | Target | Secure storage |
 | --- | --- |
 | macOS arm64/x64 | Keychain |
-| Windows x64 | Credential Locker |
+| Windows x64 | DPAPI-encrypted per-user file (CurrentUser scope) |
 | Linux x64 | Secret Service |
 
 Plaintext fallback remains disabled.
+
+The desktop packaging smoke invokes `provider-accounts capabilities` for every
+signed target and rejects an artifact that does not advertise the native
+adapter or a classified probe result. The matching release runners still exercise the actual Keychain,
+DPAPI, or Secret Service implementation for their operating system.
 
 ## Verification matrix
 

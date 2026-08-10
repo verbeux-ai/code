@@ -136,6 +136,7 @@ export async function packageDesktopCli(
   try {
     const payload = await materializePayload({ ...input, stagingRoot })
     await smokePayload(input.nodeExecutable, payload, input.version)
+    await smokeProviderAccounts(input.nodeExecutable, payload)
     await runProcess('tar', [
       '-czf',
       archivePath,
@@ -195,6 +196,58 @@ async function smokePayload(
       `CLI smoke version mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(result.stdout.trim())}`,
     )
   }
+}
+
+/**
+ * Exercise the versioned provider-account entrypoint on every signed target.
+ * Release builders do not have a user's Verboo session, so an auth-required
+ * envelope is an expected result; a process crash, malformed JSON, or a
+ * different failure is not.
+ */
+async function smokeProviderAccounts(
+  nodeExecutable: string,
+  payload: string,
+): Promise<void> {
+  const result = await runProcess(
+    nodeExecutable,
+    [join(payload, 'dist', 'cli.mjs'), 'provider-accounts', 'capabilities'],
+    payload,
+  )
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(result.stdout.trim())
+  } catch {
+    throw new Error('Provider-account smoke did not return JSON')
+  }
+  if (!envelope || typeof envelope !== 'object') {
+    throw new Error('Provider-account smoke returned an invalid envelope')
+  }
+  const record = envelope as {
+    schemaVersion?: unknown
+    ok?: unknown
+    data?: { protocols?: unknown; secureStorage?: { native?: unknown; backend?: unknown; probe?: unknown } }
+    error?: { code?: unknown }
+  }
+  if (record.schemaVersion !== 1) {
+    throw new Error('Provider-account smoke returned an unsupported schema')
+  }
+  if (record.ok === true) {
+    if (!Array.isArray(record.data?.protocols)
+      || !record.data.protocols.includes('provider_accounts_v1')) {
+      throw new Error('Provider-account smoke omitted provider_accounts_v1')
+    }
+    if (record.data.secureStorage?.native !== true
+      || typeof record.data.secureStorage.backend !== 'string'
+      || !['ok', 'missing', 'error'].includes(String(record.data.secureStorage.probe))) {
+      throw new Error('Provider-account smoke did not verify native secure storage')
+    }
+    return
+  }
+  if (record.ok === false && (
+    record.error?.code === 'verboo_auth_required'
+    || record.error?.code === 'provider_auth_required'
+  )) return
+  throw new Error('Provider-account smoke returned an unexpected failure')
 }
 
 async function hashFile(path: string): Promise<{ size: number; sha256: string }> {

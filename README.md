@@ -32,7 +32,7 @@ If the install later reports `ripgrep not found`, install ripgrep system-wide an
 verboo
 ```
 
-On first run, Verboo Code opens your browser at `https://code.verboo.ai` to complete the OAuth login. Once authenticated, your session tokens are stored securely in your system keychain (macOS Keychain, Windows Credential Manager, or Linux libsecret). No additional configuration required.
+On first run, Verboo Code opens your browser at `https://code.verboo.ai` to complete the OAuth login. Once authenticated, your session tokens are stored securely in the native adapter for your platform (macOS Keychain, Windows DPAPI protected per-user storage, or Linux libsecret). No additional configuration required.
 
 To log in manually at any time:
 

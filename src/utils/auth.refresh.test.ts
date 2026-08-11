@@ -8,6 +8,9 @@ let stored: SecureStorageData = {}
 let refreshMode: 'success' | 'invalid_grant' | 'transient_error' = 'success'
 let refreshCalls = 0
 let storageWritesFail = false
+let lockReleaseErrorCode: string | null = null
+let refreshGate: Promise<void> | null = null
+let markRefreshStarted: (() => void) | null = null
 const originalAxiosPost = axios.post
 
 beforeAll(() => {
@@ -27,7 +30,13 @@ beforeAll(() => {
     }),
   }))
   mock.module('./lockfile.js', () => ({
-    lock: async () => async () => {},
+    lock: async () => async () => {
+      if (lockReleaseErrorCode) {
+        throw Object.assign(new Error('Lock is not acquired/owned by you'), {
+          code: lockReleaseErrorCode,
+        })
+      }
+    },
     lockSync: () => () => {},
   }))
   mock.module('../services/oauth/getOauthProfile.js', () => ({
@@ -35,6 +44,9 @@ beforeAll(() => {
   }))
   axios.post = mock(async () => {
     refreshCalls++
+    markRefreshStarted?.()
+    markRefreshStarted = null
+    if (refreshGate) await refreshGate
     if (refreshMode === 'invalid_grant') {
       throw Object.assign(new Error('invalid_grant'), {
         response: { data: { error: 'invalid_grant' } },
@@ -150,4 +162,111 @@ test('preserves the stored session after a transient refresh failure', async () 
   expect(refreshCalls).toBe(1)
   expect(stored.verbooOauth?.accessToken).toBe('rejected-access-4')
   expect(stored.verbooOauth?.refreshToken).toBe('old-refresh-4')
+})
+
+test('does not abort a successful refresh when the lock was already released', async () => {
+  stored = {
+    verbooOauth: {
+      accessToken: 'rejected-access-5',
+      refreshToken: 'old-refresh-5',
+      expiresAt: Date.now() + 600_000,
+      scopes: ['user:profile', 'user:inference'],
+    },
+  }
+  refreshMode = 'success'
+  refreshCalls = 0
+  storageWritesFail = false
+  lockReleaseErrorCode = 'ENOTACQUIRED'
+
+  // @ts-expect-error cache-busting query keeps module state isolated.
+  const releaseRaceModule = await import('./auth.js?refresh-release-race')
+  const { handleOAuth401ErrorWithOutcome } = releaseRaceModule
+
+  try {
+    const outcome = await handleOAuth401ErrorWithOutcome('rejected-access-5')
+
+    expect(outcome).toBe('refreshed')
+    expect(refreshCalls).toBe(1)
+    expect(stored.verbooOauth?.accessToken).toBe('fresh-access')
+  } finally {
+    lockReleaseErrorCode = null
+  }
+})
+
+test('does not hide an unexpected lock release failure', async () => {
+  stored = {
+    verbooOauth: {
+      accessToken: 'rejected-access-unexpected-release',
+      refreshToken: 'old-refresh-unexpected-release',
+      expiresAt: Date.now() + 600_000,
+      scopes: ['user:profile', 'user:inference'],
+    },
+  }
+  refreshMode = 'success'
+  refreshCalls = 0
+  storageWritesFail = false
+  lockReleaseErrorCode = 'EIO'
+
+  // @ts-expect-error cache-busting query keeps module state isolated.
+  const unexpectedReleaseModule = await import('./auth.js?unexpected-release')
+
+  try {
+    await expect(
+      unexpectedReleaseModule.handleOAuth401ErrorWithOutcome(
+        'rejected-access-unexpected-release',
+      ),
+    ).rejects.toMatchObject({ code: 'EIO' })
+  } finally {
+    lockReleaseErrorCode = null
+  }
+})
+
+test('shares one refresh between an expiry check and a simultaneous 401', async () => {
+  stored = {
+    verbooOauth: {
+      accessToken: 'rejected-access-6',
+      refreshToken: 'old-refresh-6',
+      expiresAt: Date.now() - 1,
+      scopes: ['user:profile', 'user:inference'],
+    },
+  }
+  refreshMode = 'success'
+  refreshCalls = 0
+  storageWritesFail = false
+  lockReleaseErrorCode = null
+
+  let releaseRefresh = () => {}
+  refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve
+  })
+  const refreshStarted = new Promise<void>((resolve) => {
+    markRefreshStarted = resolve
+  })
+
+  // @ts-expect-error cache-busting query keeps module state isolated.
+  const singleFlightModule = await import('./auth.js?refresh-single-flight')
+  const {
+    checkAndRefreshOAuthTokenIfNeeded,
+    handleOAuth401ErrorWithOutcome,
+  } = singleFlightModule
+
+  const expiryCheck = checkAndRefreshOAuthTokenIfNeeded()
+  await refreshStarted
+  const rejectedRequest = handleOAuth401ErrorWithOutcome('rejected-access-6')
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(refreshCalls).toBe(1)
+  } finally {
+    releaseRefresh()
+    refreshGate = null
+  }
+
+  const [expiryRecovered, rejectionOutcome] = await Promise.all([
+    expiryCheck,
+    rejectedRequest,
+  ])
+  expect(expiryRecovered).toBe(true)
+  expect(['refreshed', 'token_changed']).toContain(rejectionOutcome)
+  expect(stored.verbooOauth?.accessToken).toBe('fresh-access')
 })

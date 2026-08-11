@@ -1465,7 +1465,7 @@ async function handleOAuth401ErrorImpl(
   }
 
   // Same token that failed - force refresh, bypassing local expiration check
-  return checkAndRefreshOAuthTokenIfNeededImpl(0, true, failedAccessToken)
+  return runOAuthRefreshCheck(0, true, failedAccessToken)
 }
 
 /**
@@ -1543,29 +1543,63 @@ function clearStoredVerbooOAuthIfRefreshTokenMatches(
   }
 }
 
-// In-flight promise for deduplicating concurrent calls
+// One in-flight refresh across proactive expiry checks and reactive 401s.
 let pendingRefreshCheck: Promise<OAuthRefreshOutcome> | null = null
 
 export function checkAndRefreshOAuthTokenIfNeeded(
   retryCount = 0,
   force = false,
 ): Promise<boolean> {
-  // Deduplicate concurrent non-retry, non-force calls
-  if (retryCount === 0 && !force) {
-    if (pendingRefreshCheck) {
-      return pendingRefreshCheck.then(didOAuthRefreshRecover)
-    }
+  return runOAuthRefreshCheck(retryCount, force).then(didOAuthRefreshRecover)
+}
 
-    const promise = checkAndRefreshOAuthTokenIfNeededImpl(retryCount, force)
-    pendingRefreshCheck = promise.finally(() => {
-      pendingRefreshCheck = null
-    })
-    return pendingRefreshCheck.then(didOAuthRefreshRecover)
+async function runOAuthRefreshCheck(
+  retryCount: number,
+  force: boolean,
+  failedAccessToken?: string,
+): Promise<OAuthRefreshOutcome> {
+  if (retryCount !== 0) {
+    return checkAndRefreshOAuthTokenIfNeededImpl(
+      retryCount,
+      force,
+      failedAccessToken,
+    )
   }
 
-  return checkAndRefreshOAuthTokenIfNeededImpl(retryCount, force).then(
-    didOAuthRefreshRecover,
+  const pending = pendingRefreshCheck
+  if (pending) {
+    const outcome = await pending
+    if (!force) return outcome
+
+    clearOAuthTokenCache()
+    const currentTokens = await getClaudeAIOAuthTokensAsync()
+    if (
+      failedAccessToken &&
+      currentTokens?.accessToken &&
+      currentTokens.accessToken !== failedAccessToken
+    ) {
+      return 'token_changed'
+    }
+
+    if (outcome !== 'unchanged') return outcome
+
+    // A proactive check can legitimately decide that the token is still
+    // valid. A simultaneous server 401 must still force one refresh after it.
+    return runOAuthRefreshCheck(retryCount, force, failedAccessToken)
+  }
+
+  const refresh = checkAndRefreshOAuthTokenIfNeededImpl(
+    retryCount,
+    force,
+    failedAccessToken,
   )
+  const trackedRefresh = refresh.finally(() => {
+    if (pendingRefreshCheck === trackedRefresh) {
+      pendingRefreshCheck = null
+    }
+  })
+  pendingRefreshCheck = trackedRefresh
+  return trackedRefresh
 }
 
 async function checkAndRefreshOAuthTokenIfNeededImpl(
@@ -1731,8 +1765,24 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
     return 'transient_error'
   } finally {
     logEvent('tengu_oauth_token_refresh_lock_releasing', {})
-    await release()
-    logEvent('tengu_oauth_token_refresh_lock_released', {})
+    try {
+      await release()
+      logEvent('tengu_oauth_token_refresh_lock_released', {})
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (code !== 'ENOTACQUIRED' && code !== 'ERELEASED') {
+        throw error
+      }
+
+      // proper-lockfile can report ownership loss when a stale lock was
+      // replaced and release callbacks complete out of order. The refresh
+      // result above is still authoritative; do not replace it with a raw
+      // release error.
+      logError(error)
+      logEvent('tengu_oauth_token_refresh_lock_release_ownership_lost', {
+        code: code as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      })
+    }
   }
 }
 

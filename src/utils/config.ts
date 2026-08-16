@@ -306,6 +306,26 @@ export type GlobalConfig = {
   // Transcript share prompt tracking ("Don't ask again")
   transcriptShareDismissed?: boolean
 
+  // Optional startup feedback. Contains only campaign/delivery identifiers and
+  // selected option identifiers; never prompts, code, paths, or transcripts.
+  verbooFeedback?: {
+    receipts?: Array<{
+      campaignId: string
+      deliveryId: string
+      status: 'skipped' | 'completed'
+      recordedAt: number
+    }>
+    outbox?: Array<{
+      id: string
+      deliveryId: string
+      campaignId: string
+      action: 'skip' | 'response'
+      answers?: Array<{ questionId: string; optionIds: string[] }>
+      attempts: number
+      createdAt: number
+    }>
+  }
+
   // Memory usage tracking
   memoryUsageCount: number // Number of times user has added to memory
 

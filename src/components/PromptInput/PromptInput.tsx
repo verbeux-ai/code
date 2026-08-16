@@ -169,6 +169,9 @@ type Props = {
   }, options?: {
     fromKeybinding?: boolean;
   }) => Promise<void>;
+  // Optional inline startup UI can consume Enter before prompt suggestions
+  // or the normal empty-input guard run. Returning true prevents a work turn.
+  onBeforeSubmit?: (input: string) => boolean;
   onAgentSubmit?: (input: string, task: InProcessTeammateTaskState | LocalAgentTaskState, helpers: PromptInputHelpers) => Promise<void>;
   isSearchingHistory: boolean;
   setIsSearchingHistory: (isSearching: boolean) => void;
@@ -224,6 +227,7 @@ function PromptInput({
   onExit,
   getToolUseContext,
   onSubmit: onSubmitProp,
+  onBeforeSubmit,
   onAgentSubmit,
   isSearchingHistory,
   setIsSearchingHistory,
@@ -1010,8 +1014,17 @@ function PromptInput({
       return;
     }
 
-    // Check for images early - we need this for suggestion logic below
+    // Check for images before optional startup UI interception: an image-only
+    // prompt is work and must always pass through untouched.
     const hasImages = Object.values(pastedContents).some(c => c.type === 'image');
+
+    if (!hasImages && onBeforeSubmit?.(inputParam)) {
+      trackAndSetInput('');
+      setCursorOffset(0);
+      clearBuffer();
+      resetHistory();
+      return;
+    }
 
     // If input is empty OR matches the suggestion, submit it
     // But if there are images attached, don't auto-accept the suggestion -
@@ -1111,7 +1124,7 @@ function PromptInput({
       clearBuffer,
       resetHistory
     });
-  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification]);
+  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onBeforeSubmit, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification, trackAndSetInput]);
   const {
     suggestions,
     selectedSuggestion,

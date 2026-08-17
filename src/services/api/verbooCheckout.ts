@@ -20,10 +20,17 @@ const httpUrlSchema = z
   )
 
 const checkoutResultSchema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('stripe'), url: httpUrlSchema }).passthrough(),
+  z
+    .object({
+      mode: z.literal('stripe'),
+      attemptId: z.string().uuid(),
+      url: httpUrlSchema,
+    })
+    .passthrough(),
   z
     .object({
       mode: z.literal('woovi'),
+      attemptId: z.string().uuid(),
       wooviQrCode: z.string().min(1),
       wooviSubscriptionId: z.string().min(1),
     })
@@ -120,6 +127,7 @@ export type CheckoutInput = {
 export type WhatsAppProfile = z.infer<typeof whatsappProfileSchema>
 export type CardlessTrialInput = z.input<typeof cardlessTrialInputSchema>
 export type CardlessTrialResult = z.infer<typeof cardlessTrialResultSchema>
+export type GroupEntitlementRequirement = 'access' | 'paid'
 
 function authHeaders(accessToken: string): Record<string, string> {
   return {
@@ -258,12 +266,34 @@ export async function resendCardlessTrialCode(
 export async function isGroupSubscriptionActive(
   accessToken: string,
   groupId: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: {
+    signal?: AbortSignal
+    requirement?: GroupEntitlementRequirement
+  } = {},
 ): Promise<boolean> {
   const subscriptions = await fetchSubscriptions(accessToken, opts)
-  return subscriptions.some(
-    (sub) =>
-      sub.groupId === groupId &&
-      (sub.status === 'active' || sub.status === 'trialing'),
+  return hasGroupSubscriptionEntitlement(
+    subscriptions,
+    groupId,
+    opts.requirement ?? 'access',
   )
+}
+
+export function hasGroupSubscriptionEntitlement(
+  subscriptions: Awaited<ReturnType<typeof fetchSubscriptions>>,
+  groupId: string,
+  requirement: GroupEntitlementRequirement,
+): boolean {
+  return subscriptions.some((subscription) => {
+    if (subscription.groupId !== groupId) return false
+    if (requirement === 'access') {
+      return subscription.status === 'active' || subscription.status === 'trialing'
+    }
+    return (
+      subscription.status === 'active' &&
+      (subscription.source === 'stripe' ||
+        subscription.source === 'stripe_trial' ||
+        subscription.source === 'woovi')
+    )
+  })
 }

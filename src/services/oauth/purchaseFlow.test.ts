@@ -6,6 +6,7 @@ import {
   filterCliPurchasablePlans,
   getPlanColumnCount,
   getPlanDetailOptions,
+  getStripeTrialConversionUrl,
   movePlanFocus,
 } from './purchaseFlow.js'
 import { isValidCPF, onlyDigits } from './purchaseValidation.js'
@@ -85,6 +86,18 @@ test('offers both free trial and immediate paid purchase when eligible', () => {
   ])
 })
 
+test('never advertises a trial for an annual offer', () => {
+  const annual = plan({
+    billingInterval: 'year',
+    trialDays: 7,
+    trialEligible: true,
+  })
+  expect(getPlanDetailOptions(annual).map((option) => option.value)).toEqual([
+    'buy',
+    'back',
+  ])
+})
+
 test('keeps an active local trial available for paid conversion even when full', () => {
   const trialPlan = plan({
     isMember: true,
@@ -97,6 +110,17 @@ test('keeps an active local trial available for paid conversion even when full',
       [subscription({ source: 'stripe_trial', status: 'trialing' })],
     ),
   ).toEqual([trialPlan])
+})
+
+test('routes a Stripe trial to the dedicated full-price conversion journey', () => {
+  expect(
+    getStripeTrialConversionUrl(
+      '22222222-2222-4222-8222-222222222222',
+      'year',
+    ),
+  ).toBe(
+    'https://code.verboo.ai/pt/settings/billing?subscription=22222222-2222-4222-8222-222222222222&action=convert&billingInterval=year',
+  )
 })
 
 test('keeps legacy local trials available for paid conversion', () => {

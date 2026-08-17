@@ -5,6 +5,7 @@ import {
   confirmCardlessTrial,
   createCheckoutSession,
   getWhatsAppProfile,
+  hasGroupSubscriptionEntitlement,
   isWooviSubscriptionActive,
   startCardlessTrial,
 } from './verbooCheckout.js'
@@ -15,6 +16,7 @@ const GROUP_ID = '11111111-1111-4111-8111-111111111111'
 const OTHER_GROUP_ID = '22222222-2222-4222-8222-222222222222'
 const VERIFICATION_ID = '33333333-3333-4333-8333-333333333333'
 const SUBSCRIPTION_ID = '44444444-4444-4444-8444-444444444444'
+const ATTEMPT_ID = '55555555-5555-4555-8555-555555555555'
 
 afterEach(() => {
   axios.post = originalPost
@@ -26,6 +28,7 @@ test('sends the explicit Woovi method and payer data to checkout', async () => {
     data: {
       data: {
         mode: 'woovi' as const,
+        attemptId: ATTEMPT_ID,
         wooviQrCode: '000201',
         wooviSubscriptionId: 'woovi-subscription',
       },
@@ -40,6 +43,7 @@ test('sends the explicit Woovi method and payer data to checkout', async () => {
     }),
   ).resolves.toEqual({
     mode: 'woovi',
+    attemptId: ATTEMPT_ID,
     wooviQrCode: '000201',
     wooviSubscriptionId: 'woovi-subscription',
   })
@@ -56,6 +60,46 @@ test('sends the explicit Woovi method and payer data to checkout', async () => {
       }),
     }),
   )
+})
+
+test('paid entitlement never treats an active trial as a completed purchase', () => {
+  const trial = {
+    id: SUBSCRIPTION_ID,
+    groupId: GROUP_ID,
+    source: 'stripe_trial',
+    status: 'trialing',
+    cancelAtPeriodEnd: false,
+  }
+  expect(hasGroupSubscriptionEntitlement([trial], GROUP_ID, 'access')).toBe(true)
+  expect(hasGroupSubscriptionEntitlement([trial], GROUP_ID, 'paid')).toBe(false)
+  expect(
+    hasGroupSubscriptionEntitlement(
+      [{ ...trial, source: 'stripe', status: 'active' }],
+      GROUP_ID,
+      'paid',
+    ),
+  ).toBe(true)
+  expect(
+    hasGroupSubscriptionEntitlement(
+      [{ ...trial, source: 'stripe_trial', status: 'active' }],
+      GROUP_ID,
+      'paid',
+    ),
+  ).toBe(true)
+  expect(
+    hasGroupSubscriptionEntitlement(
+      [{ ...trial, source: 'woovi', status: 'active' }],
+      GROUP_ID,
+      'paid',
+    ),
+  ).toBe(true)
+  expect(
+    hasGroupSubscriptionEntitlement(
+      [{ ...trial, source: 'manual', status: 'active' }],
+      GROUP_ID,
+      'paid',
+    ),
+  ).toBe(false)
 })
 
 test('confirms only the Woovi subscription that became active', async () => {

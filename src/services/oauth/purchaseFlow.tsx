@@ -10,6 +10,7 @@ import {
 import { Select } from '../../components/CustomSelect/select.js'
 import { Spinner } from '../../components/Spinner.js'
 import TextInput from '../../components/TextInput.js'
+import { VERBOO_FRONT_BASE_URL } from '../../constants/oauth.js'
 import { useTerminalSize } from '../../hooks/useTerminalSize.js'
 import { Box, render, Text, useInput } from '../../ink.js'
 import { AppStateProvider } from '../../state/AppState.js'
@@ -23,6 +24,7 @@ import {
   resendCardlessTrialCode,
   startCardlessTrial,
   type CardlessTrialResult,
+  type GroupEntitlementRequirement,
   type PaymentMethod,
   type WhatsAppProfile,
   type WooviCheckoutData,
@@ -77,6 +79,13 @@ function isCurrentLocalTrial(subscription?: SubscriptionResponse): boolean {
     subscription?.status === 'trialing' &&
     ['trial', 'stripe_trial'].includes(subscription.source ?? '')
   )
+}
+
+export function getStripeTrialConversionUrl(
+  subscriptionId: string,
+  billingInterval: 'month' | 'year',
+): string {
+  return `${VERBOO_FRONT_BASE_URL}/pt/settings/billing?subscription=${encodeURIComponent(subscriptionId)}&action=convert&billingInterval=${encodeURIComponent(billingInterval)}`
 }
 
 export function filterCliPurchasablePlans(
@@ -152,6 +161,7 @@ function hasCardlessTrial(group: MarketplaceGroup): boolean {
   return Boolean(
     group.trialEligible &&
     group.trialDays &&
+    group.billingInterval === 'month' &&
     group.trialPaymentMethodRequired === false &&
     group.paymentProvider !== 'woovi',
   )
@@ -161,6 +171,7 @@ function hasCardTrial(group: MarketplaceGroup): boolean {
   return Boolean(
     group.trialEligible &&
     group.trialDays &&
+    group.billingInterval === 'month' &&
     group.trialPaymentMethodRequired !== false &&
     group.paymentProvider !== 'woovi',
   )
@@ -636,6 +647,9 @@ export function PurchaseFlowView({
   const columnCount = getPlanColumnCount(terminalColumns)
   const [step, setStep] = useState<Step>('splash')
   const [plans, setPlans] = useState<MarketplaceGroup[]>([])
+  const [subscriptionsByGroup, setSubscriptionsByGroup] = useState<
+    Map<string, SubscriptionResponse>
+  >(new Map())
   const [selectedPlan, setSelectedPlan] = useState<MarketplaceGroup | null>(
     null,
   )
@@ -649,6 +663,10 @@ export function PurchaseFlowView({
   const [manualCheckoutUrl, setManualCheckoutUrl] = useState<string | null>(
     null,
   )
+  const [manualEntitlementRequirement, setManualEntitlementRequirement] =
+    useState<GroupEntitlementRequirement>('paid')
+  const [successRequirement, setSuccessRequirement] =
+    useState<GroupEntitlementRequirement>('paid')
   const [whatsappProfile, setWhatsAppProfile] =
     useState<WhatsAppProfile | null>(null)
   const [cardlessVerification, setCardlessVerification] =
@@ -679,11 +697,15 @@ export function PurchaseFlowView({
     [],
   )
 
-  const complete = useCallback(() => {
-    setStep('success')
-    if (successTimerRef.current) clearTimeout(successTimerRef.current)
-    successTimerRef.current = setTimeout(() => onDone(true), 1_500)
-  }, [onDone])
+  const complete = useCallback(
+    (requirement: GroupEntitlementRequirement) => {
+      setSuccessRequirement(requirement)
+      setStep('success')
+      if (successTimerRef.current) clearTimeout(successTimerRef.current)
+      successTimerRef.current = setTimeout(() => onDone(true), 1_500)
+    },
+    [onDone],
+  )
 
   React.useEffect(
     () => () => {
@@ -721,6 +743,15 @@ export function PurchaseFlowView({
       ])
       if (plansRequestRef.current !== controller) return
       const eligible = filterCliPurchasablePlans(groups, subscriptions)
+      setSubscriptionsByGroup(
+        new Map(
+          subscriptions
+            .filter((subscription) =>
+              ['active', 'trialing', 'past_due'].includes(subscription.status),
+            )
+            .map((subscription) => [subscription.groupId, subscription]),
+        ),
+      )
       if (eligible.length === 0) {
         const message =
           groups.length === 0
@@ -755,6 +786,7 @@ export function PurchaseFlowView({
     async function pollEntitlement(
       groupId: string,
       displayStep: 'polling' | 'cardless-polling' = 'polling',
+      requirement: GroupEntitlementRequirement = 'paid',
     ) {
       pollingRef.current?.abort()
       const controller = new AbortController()
@@ -769,9 +801,10 @@ export function PurchaseFlowView({
         try {
           const active = await isGroupSubscriptionActive(accessToken, groupId, {
             signal: controller.signal,
+            requirement,
           })
           if (active) {
-            if (pollingRef.current === controller) complete()
+            if (pollingRef.current === controller) complete(requirement)
             return
           }
         } catch (error) {
@@ -804,7 +837,7 @@ export function PurchaseFlowView({
           'plan-detail',
           {
             label: 'Verificar novamente',
-            run: () => void pollEntitlement(groupId, displayStep),
+            run: () => void pollEntitlement(groupId, displayStep, requirement),
           },
         )
       }
@@ -864,7 +897,7 @@ export function PurchaseFlowView({
           setCardlessVerification(result)
           setStep('whatsapp-code')
         } else {
-          void startEntitlementPolling(group.id, 'cardless-polling')
+          void startEntitlementPolling(group.id, 'cardless-polling', 'access')
         }
       } catch (error) {
         const presentation = describePurchaseError(
@@ -913,7 +946,7 @@ export function PurchaseFlowView({
           code,
         )
         if (result.mode === 'trial_activated') {
-          void startEntitlementPolling(group.id, 'cardless-polling')
+          void startEntitlementPolling(group.id, 'cardless-polling', 'access')
         } else {
           setCardlessVerification(result)
           setStep('whatsapp-code')
@@ -986,6 +1019,7 @@ export function PurchaseFlowView({
       group: MarketplaceGroup,
       paymentMethod: PaymentMethod,
       woovi?: WooviCheckoutData,
+      requirement: GroupEntitlementRequirement = 'paid',
     ) {
       setInlineMessage(null)
       setStep('checkout')
@@ -995,7 +1029,7 @@ export function PurchaseFlowView({
           woovi,
         })
         if (result.mode === 'reactivated') {
-          void startEntitlementPolling(group.id)
+          void startEntitlementPolling(group.id, 'polling', requirement)
           return
         }
         if (result.mode === 'woovi') {
@@ -1008,8 +1042,9 @@ export function PurchaseFlowView({
         }
 
         setManualCheckoutUrl(result.url)
+        setManualEntitlementRequirement(requirement)
         if (await openBrowser(result.url)) {
-          void startEntitlementPolling(group.id)
+          void startEntitlementPolling(group.id, 'polling', requirement)
         } else {
           setStep('manual-browser')
         }
@@ -1038,7 +1073,7 @@ export function PurchaseFlowView({
           presentation.code === 'manual_access_active'
         ) {
           setInlineMessage(presentation.message)
-          void startEntitlementPolling(group.id)
+          void startEntitlementPolling(group.id, 'polling', requirement)
           return
         }
         if (
@@ -1053,7 +1088,7 @@ export function PurchaseFlowView({
         }
         showError(presentation.message, 'plan-detail', {
           label: 'Tentar checkout novamente',
-          run: () => void runCheckout(group, paymentMethod, woovi),
+          run: () => void runCheckout(group, paymentMethod, woovi, requirement),
         })
       }
     },
@@ -1061,14 +1096,33 @@ export function PurchaseFlowView({
   )
 
   const startPaidPurchase = useCallback(
-    (group: MarketplaceGroup) => {
+    async (group: MarketplaceGroup) => {
       setSelectedPlan(group)
       setInlineMessage(null)
+      const currentSubscription = subscriptionsByGroup.get(group.id)
+      if (
+        currentSubscription?.source === 'stripe_trial' &&
+        currentSubscription.status === 'trialing'
+      ) {
+        const conversionUrl = getStripeTrialConversionUrl(
+          currentSubscription.id,
+          group.billingInterval,
+        )
+        setManualCheckoutUrl(conversionUrl)
+        setManualEntitlementRequirement('paid')
+        setStep('checkout')
+        if (await openBrowser(conversionUrl)) {
+          void startEntitlementPolling(group.id, 'polling', 'paid')
+        } else {
+          setStep('manual-browser')
+        }
+        return
+      }
       if (group.paymentProvider === 'both') setStep('payment-method')
       else if (group.paymentProvider === 'woovi') setStep('woovi-form')
       else void handleCheckout(group, 'stripe')
     },
-    [handleCheckout],
+    [handleCheckout, startEntitlementPolling, subscriptionsByGroup],
   )
 
   const cancelPlansLoading = useCallback(() => {
@@ -1207,7 +1261,8 @@ export function PurchaseFlowView({
                       </Text>
                       <Text dimColor>{getSlotsInfo(plan)}</Text>
                       <Text dimColor>{paymentProviderLabel(plan)}</Text>
-                      {plan.trialEligible && plan.trialDays ? (
+                      {(hasCardlessTrial(plan) || hasCardTrial(plan)) &&
+                      plan.trialDays ? (
                         <Text color="success">
                           {plan.trialDays} dias de teste
                           {hasCardlessTrial(plan)
@@ -1252,7 +1307,8 @@ export function PurchaseFlowView({
             <Text dimColor>Modelos: {getModelNames(plan)}</Text>
             <Text dimColor>Assinantes: {getSlotsInfo(plan)}</Text>
             <Text dimColor>Pagamento: {paymentProviderLabel(plan)}</Text>
-            {plan.trialEligible && plan.trialDays ? (
+            {(hasCardlessTrial(plan) || hasCardTrial(plan)) &&
+            plan.trialDays ? (
               <Text color="success">
                 Teste: {plan.trialDays} dias
                 {hasCardlessTrial(plan)
@@ -1267,9 +1323,9 @@ export function PurchaseFlowView({
             onChange={(value: string) => {
               if (value === 'trial') void prepareCardlessTrial(plan)
               else if (value === 'card-trial')
-                void handleCheckout(plan, 'stripe')
+                void handleCheckout(plan, 'stripe', undefined, 'access')
               else if (value === 'pix') setStep('woovi-form')
-              else if (value === 'buy') startPaidPurchase(plan)
+              else if (value === 'buy') void startPaidPurchase(plan)
               else setStep('plans')
             }}
           />
@@ -1445,7 +1501,11 @@ export function PurchaseFlowView({
             ]}
             onChange={(value: string) => {
               if (value === 'verify' && selectedPlan) {
-                void startEntitlementPolling(selectedPlan.id)
+                void startEntitlementPolling(
+                  selectedPlan.id,
+                  'polling',
+                  manualEntitlementRequirement,
+                )
               } else if (value === 'back') setStep('plan-detail')
               else onDone(false)
             }}
@@ -1473,7 +1533,11 @@ export function PurchaseFlowView({
 
     case 'success':
       return (
-        <Text color="success">Assinatura confirmada! Modelos disponíveis.</Text>
+        <Text color="success">
+          {successRequirement === 'access'
+            ? 'Trial ativado! Modelos disponíveis.'
+            : 'Assinatura paga confirmada! Modelos disponíveis.'}
+        </Text>
       )
 
     case 'error':

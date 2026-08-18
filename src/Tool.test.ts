@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { findToolByNameOrUniquePrefix, type Tools } from './Tool.js'
+import { getAllBaseTools } from './tools.js'
 
 const tools = [
   { name: 'Read' },
@@ -36,5 +37,17 @@ describe('findToolByNameOrUniquePrefix', () => {
         'mcp__files__rea',
       ),
     ).toBeUndefined()
+  })
+
+  test('recovers a missing final character for every registered built-in tool', () => {
+    const baseTools = getAllBaseTools()
+
+    for (const tool of baseTools) {
+      if (tool.name.length < 4 || tool.name.startsWith('mcp__')) continue
+      const truncatedName = tool.name.slice(0, -1)
+      expect(
+        findToolByNameOrUniquePrefix(baseTools, truncatedName)?.name,
+      ).toBe(tool.name)
+    }
   })
 })

@@ -23,7 +23,7 @@ import {
 import type { SSHSession } from '../ssh/createSSHSession.js'
 import type { SSHSessionManager } from '../ssh/SSHSessionManager.js'
 import type { Tool } from '../Tool.js'
-import { findToolByName } from '../Tool.js'
+import { findToolByNameOrUniquePrefix } from '../Tool.js'
 import type { Message as MessageType } from '../types/message.js'
 import type { PermissionAskDecision } from '../types/permissions.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -94,7 +94,7 @@ export function useSSHSession({
         )
 
         const tool =
-          findToolByName(toolsRef.current, request.tool_name) ??
+          findToolByNameOrUniquePrefix(toolsRef.current, request.tool_name) ??
           createToolStub(request.tool_name)
 
         const syntheticMessage = createSyntheticAssistantMessage(

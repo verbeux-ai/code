@@ -11,7 +11,7 @@ import {
   useAppStateStore,
   useSetAppState,
 } from '../state/AppState.js'
-import { findToolByName } from '../Tool.js'
+import { findToolByNameOrUniquePrefix } from '../Tool.js'
 import { isInProcessTeammateTask } from '../tasks/InProcessTeammateTask/types.js'
 import { getAllBaseTools } from '../tools.js'
 import type { PermissionUpdate } from '../types/permissions.js'
@@ -267,7 +267,10 @@ export function useInboxPoller({
           // Route through the standard ToolUseConfirmQueue so tmux workers
           // get the same tool-specific UI (BashPermissionRequest, FileEditToolDiff, etc.)
           // as in-process teammates.
-          const tool = findToolByName(getAllBaseTools(), parsed.tool_name)
+          const tool = findToolByNameOrUniquePrefix(
+            getAllBaseTools(),
+            parsed.tool_name,
+          )
           if (!tool) {
             logForDebugging(
               `[InboxPoller] Unknown tool ${parsed.tool_name}, skipping permission request`,

@@ -1,4 +1,5 @@
 import { APIError } from '@anthropic-ai/sdk'
+import { resolveToolNameByUniquePrefix } from '../../Tool.js'
 import { buildAnthropicUsageFromRawUsage } from './cacheMetrics.js'
 import { compressToolHistory } from './compressToolHistory.js'
 import { fetchWithProxyRetry } from './fetchWithProxyRetry.js'
@@ -787,11 +788,22 @@ export async function* codexStreamToAnthropic(
   response: Response,
   model: string,
   signal?: AbortSignal,
+  advertisedToolNames: readonly string[] = [],
 ): AsyncGenerator<AnthropicStreamEvent> {
   const messageId = makeMessageId()
   const toolBlocksByItemId = new Map<
     string,
-    { index: number; toolUseId: string }
+    {
+      index: number
+      toolUseId: string
+      name: string
+      startedName?: string
+      argumentsBuffer: string
+      emittedArgumentsLength: number
+      hasStarted: boolean
+      isDone: boolean
+      hasStopped: boolean
+    }
   >()
   let activeTextBlockIndex: number | null = null
   const thinkFilter = createThinkTagFilter()
@@ -829,6 +841,150 @@ export async function* codexStreamToAnthropic(
     }
   }
 
+  type ActiveCodexToolBlock = NonNullable<
+    ReturnType<typeof toolBlocksByItemId.get>
+  >
+
+  const findToolBlockEntry = (
+    item: Record<string, any>,
+  ): [string, ActiveCodexToolBlock] | undefined => {
+    for (const candidate of [item.id, item.call_id]) {
+      if (candidate == null) continue
+      const itemId = String(candidate)
+      const toolBlock = toolBlocksByItemId.get(itemId)
+      if (toolBlock) return [itemId, toolBlock]
+    }
+    return undefined
+  }
+
+  const toolNameMayBeIncomplete = (name: string): boolean =>
+    Boolean(name) &&
+    !advertisedToolNames.includes(name) &&
+    advertisedToolNames.some(toolName => toolName.startsWith(name))
+
+  const canonicalizeFinalToolName = (toolBlock: ActiveCodexToolBlock): void => {
+    const resolvedName = resolveToolNameByUniquePrefix(
+      advertisedToolNames,
+      toolBlock.name,
+    )
+    if (resolvedName) toolBlock.name = resolvedName
+  }
+
+  const applyFinalToolItem = (
+    toolBlock: ActiveCodexToolBlock,
+    item: Record<string, any>,
+  ): void => {
+    if (typeof item.name === 'string' && item.name) {
+      toolBlock.name = item.name
+    }
+    if (
+      typeof item.arguments === 'string' &&
+      (!toolBlock.hasStarted ||
+        item.arguments.startsWith(toolBlock.argumentsBuffer))
+    ) {
+      toolBlock.argumentsBuffer = item.arguments
+    }
+    canonicalizeFinalToolName(toolBlock)
+  }
+
+  const emitPendingToolArguments = async function* (
+    toolBlock: ActiveCodexToolBlock,
+  ) {
+    if (
+      !toolBlock.hasStarted ||
+      toolBlock.emittedArgumentsLength >= toolBlock.argumentsBuffer.length
+    ) {
+      return
+    }
+
+    yield {
+      type: 'content_block_delta',
+      index: toolBlock.index,
+      delta: {
+        type: 'input_json_delta',
+        partial_json: toolBlock.argumentsBuffer.slice(
+          toolBlock.emittedArgumentsLength,
+        ),
+      },
+    }
+    toolBlock.emittedArgumentsLength = toolBlock.argumentsBuffer.length
+  }
+
+  const startToolBlock = async function* (
+    toolBlock: ActiveCodexToolBlock,
+    force = false,
+  ) {
+    if (toolBlock.hasStarted) return
+    if (!force && (!toolBlock.name || toolNameMayBeIncomplete(toolBlock.name))) {
+      return
+    }
+
+    if (force) canonicalizeFinalToolName(toolBlock)
+    toolBlock.hasStarted = true
+    toolBlock.startedName = toolBlock.name || 'tool'
+
+    yield {
+      type: 'content_block_start',
+      index: toolBlock.index,
+      content_block: {
+        type: 'tool_use',
+        id: toolBlock.toolUseId,
+        name: toolBlock.startedName,
+        input: {},
+      },
+    }
+    yield* emitPendingToolArguments(toolBlock)
+  }
+
+  const flushToolBlocks = async function* (force = false) {
+    const orderedBlocks = [...toolBlocksByItemId.values()].sort(
+      (a, b) => a.index - b.index,
+    )
+
+    for (const toolBlock of orderedBlocks) {
+      if (toolBlock.hasStopped) continue
+
+      if (!toolBlock.hasStarted) {
+        yield* startToolBlock(toolBlock, force || toolBlock.isDone)
+        // Do not release a later parallel block before an earlier block whose
+        // name is still incomplete.
+        if (!toolBlock.hasStarted) break
+      }
+
+      if (
+        toolBlock.isDone &&
+        toolBlock.startedName !== (toolBlock.name || 'tool')
+      ) {
+        toolBlock.startedName = toolBlock.name || 'tool'
+        yield {
+          type: 'content_block_start',
+          index: toolBlock.index,
+          content_block: {
+            type: 'tool_use',
+            id: toolBlock.toolUseId,
+            name: toolBlock.startedName,
+            input: {},
+          },
+        }
+      }
+
+      yield* emitPendingToolArguments(toolBlock)
+      if (toolBlock.isDone) {
+        yield {
+          type: 'content_block_stop',
+          index: toolBlock.index,
+        }
+        toolBlock.hasStopped = true
+      }
+    }
+  }
+
+  const removeStoppedToolBlocks = (): void => {
+    for (const [itemId, toolBlock] of toolBlocksByItemId) {
+      if (toolBlock.hasStopped) toolBlocksByItemId.delete(itemId)
+    }
+  }
+
   yield {
     type: 'message_start',
     message: {
@@ -852,33 +1008,20 @@ export async function* codexStreamToAnthropic(
         yield* closeActiveTextBlock()
         const blockIndex = nextContentBlockIndex++
         const toolUseId = item.call_id ?? item.id ?? `call_${blockIndex}`
-        toolBlocksByItemId.set(String(item.id ?? toolUseId), {
+        const toolBlock = {
           index: blockIndex,
           toolUseId,
-        })
+          name: typeof item.name === 'string' ? item.name : '',
+          argumentsBuffer:
+            typeof item.arguments === 'string' ? item.arguments : '',
+          emittedArgumentsLength: 0,
+          hasStarted: false,
+          isDone: false,
+          hasStopped: false,
+        }
+        toolBlocksByItemId.set(String(item.id ?? toolUseId), toolBlock)
         sawToolUse = true
-
-        yield {
-          type: 'content_block_start',
-          index: blockIndex,
-          content_block: {
-            type: 'tool_use',
-            id: toolUseId,
-            name: item.name ?? 'tool',
-            input: {},
-          },
-        }
-
-        if (item.arguments) {
-          yield {
-            type: 'content_block_delta',
-            index: blockIndex,
-            delta: {
-              type: 'input_json_delta',
-              partial_json: item.arguments,
-            },
-          }
-        }
+        yield* flushToolBlocks()
       }
       continue
     }
@@ -911,14 +1054,10 @@ export async function* codexStreamToAnthropic(
     if (event.event === 'response.function_call_arguments.delta') {
       const toolBlock = toolBlocksByItemId.get(String(payload.item_id ?? ''))
       if (toolBlock) {
-        yield {
-          type: 'content_block_delta',
-          index: toolBlock.index,
-          delta: {
-            type: 'input_json_delta',
-            partial_json: payload.delta ?? '',
-          },
+        if (typeof payload.delta === 'string') {
+          toolBlock.argumentsBuffer += payload.delta
         }
+        yield* flushToolBlocks()
       }
       continue
     }
@@ -926,13 +1065,13 @@ export async function* codexStreamToAnthropic(
     if (event.event === 'response.output_item.done') {
       const item = payload.item
       if (item?.type === 'function_call') {
-        const toolBlock = toolBlocksByItemId.get(String(item.id ?? ''))
-        if (toolBlock) {
-          yield {
-            type: 'content_block_stop',
-            index: toolBlock.index,
-          }
-          toolBlocksByItemId.delete(String(item.id))
+        const toolBlockEntry = findToolBlockEntry(item)
+        if (toolBlockEntry) {
+          const [, toolBlock] = toolBlockEntry
+          applyFinalToolItem(toolBlock, item)
+          toolBlock.isDone = true
+          yield* flushToolBlocks()
+          removeStoppedToolBlocks()
         }
       } else if (item?.type === 'message') {
         yield* closeActiveTextBlock()
@@ -956,12 +1095,20 @@ export async function* codexStreamToAnthropic(
   }
 
   yield* closeActiveTextBlock()
-  for (const toolBlock of toolBlocksByItemId.values()) {
-    yield {
-      type: 'content_block_stop',
-      index: toolBlock.index,
-    }
+  const finalOutput = Array.isArray(finalResponse?.output)
+    ? finalResponse.output
+    : []
+  for (const item of finalOutput) {
+    if (item?.type !== 'function_call') continue
+    const toolBlockEntry = findToolBlockEntry(item)
+    if (!toolBlockEntry) continue
+    applyFinalToolItem(toolBlockEntry[1], item)
   }
+  for (const toolBlock of toolBlocksByItemId.values()) {
+    toolBlock.isDone = true
+  }
+  yield* flushToolBlocks(true)
+  removeStoppedToolBlocks()
 
   yield {
     type: 'message_delta',
@@ -984,6 +1131,7 @@ export async function* codexStreamToAnthropic(
 export function convertCodexResponseToAnthropicMessage(
   data: Record<string, any>,
   model: string,
+  advertisedToolNames: readonly string[] = [],
 ): Record<string, unknown> {
   const content: Array<Record<string, unknown>> = []
   const output = Array.isArray(data.output) ? data.output : []
@@ -1002,6 +1150,10 @@ export function convertCodexResponseToAnthropicMessage(
     }
 
     if (item?.type === 'function_call') {
+      const toolName =
+        resolveToolNameByUniquePrefix(advertisedToolNames, item.name ?? '') ??
+        item.name ??
+        'tool'
       let input: unknown
       try {
         input = JSON.parse(item.arguments ?? '{}')
@@ -1012,7 +1164,7 @@ export function convertCodexResponseToAnthropicMessage(
       content.push({
         type: 'tool_use',
         id: item.call_id ?? item.id ?? makeMessageId(),
-        name: item.name ?? 'tool',
+        name: toolName,
         input,
       })
     }

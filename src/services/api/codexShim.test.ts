@@ -9,6 +9,7 @@ import {
   convertCodexResponseToAnthropicMessage,
   convertSystemPrompt,
   convertToolsToResponsesTools,
+  type AnthropicStreamEvent,
 } from './codexShim.js'
 import { __test as webSearchToolTest } from '../../tools/WebSearchTool/WebSearchTool.js'
 
@@ -691,7 +692,7 @@ describe('Codex request translation', () => {
     ])
   })
 
-  test('converts completed Codex tool response into Anthropic message', () => {
+  test('canonicalizes a truncated completed Codex tool response', () => {
     const message = convertCodexResponseToAnthropicMessage(
       {
         id: 'resp_1',
@@ -701,13 +702,14 @@ describe('Codex request translation', () => {
             type: 'function_call',
             id: 'fc_1',
             call_id: 'call_1',
-            name: 'ping',
+            name: 'pin',
             arguments: '{"value":"ping"}',
           },
         ],
         usage: { input_tokens: 12, output_tokens: 4 },
       },
       'gpt-5.3-codex-spark',
+      ['ping'],
     )
 
     expect(message.stop_reason).toBe('tool_use')
@@ -972,13 +974,13 @@ describe('Codex request translation', () => {
     ])
   })
 
-  test('translates interleaved parallel Codex calls without losing either ID', async () => {
+  test('keeps Responses API parallel calls ordered while an earlier name is incomplete', async () => {
     const responseText = [
       'event: response.output_item.added',
-      'data: {"type":"response.output_item.added","item":{"id":"fc_a","call_id":"call_a","type":"function_call","name":"read","arguments":""},"output_index":0}',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_a","call_id":"call_a","type":"function_call","name":"Rea","arguments":""},"output_index":0}',
       '',
       'event: response.output_item.added',
-      'data: {"type":"response.output_item.added","item":{"id":"fc_b","call_id":"call_b","type":"function_call","name":"read","arguments":""},"output_index":1}',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_b","call_id":"call_b","type":"function_call","name":"Bash","arguments":""},"output_index":1}',
       '',
       'event: response.function_call_arguments.delta',
       'data: {"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"{\\"path\\":\\"a\\"}"}',
@@ -987,13 +989,13 @@ describe('Codex request translation', () => {
       'data: {"type":"response.function_call_arguments.delta","item_id":"fc_b","delta":"{\\"path\\":\\"b\\"}"}',
       '',
       'event: response.output_item.done',
-      'data: {"type":"response.output_item.done","item":{"id":"fc_b","call_id":"call_b","type":"function_call","name":"read","arguments":"{\\"path\\":\\"b\\"}"},"output_index":1}',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_b","call_id":"call_b","type":"function_call","name":"Bash","arguments":"{\\"path\\":\\"b\\"}"},"output_index":1}',
       '',
       'event: response.output_item.done',
-      'data: {"type":"response.output_item.done","item":{"id":"fc_a","call_id":"call_a","type":"function_call","name":"read","arguments":"{\\"path\\":\\"a\\"}"},"output_index":0}',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_a","call_id":"call_a","type":"function_call","name":"Rea","arguments":"{\\"path\\":\\"a\\"}"},"output_index":0}',
       '',
       'event: response.completed',
-      'data: {"type":"response.completed","response":{"id":"resp_parallel","status":"completed","model":"gpt-5.4","output":[{"id":"fc_a","call_id":"call_a","type":"function_call","name":"read","arguments":"{\\"path\\":\\"a\\"}"},{"id":"fc_b","call_id":"call_b","type":"function_call","name":"read","arguments":"{\\"path\\":\\"b\\"}"}],"usage":{"input_tokens":2,"output_tokens":2}}}',
+      'data: {"type":"response.completed","response":{"id":"resp_parallel","status":"completed","model":"gpt-5.4","output":[{"id":"fc_a","call_id":"call_a","type":"function_call","name":"Rea","arguments":"{\\"path\\":\\"a\\"}"},{"id":"fc_b","call_id":"call_b","type":"function_call","name":"Bash","arguments":"{\\"path\\":\\"b\\"}"}],"usage":{"input_tokens":2,"output_tokens":2}}}',
       '',
     ].join('\n')
     const stream = new ReadableStream({
@@ -1007,6 +1009,8 @@ describe('Codex request translation', () => {
     for await (const event of codexStreamToAnthropic(
       new Response(stream),
       'gpt-5.4',
+      undefined,
+      ['Read', 'Bash'],
     )) {
       const contentBlock = event.content_block as
         | { type?: string; id?: string; name?: string }
@@ -1025,9 +1029,59 @@ describe('Codex request translation', () => {
     }
 
     expect(toolUses).toEqual([
-      { id: 'call_a', name: 'read' },
-      { id: 'call_b', name: 'read' },
+      { id: 'call_a', name: 'Read' },
+      { id: 'call_b', name: 'Bash' },
     ])
+  })
+
+  test('recovers a truncated Responses API tool name before releasing buffered arguments', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":""},"output_index":0}',
+      '',
+      'event: response.function_call_arguments.delta',
+      'data: {"type":"response.function_call_arguments.delta","item_id":"fc_read","delta":"{\\"file_path\\":\\"README.md\\"}"}',
+      '',
+      'event: response.output_item.done',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":"{\\"file_path\\":\\"README.md\\"}"},"output_index":0}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_read","status":"completed","model":"gpt-5.4","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":"{\\"file_path\\":\\"README.md\\"}"}],"usage":{"input_tokens":2,"output_tokens":2}}}',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const events: AnthropicStreamEvent[] = []
+
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.4',
+      undefined,
+      ['Read'],
+    )) {
+      events.push(event)
+    }
+
+    const toolStarts = events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        event.content_block?.type === 'tool_use',
+    )
+    expect(toolStarts).toHaveLength(1)
+    expect(toolStarts[0]?.content_block).toMatchObject({
+      id: 'call_read',
+      name: 'Read',
+    })
+
+    const input = events
+      .filter(event => event.delta?.type === 'input_json_delta')
+      .map(event => event.delta?.partial_json)
+      .join('')
+    expect(input).toBe('{"file_path":"README.md"}')
   })
 
   test('strips <think> tag block from Codex SSE text stream', async () => {

@@ -1,6 +1,6 @@
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
-import { findToolByName, type Tools } from '../Tool.js'
+import { findToolByNameOrUniquePrefix, type Tools } from '../Tool.js'
 import { extractBashCommentLabel } from '../tools/BashTool/commentLabel.js'
 import { BASH_TOOL_NAME } from '../tools/BashTool/toolName.js'
 import { FILE_EDIT_TOOL_NAME } from '../tools/FileEditTool/constants.js'
@@ -197,8 +197,8 @@ export function getToolSearchOrReadInfo(
   // messages. Without the fallback they'd return isCollapsible: false and
   // vanish from the summary line.
   const tool =
-    findToolByName(tools, toolName) ??
-    findToolByName(getReplPrimitiveTools(), toolName)
+    findToolByNameOrUniquePrefix(tools, toolName) ??
+    findToolByNameOrUniquePrefix(getReplPrimitiveTools(), toolName)
   if (!tool?.isSearchOrReadCommand) {
     return {
       isCollapsible: false,

@@ -132,10 +132,9 @@ import {
 } from '../constants/xml.js'
 import { DiagnosticTrackingService } from '../services/diagnosticTracking.js'
 import {
-  findToolByName,
+  findToolByNameOrUniquePrefix,
   type Tool,
   type Tools,
-  toolMatchesName,
 } from '../Tool.js'
 import {
   FileReadTool,
@@ -2237,7 +2236,10 @@ export function normalizeMessagesForAPI(
               ...message.message,
               content: message.message.content.map(block => {
                 if (block.type === 'tool_use') {
-                  const tool = tools.find(t => toolMatchesName(t, block.name))
+                  const tool = findToolByNameOrUniquePrefix(
+                    tools,
+                    block.name,
+                  )
                   const normalizedInput = tool
                     ? normalizeToolInputForAPI(
                         tool,
@@ -2726,13 +2728,27 @@ export function normalizeContentFromAPI(
           normalizedInput = contentBlock.input
         }
 
-        // Then apply tool-specific corrections
+        // Then apply tool-specific corrections. The OpenAI-compatible stream
+        // adapter normally reconstructs fragmented names before this point,
+        // but retain a conservative final defense for providers that actually
+        // terminate with an unambiguous built-in prefix (`Rea` -> `Read`).
+        const resolvedTool = findToolByNameOrUniquePrefix(
+          tools,
+          contentBlock.name,
+        )
+        const normalizedToolName =
+          resolvedTool &&
+          resolvedTool.name !== contentBlock.name &&
+          !resolvedTool.aliases?.includes(contentBlock.name) &&
+          resolvedTool.name.startsWith(contentBlock.name)
+            ? resolvedTool.name
+            : contentBlock.name
+
         if (typeof normalizedInput === 'object' && normalizedInput !== null) {
-          const tool = findToolByName(tools, contentBlock.name)
-          if (tool) {
+          if (resolvedTool) {
             try {
               normalizedInput = normalizeToolInput(
-                tool,
+                resolvedTool,
                 normalizedInput as { [key: string]: unknown },
                 agentId,
               )
@@ -2745,6 +2761,7 @@ export function normalizeContentFromAPI(
 
         return {
           ...contentBlock,
+          name: normalizedToolName,
           input: normalizedInput,
         }
       }

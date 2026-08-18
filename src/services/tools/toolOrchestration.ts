@@ -1,6 +1,9 @@
 import type { ToolUseBlock } from '@anthropic-ai/sdk/resources/index.mjs'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
-import { findToolByName, type ToolUseContext } from '../../Tool.js'
+import {
+  findToolByNameOrUniquePrefix,
+  type ToolUseContext,
+} from '../../Tool.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
 import { all } from '../../utils/generators.js'
 import { type MessageUpdateLazy, runToolUse } from './toolExecution.js'
@@ -93,7 +96,10 @@ function partitionToolCalls(
   toolUseContext: ToolUseContext,
 ): Batch[] {
   return toolUseMessages.reduce((acc: Batch[], toolUse) => {
-    const tool = findToolByName(toolUseContext.options.tools, toolUse.name)
+    const tool = findToolByNameOrUniquePrefix(
+      toolUseContext.options.tools,
+      toolUse.name,
+    )
     const parsedInput = tool?.inputSchema.safeParse(toolUse.input)
     const isConcurrencySafe = parsedInput?.success
       ? (() => {

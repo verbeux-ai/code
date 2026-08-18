@@ -6,7 +6,6 @@ import {
 } from 'src/utils/messages.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
-  findToolByName,
   findToolByNameOrUniquePrefix,
   type Tools,
   type ToolUseContext,
@@ -33,6 +32,7 @@ type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'
 type TrackedTool = {
   id: string
   block: ToolUseBlock
+  canonicalName: string
   assistantMessage: AssistantMessage
   status: ToolStatus
   isConcurrencySafe: boolean
@@ -106,6 +106,7 @@ export class StreamingToolExecutor {
       this.tools.push({
         id: block.id,
         block,
+        canonicalName: block.name,
         assistantMessage,
         status: 'completed',
         isConcurrencySafe: true,
@@ -141,6 +142,7 @@ export class StreamingToolExecutor {
     this.tools.push({
       id: block.id,
       block,
+      canonicalName: toolDefinition.name,
       assistantMessage,
       status: 'queued',
       isConcurrencySafe,
@@ -272,7 +274,10 @@ export class StreamingToolExecutor {
   }
 
   private getToolInterruptBehavior(tool: TrackedTool): 'cancel' | 'block' {
-    const definition = findToolByName(this.toolDefinitions, tool.block.name)
+    const definition = findToolByNameOrUniquePrefix(
+      this.toolDefinitions,
+      tool.canonicalName,
+    )
     if (!definition?.interruptBehavior) return 'block'
     try {
       return definition.interruptBehavior()
@@ -287,9 +292,9 @@ export class StreamingToolExecutor {
     if (typeof summary === 'string' && summary.length > 0) {
       const truncated =
         summary.length > 40 ? summary.slice(0, 40) + '\u2026' : summary
-      return `${tool.block.name}(${truncated})`
+      return `${tool.canonicalName}(${truncated})`
     }
-    return tool.block.name
+    return tool.canonicalName
   }
 
   private updateInterruptibleState(): void {
@@ -397,7 +402,7 @@ export class StreamingToolExecutor {
           // Only Bash errors cancel siblings. Bash commands often have implicit
           // dependency chains (e.g. mkdir fails → subsequent commands pointless).
           // Read/WebFetch/etc are independent — one failure shouldn't nuke the rest.
-          if (tool.block.name === BASH_TOOL_NAME) {
+          if (tool.canonicalName === BASH_TOOL_NAME) {
             this.hasErrored = true
             this.erroredToolDescription = this.getToolDescription(tool)
             this.siblingAbortController.abort('sibling_error')

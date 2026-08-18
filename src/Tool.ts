@@ -375,6 +375,33 @@ export function findToolByName(tools: Tools, name: string): Tool | undefined {
 }
 
 /**
+ * Resolves a canonical tool name from an exact match or an unambiguous
+ * provider-truncated prefix. This string-only form is shared by API adapters,
+ * which have the advertised tool schemas but not the runtime Tool objects.
+ */
+export function resolveToolNameByUniquePrefix(
+  toolNames: readonly string[],
+  name: string,
+): string | undefined {
+  const uniqueToolNames = [...new Set(toolNames)]
+  if (uniqueToolNames.includes(name)) return name
+
+  if (name.length < 3 || name.startsWith('mcp__')) return undefined
+
+  const prefixMatches = uniqueToolNames.filter(toolName =>
+    toolName.startsWith(name),
+  )
+  const oneCharacterCompletions = prefixMatches.filter(
+    toolName => toolName.length === name.length + 1,
+  )
+  if (oneCharacterCompletions.length === 1) {
+    return oneCharacterCompletions[0]
+  }
+
+  return prefixMatches.length === 1 ? prefixMatches[0] : undefined
+}
+
+/**
  * Resolves a provider-truncated built-in tool name only when the prefix is
  * unambiguous. Prefer a unique one-character completion before considering
  * longer names: `Rea` should recover `Read` even when the deferred
@@ -388,17 +415,13 @@ export function findToolByNameOrUniquePrefix(
   const exactMatch = findToolByName(tools, name)
   if (exactMatch) return exactMatch
 
-  if (name.length < 3 || name.startsWith('mcp__')) return undefined
-
-  const prefixMatches = tools.filter(tool => tool.name.startsWith(name))
-  const oneCharacterCompletions = prefixMatches.filter(
-    tool => tool.name.length === name.length + 1,
+  const resolvedName = resolveToolNameByUniquePrefix(
+    tools.map(tool => tool.name),
+    name,
   )
-  if (oneCharacterCompletions.length === 1) {
-    return oneCharacterCompletions[0]
-  }
-
-  return prefixMatches.length === 1 ? prefixMatches[0] : undefined
+  return resolvedName
+    ? tools.find(tool => tool.name === resolvedName)
+    : undefined
 }
 
 export type Tool<

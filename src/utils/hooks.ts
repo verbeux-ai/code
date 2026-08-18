@@ -146,7 +146,11 @@ import {
 } from './hooks/hookEvents.js'
 import { createAttachmentMessage } from './attachments.js'
 import { all } from './generators.js'
-import { findToolByName, type Tools, type ToolUseContext } from '../Tool.js'
+import {
+  findToolByNameOrUniquePrefix,
+  type Tools,
+  type ToolUseContext,
+} from '../Tool.js'
 import type { CanUseToolFn } from '../hooks/useCanUseTool.js'
 import { execPromptHook } from './hooks/execPromptHook.js'
 import type { Message, AssistantMessage } from '../types/message.js'
@@ -1588,8 +1592,9 @@ async function prepareIfConditionMatcher(
     return undefined
   }
 
-  const toolName = normalizeLegacyToolName(hookInput.tool_name)
-  const tool = tools && findToolByName(tools, hookInput.tool_name)
+  const tool =
+    tools && findToolByNameOrUniquePrefix(tools, hookInput.tool_name)
+  const toolName = normalizeLegacyToolName(tool?.name ?? hookInput.tool_name)
   const input = tool?.inputSchema.safeParse(hookInput.tool_input)
   const patternMatcher =
     input?.success && tool?.preparePermissionMatcher

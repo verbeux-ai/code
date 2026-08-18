@@ -5,7 +5,7 @@ import type { AppState } from '../../state/AppState.js';
 import type { SetAppState, Task, TaskStateBase } from '../../Task.js';
 import { createTaskStateBase } from '../../Task.js';
 import type { Tools } from '../../Tool.js';
-import { findToolByName } from '../../Tool.js';
+import { findToolByNameOrUniquePrefix } from '../../Tool.js';
 import type { AgentToolResult } from '../../tools/AgentTool/agentToolUtils.js';
 import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js';
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../../tools/SyntheticOutputTool/SyntheticOutputTool.js';
@@ -109,7 +109,7 @@ export function getProgressUpdate(tracker: ProgressTracker): AgentProgress {
  */
 export function createActivityDescriptionResolver(tools: Tools): ActivityDescriptionResolver {
   return (toolName, input) => {
-    const tool = findToolByName(tools, toolName);
+    const tool = findToolByNameOrUniquePrefix(tools, toolName);
     return tool?.getActivityDescription?.(input) ?? undefined;
   };
 }

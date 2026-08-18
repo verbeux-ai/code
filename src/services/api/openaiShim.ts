@@ -27,6 +27,7 @@
 
 import { randomUUID } from 'crypto'
 import { APIError } from '@anthropic-ai/sdk'
+import { resolveToolNameByUniquePrefix } from '../../Tool.js'
 import { getSessionId } from '../../bootstrap/state.js'
 import { isVerbooMode, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import {
@@ -1040,6 +1041,40 @@ function repairPossiblyTruncatedObjectJson(raw: string): string | null {
   }
 }
 
+type ActiveOpenAIToolCall = {
+  id: string
+  name: string
+  index: number
+  jsonBuffer: string
+  emittedJsonLength: number
+  normalizeAtStop: boolean
+  hasStarted: boolean
+  readyToStart: boolean
+  startedName?: string
+  extra_content?: Record<string, unknown>
+}
+
+/**
+ * OpenAI-compatible providers are allowed to stream function names as deltas.
+ * Some also repeat the cumulative/full name on later chunks, so support both
+ * shapes without turning `Rea` + `d` into a permanently truncated `Rea`.
+ */
+function mergeStreamedToolName(current: string, fragment: string): string {
+  if (!fragment) return current
+  if (!current || fragment.startsWith(current)) return fragment
+  return current + fragment
+}
+
+function getAdvertisedToolNames(params: ShimCreateParams): string[] {
+  return (params.tools ?? []).flatMap(tool =>
+    typeof tool.name === 'string' &&
+    tool.name &&
+    tool.name !== 'ToolSearchTool'
+      ? [tool.name]
+      : [],
+  )
+}
+
 /**
  * Async generator that transforms an OpenAI SSE stream into
  * Anthropic-format BetaRawMessageStreamEvent objects.
@@ -1158,20 +1193,11 @@ async function* openaiStreamToAnthropic(
   model: string,
   signal?: AbortSignal,
   warmingHint?: WarmingHintController,
+  advertisedToolNames: readonly string[] = [],
 ): AsyncGenerator<AnthropicStreamEvent> {
   const messageId = makeMessageId()
   let contentBlockIndex = 0
-  const activeToolCalls = new Map<
-    number,
-    {
-      id: string
-      name: string
-      index: number
-      jsonBuffer: string
-      normalizeAtStop: boolean
-      extra_content?: Record<string, unknown>
-    }
-  >()
+  const activeToolCalls = new Map<number, ActiveOpenAIToolCall>()
   let hasEmittedContentStart = false
   let hasEmittedThinkingStart = false
   let hasClosedThinking = false
@@ -1287,6 +1313,99 @@ async function* openaiStreamToAnthropic(
     hasEmittedContentStart = false
   }
 
+  const toolNameMayBeIncomplete = (name: string): boolean =>
+    Boolean(name) &&
+    !advertisedToolNames.includes(name) &&
+    advertisedToolNames.some(toolName => toolName.startsWith(name))
+
+  const canonicalizeFinalToolName = (toolCall: ActiveOpenAIToolCall): void => {
+    const resolvedName = resolveToolNameByUniquePrefix(
+      advertisedToolNames,
+      toolCall.name,
+    )
+    if (resolvedName) toolCall.name = resolvedName
+  }
+
+  const startToolCall = async function* (
+    toolCall: ActiveOpenAIToolCall,
+    force = false,
+  ) {
+    if (toolCall.hasStarted || !toolCall.id || !toolCall.name) return
+    if (!force && toolNameMayBeIncomplete(toolCall.name)) return
+
+    if (force) canonicalizeFinalToolName(toolCall)
+
+    toolCall.normalizeAtStop = hasToolFieldMapping(toolCall.name)
+    toolCall.hasStarted = true
+    toolCall.startedName = toolCall.name
+
+    yield {
+      type: 'content_block_start' as const,
+      index: toolCall.index,
+      content_block: {
+        type: 'tool_use' as const,
+        id: toolCall.id,
+        name: toolCall.name,
+        input: {},
+        ...(toolCall.extra_content
+          ? { extra_content: toolCall.extra_content }
+          : {}),
+        ...((toolCall.extra_content?.google as any)?.thought_signature
+          ? {
+              signature: (toolCall.extra_content?.google as any)
+                .thought_signature,
+            }
+          : {}),
+      },
+    }
+
+    if (!toolCall.normalizeAtStop && toolCall.jsonBuffer) {
+      yield {
+        type: 'content_block_delta' as const,
+        index: toolCall.index,
+        delta: {
+          type: 'input_json_delta' as const,
+          partial_json: toolCall.jsonBuffer,
+        },
+      }
+      toolCall.emittedJsonLength = toolCall.jsonBuffer.length
+    }
+  }
+
+  const flushReadyToolCalls = async function* (force = false) {
+    const orderedCalls = [...activeToolCalls.values()].sort(
+      (a, b) => a.index - b.index,
+    )
+
+    for (const toolCall of orderedCalls) {
+      if (!toolCall.hasStarted) {
+        if (!force && !toolCall.readyToStart) break
+        yield* startToolCall(toolCall, force)
+        if (!toolCall.hasStarted) {
+          if (!force) break
+          continue
+        }
+      }
+
+      if (
+        !toolCall.normalizeAtStop &&
+        toolCall.emittedJsonLength < toolCall.jsonBuffer.length
+      ) {
+        yield {
+          type: 'content_block_delta' as const,
+          index: toolCall.index,
+          delta: {
+            type: 'input_json_delta' as const,
+            partial_json: toolCall.jsonBuffer.slice(
+              toolCall.emittedJsonLength,
+            ),
+          },
+        }
+        toolCall.emittedJsonLength = toolCall.jsonBuffer.length
+      }
+    }
+  }
+
   try {
     while (true) {
       const { done, value } = await readWithTimeout()
@@ -1317,7 +1436,9 @@ async function* openaiStreamToAnthropic(
             yield { type: 'content_block_stop', index: contentBlockIndex }
           }
           for (const [, toolCall] of activeToolCalls) {
-            yield { type: 'content_block_stop', index: toolCall.index }
+            if (toolCall.hasStarted) {
+              yield { type: 'content_block_stop', index: toolCall.index }
+            }
           }
           activeToolCalls.clear()
           throw new Error(
@@ -1382,7 +1503,9 @@ async function* openaiStreamToAnthropic(
             yield { type: 'content_block_stop', index: contentBlockIndex }
           }
           for (const [, toolCall] of activeToolCalls) {
-            yield { type: 'content_block_stop', index: toolCall.index }
+            if (toolCall.hasStarted) {
+              yield { type: 'content_block_stop', index: toolCall.index }
+            }
           }
           activeToolCalls.clear()
           // Do NOT yield message_stop here — the synthetic API error
@@ -1468,8 +1591,11 @@ async function* openaiStreamToAnthropic(
           // Tool calls
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
-              if (tc.id && tc.function?.name) {
-                // New tool call starting — close any open thinking block first
+              let active = activeToolCalls.get(tc.index)
+              if (!active) {
+                // A tool call may arrive as separate id, name, and argument
+                // chunks. Reserve its block once, keyed by the OpenAI index,
+                // instead of requiring id + name to be co-located.
                 if (hasEmittedThinkingStart && !hasClosedThinking) {
                   yield {
                     type: 'content_block_stop',
@@ -1482,114 +1608,64 @@ async function* openaiStreamToAnthropic(
                   yield* closeActiveContentBlock()
                 }
 
-                const toolBlockIndex = contentBlockIndex
-                const initialArguments = tc.function.arguments ?? ''
-                const normalizeAtStop = hasToolFieldMapping(tc.function.name)
-                processStreamChunk(streamState, tc.function.arguments ?? '')
-
-                // Capture extra_content / thought_signature (may be top-level or nested)
-                const topLevelSig = (tc as any).thought_signature as
-                  string | undefined
-                const initEC: Record<string, unknown> | undefined =
-                  tc.extra_content
-                    ? { ...tc.extra_content }
-                    : topLevelSig
-                      ? { google: { thought_signature: topLevelSig } }
-                      : undefined
-
-                activeToolCalls.set(tc.index, {
-                  id: tc.id,
-                  name: tc.function.name,
-                  index: toolBlockIndex,
-                  jsonBuffer: initialArguments,
-                  normalizeAtStop,
-                  extra_content: initEC,
-                })
-
-                yield {
-                  type: 'content_block_start',
-                  index: toolBlockIndex,
-                  content_block: {
-                    type: 'tool_use',
-                    id: tc.id,
-                    name: tc.function.name,
-                    input: {},
-                    ...(initEC ? { extra_content: initEC } : {}),
-                    ...((initEC?.google as any)?.thought_signature
-                      ? { signature: (initEC.google as any).thought_signature }
-                      : {}),
-                  },
+                active = {
+                  id: '',
+                  name: '',
+                  index: contentBlockIndex++,
+                  jsonBuffer: '',
+                  emittedJsonLength: 0,
+                  normalizeAtStop: false,
+                  hasStarted: false,
+                  readyToStart: false,
                 }
-                contentBlockIndex++
+                activeToolCalls.set(tc.index, active)
+              }
 
-                // Emit any initial arguments
-                if (tc.function.arguments && !normalizeAtStop) {
-                  yield {
-                    type: 'content_block_delta',
-                    index: toolBlockIndex,
-                    delta: {
-                      type: 'input_json_delta',
-                      partial_json: tc.function.arguments,
-                    },
-                  }
-                }
-              } else if (tc.function?.arguments) {
-                // Continuation of existing tool call
-                const active = activeToolCalls.get(tc.index)
-                if (active) {
-                  if (tc.function.arguments) {
-                    active.jsonBuffer += tc.function.arguments
-                  }
+              if (tc.id && !active.id) {
+                active.id = tc.id
+              }
 
-                  // Also capture extra_content/thought_signature if bundled with args
-                  const contSig = (tc as any).thought_signature as
-                    string | undefined
-                  const contEC = tc.extra_content
-                    ? { ...tc.extra_content }
-                    : contSig
-                      ? { google: { thought_signature: contSig } }
-                      : undefined
-                  if (contEC) {
-                    active.extra_content = {
-                      ...(active.extra_content ?? {}),
-                      ...contEC,
-                    }
-                  }
+              const nameFragment = tc.function?.name
+              if (nameFragment) {
+                active.name = mergeStreamedToolName(
+                  active.name,
+                  nameFragment,
+                )
+              }
 
-                  if (active.normalizeAtStop) {
-                    continue
-                  }
+              const argumentFragment = tc.function?.arguments
+              if (typeof argumentFragment === 'string') {
+                active.jsonBuffer += argumentFragment
+                processStreamChunk(streamState, argumentFragment)
+              }
 
-                  yield {
-                    type: 'content_block_delta',
-                    index: active.index,
-                    delta: {
-                      type: 'input_json_delta',
-                      partial_json: tc.function.arguments,
-                    },
-                  }
-                }
-              } else {
-                // Chunk with only extra_content / thought_signature (Gemini thinking models
-                // may send thought_signature in a separate chunk from id/name/arguments)
-                const active = activeToolCalls.get(tc.index)
-                if (active) {
-                  const lateSig = (tc as any).thought_signature as
-                    string | undefined
-                  const lateEC = tc.extra_content
-                    ? { ...tc.extra_content }
-                    : lateSig
-                      ? { google: { thought_signature: lateSig } }
-                      : undefined
-                  if (lateEC) {
-                    active.extra_content = {
-                      ...(active.extra_content ?? {}),
-                      ...lateEC,
-                    }
-                  }
+              // Capture extra_content / thought_signature whether it arrives
+              // with the initial metadata, arguments, or in its own chunk.
+              const thoughtSignature = (tc as any).thought_signature as
+                string | undefined
+              const extraContent = tc.extra_content
+                ? { ...tc.extra_content }
+                : thoughtSignature
+                  ? { google: { thought_signature: thoughtSignature } }
+                  : undefined
+              if (extraContent) {
+                active.extra_content = {
+                  ...(active.extra_content ?? {}),
+                  ...extraContent,
                 }
               }
+
+              // An empty arguments scaffold can arrive before the final name
+              // fragment (`Rea`, then `d`). A non-blank argument is the first
+              // reliable boundary after the streamed function name.
+              if (argumentFragment?.trim()) {
+                active.readyToStart = true
+              }
             }
+
+            // Preserve the provider's tool-call order even when argument
+            // deltas for parallel calls arrive interleaved.
+            yield* flushReadyToolCalls()
           }
 
           // Finish — guard ensures we only process finish_reason once even if
@@ -1608,11 +1684,35 @@ async function* openaiStreamToAnthropic(
               yield* closeActiveContentBlock()
             }
             // Close active tool calls
+            for (const toolCall of activeToolCalls.values()) {
+              canonicalizeFinalToolName(toolCall)
+              // Mapped tools buffer their raw provider arguments so they can
+              // be normalized once the complete name is known. Recompute the
+              // decision when no raw JSON has escaped yet.
+              if (toolCall.emittedJsonLength === 0) {
+                toolCall.normalizeAtStop = hasToolFieldMapping(toolCall.name)
+              }
+            }
+            const startedBeforeFinish = new Set(
+              [...activeToolCalls.values()]
+                .filter(toolCall => toolCall.hasStarted)
+                .map(toolCall => toolCall.index),
+            )
+            yield* flushReadyToolCalls(true)
             for (const [, tc] of activeToolCalls) {
+              const wasStarted = startedBeforeFinish.has(tc.index)
+              if (!tc.hasStarted) {
+                continue
+              }
+
               // Re-emit content_block_start with final extra_content so that
               // late-arriving thought_signature chunks (Gemini thinking models)
-              // are reflected in the stored message block before it is finalized.
-              if (tc.extra_content) {
+              // and any non-standard late name fragment are reflected in the
+              // stored message block before it is finalized.
+              if (
+                wasStarted &&
+                (tc.extra_content || tc.startedName !== tc.name)
+              ) {
                 yield {
                   type: 'content_block_start' as const,
                   index: tc.index,
@@ -1621,10 +1721,12 @@ async function* openaiStreamToAnthropic(
                     id: tc.id,
                     name: tc.name,
                     input: {},
-                    extra_content: tc.extra_content,
-                    ...((tc.extra_content.google as any)?.thought_signature
+                    ...(tc.extra_content
+                      ? { extra_content: tc.extra_content }
+                      : {}),
+                    ...((tc.extra_content?.google as any)?.thought_signature
                       ? {
-                          signature: (tc.extra_content.google as any)
+                          signature: (tc.extra_content?.google as any)
                             .thought_signature,
                         }
                       : {}),
@@ -1659,6 +1761,18 @@ async function* openaiStreamToAnthropic(
                 }
                 yield { type: 'content_block_stop', index: tc.index }
                 continue
+              }
+
+              if (tc.emittedJsonLength < tc.jsonBuffer.length) {
+                yield {
+                  type: 'content_block_delta',
+                  index: tc.index,
+                  delta: {
+                    type: 'input_json_delta',
+                    partial_json: tc.jsonBuffer.slice(tc.emittedJsonLength),
+                  },
+                }
+                tc.emittedJsonLength = tc.jsonBuffer.length
               }
 
               let suffixToAdd = ''
@@ -1980,6 +2094,7 @@ class OpenAIShimMessages {
     options?: { signal?: AbortSignal; headers?: Record<string, string> },
   ) {
     const self = this
+    const advertisedToolNames = getAdvertisedToolNames(params)
 
     let httpResponse: Response | undefined
 
@@ -2016,12 +2131,14 @@ class OpenAIShimMessages {
                 response,
                 request.resolvedModel,
                 options?.signal,
+                advertisedToolNames,
               )
             : openaiStreamToAnthropic(
                 response,
                 request.resolvedModel,
                 options?.signal,
                 warmingHint,
+                advertisedToolNames,
               ),
           warmingHint,
         )
@@ -2039,6 +2156,7 @@ class OpenAIShimMessages {
         return convertCodexResponseToAnthropicMessage(
           data,
           request.resolvedModel,
+          advertisedToolNames,
         )
       }
 
@@ -2059,11 +2177,13 @@ class OpenAIShimMessages {
             return convertCodexResponseToAnthropicMessage(
               parsed,
               request.resolvedModel,
+              advertisedToolNames,
             )
           }
           return self._convertNonStreamingResponse(
             parsed,
             request.resolvedModel,
+            advertisedToolNames,
           )
         }
       }
@@ -2071,7 +2191,11 @@ class OpenAIShimMessages {
       const contentType = response.headers.get('content-type') ?? ''
       if (contentType.includes('application/json')) {
         const data = await response.json()
-        return self._convertNonStreamingResponse(data, request.resolvedModel)
+        return self._convertNonStreamingResponse(
+          data,
+          request.resolvedModel,
+          advertisedToolNames,
+        )
       }
 
       const textBody = await response.text().catch(() => '')
@@ -3043,6 +3167,7 @@ class OpenAIShimMessages {
       }
     },
     model: string,
+    advertisedToolNames: readonly string[] = [],
   ) {
     const choice = data.choices?.[0]
     const content: Array<Record<string, unknown>> = []
@@ -3086,14 +3211,19 @@ class OpenAIShimMessages {
 
     if (choice?.message?.tool_calls) {
       for (const tc of choice.message.tool_calls) {
+        const toolName =
+          resolveToolNameByUniquePrefix(
+            advertisedToolNames,
+            tc.function.name,
+          ) ?? tc.function.name
         const input = normalizeToolArguments(
-          tc.function.name,
+          toolName,
           tc.function.arguments,
         )
         content.push({
           type: 'tool_use',
           id: tc.id,
-          name: tc.function.name,
+          name: toolName,
           input,
           ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           // Extract Gemini signature from extra_content

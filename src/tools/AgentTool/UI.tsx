@@ -15,7 +15,7 @@ import { MessageResponse } from '../../components/MessageResponse.js';
 import { ToolUseLoader } from '../../components/ToolUseLoader.js';
 import { Box, Text } from '../../ink.js';
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js';
-import { findToolByName, type Tools } from '../../Tool.js';
+import { findToolByNameOrUniquePrefix, type Tools } from '../../Tool.js';
 import type { Message, ProgressMessage } from '../../types/message.js';
 import type { AgentToolProgress } from '../../types/tools.js';
 import { count } from '../../utils/array.js';
@@ -841,7 +841,7 @@ export function extractLastToolInfo(progressMessages: ProgressMessage<Progress>[
       // Look up the corresponding tool_use — already indexed above
       const toolUseBlock = toolUseByID.get(toolResultBlock.tool_use_id);
       if (toolUseBlock) {
-        const tool = findToolByName(tools, toolUseBlock.name);
+        const tool = findToolByNameOrUniquePrefix(tools, toolUseBlock.name);
         if (!tool) {
           return toolUseBlock.name; // Fallback to raw name
         }

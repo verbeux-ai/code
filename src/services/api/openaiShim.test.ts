@@ -3,6 +3,7 @@ import {
   acquireSharedMutationLock,
   releaseSharedMutationLock,
 } from '../../test/sharedMutationLock.js'
+import { getAllBaseTools } from '../../tools.ts'
 import { registerGateway } from '../../integrations/index.ts'
 import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { createOpenAIShimClient } from './openaiShim.ts'
@@ -620,9 +621,11 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
         model: 'gpt-5.4',
         output: [
           {
-            type: 'message',
-            role: 'assistant',
-            content: [{ type: 'output_text', text: 'ok' }],
+            type: 'function_call',
+            id: 'fc_read',
+            call_id: 'call_read',
+            name: 'Rea',
+            arguments: '{"file_path":"README.md"}',
           },
         ],
         usage: {
@@ -643,13 +646,24 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
     defaultHeaders: {},
   }) as OpenAIShimClient
 
-  await client.beta.messages.create({
+  const message = (await client.beta.messages.create({
     model: 'gpt-5.4',
     system: 'test system',
     messages: [{ role: 'user', content: 'hello' }],
+    tools: [
+      {
+        name: 'Read',
+        description: 'Read a file.',
+        input_schema: {
+          type: 'object',
+          properties: { file_path: { type: 'string' } },
+          required: ['file_path'],
+        },
+      },
+    ],
     max_tokens: 64,
     stream: false,
-  })
+  })) as { content?: Array<Record<string, unknown>> }
 
   expect(capturedUrl).toBe('http://example.test/v1/responses')
   expect(capturedBody?.model).toBe('gpt-5.4')
@@ -661,6 +675,14 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
       type: 'message',
       role: 'user',
       content: [{ type: 'input_text', text: 'hello' }],
+    },
+  ])
+  expect(message.content).toEqual([
+    {
+      type: 'tool_use',
+      id: 'call_read',
+      name: 'Read',
+      input: { file_path: 'README.md' },
     },
   ])
 })
@@ -2335,7 +2357,336 @@ test('preserves Gemini tool call extra_content from streaming chunks', async () 
   })
 })
 
-test('normalizes plain string Bash tool arguments from OpenAI-compatible responses', async () => {
+test('reassembles tool names split across OpenAI streaming chunks', async () => {
+  globalThis.fetch = (async () => {
+    const chunks = makeStreamChunks([
+      {
+        id: 'chatcmpl-split-name',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_read_1',
+                  type: 'function',
+                  function: { name: 'Rea', arguments: '{"file_path":' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-name',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_read_1',
+                  type: 'function',
+                  function: { name: 'd' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-name',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  type: 'function',
+                  function: { name: 'Read' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-name',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  type: 'function',
+                  function: { arguments: '"README.md"}' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-split-name',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+    ])
+    return makeSseResponse(chunks)
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.6-27b',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file from disk.',
+          input_schema: {
+            type: 'object',
+            properties: { file_path: { type: 'string' } },
+            required: ['file_path'],
+          },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) events.push(event)
+
+  const toolStarts = events.filter(
+    event =>
+      event.type === 'content_block_start' &&
+      (event as { content_block?: { type?: string } }).content_block?.type ===
+        'tool_use',
+  ) as Array<{ index: number; content_block: Record<string, unknown> }>
+  expect(toolStarts).toHaveLength(1)
+  expect(toolStarts[0]).toMatchObject({
+    index: 0,
+    content_block: { id: 'call_read_1', name: 'Read' },
+  })
+
+  const input = events
+    .filter(
+      event =>
+        event.type === 'content_block_delta' &&
+        (event as { delta?: { type?: string } }).delta?.type ===
+          'input_json_delta',
+    )
+    .map(event => (event as { delta: { partial_json: string } }).delta.partial_json)
+    .join('')
+  expect(input).toBe('{"file_path":"README.md"}')
+  expect(
+    events.filter(
+      event => event.type === 'content_block_stop' && event.index === 0,
+    ),
+  ).toHaveLength(1)
+})
+
+test('keeps fragmented parallel tool calls correlated and ordered', async () => {
+  globalThis.fetch = (async () => {
+    const chunk = (
+      toolCalls: Array<Record<string, unknown>>,
+      finishReason: string | null = null,
+    ) => ({
+      id: 'chatcmpl-parallel-names',
+      object: 'chat.completion.chunk',
+      model: 'qwen3.6-27b',
+      choices: [
+        {
+          index: 0,
+          delta: toolCalls.length > 0 ? { tool_calls: toolCalls } : {},
+          finish_reason: finishReason,
+        },
+      ],
+    })
+
+    return makeSseResponse(
+      makeStreamChunks([
+        chunk([
+          { index: 0, id: 'call_read', type: 'function' },
+          { index: 1, id: 'call_bash', type: 'function' },
+        ]),
+        chunk([
+          { index: 0, type: 'function', function: { name: 'Rea' } },
+          { index: 1, type: 'function', function: { name: 'Ba' } },
+        ]),
+        chunk([
+          { index: 1, type: 'function', function: { name: 'sh' } },
+          { index: 0, type: 'function', function: { name: 'd' } },
+        ]),
+        chunk([
+          {
+            index: 1,
+            type: 'function',
+            function: { arguments: '{"command":"pwd"}' },
+          },
+        ]),
+        chunk([
+          {
+            index: 0,
+            type: 'function',
+            function: { arguments: '{"file_path":"README.md"}' },
+          },
+        ]),
+        chunk([], 'tool_calls'),
+      ]),
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.6-27b',
+      messages: [{ role: 'user', content: 'Inspect the project' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file.',
+          input_schema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'Bash',
+          description: 'Run a command.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) events.push(event)
+
+  const toolStarts = events
+    .filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    )
+    .map(event => ({
+      index: event.index,
+      id: (event as { content_block: { id: string } }).content_block.id,
+      name: (event as { content_block: { name: string } }).content_block.name,
+    }))
+
+  expect(toolStarts).toEqual([
+    { index: 0, id: 'call_read', name: 'Read' },
+    { index: 1, id: 'call_bash', name: 'Bash' },
+  ])
+})
+
+test('recovers a missing final character for every advertised built-in tool', async () => {
+  const toolNames = getAllBaseTools()
+    .map(tool => tool.name)
+    .filter(name => name.length >= 4 && !name.startsWith('mcp__'))
+
+  globalThis.fetch = (async () => {
+    const chunks = makeStreamChunks([
+      {
+        id: 'chatcmpl-all-truncated-tools',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: toolNames.map((name, index) => ({
+                index,
+                id: `call_${index}`,
+                type: 'function',
+                function: {
+                  name: name.slice(0, -1),
+                  arguments: '{}',
+                },
+              })),
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-all-truncated-tools',
+        object: 'chat.completion.chunk',
+        model: 'qwen3.6-27b',
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+    ])
+    return makeSseResponse(chunks)
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.6-27b',
+      messages: [{ role: 'user', content: 'Exercise available tools' }],
+      tools: toolNames.map(name => ({
+        name,
+        description: `Exercise ${name}.`,
+        input_schema: { type: 'object', properties: {} },
+      })),
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const starts: Array<{ id: string; name: string }> = []
+  for await (const event of result.data) {
+    const contentBlock = event.content_block as
+      | { type?: string; id?: string; name?: string }
+      | undefined
+    if (
+      event.type === 'content_block_start' &&
+      contentBlock?.type === 'tool_use' &&
+      typeof contentBlock.id === 'string' &&
+      typeof contentBlock.name === 'string'
+    ) {
+      starts.push({ id: contentBlock.id, name: contentBlock.name })
+    }
+  }
+
+  expect(starts).toEqual(
+    toolNames.map((name, index) => ({ id: `call_${index}`, name })),
+  )
+})
+
+test('recovers a terminally truncated mapped tool name before non-streaming argument normalization', async () => {
   globalThis.fetch = (async (_input, _init) => {
     return new Response(
       JSON.stringify({
@@ -2350,7 +2701,7 @@ test('normalizes plain string Bash tool arguments from OpenAI-compatible respons
                   id: 'function-call-1',
                   type: 'function',
                   function: {
-                    name: 'Bash',
+                    name: 'Bas',
                     arguments: 'pwd',
                   },
                 },
@@ -2379,6 +2730,17 @@ test('normalizes plain string Bash tool arguments from OpenAI-compatible respons
     model: 'google/gemini-3.1-pro-preview',
     system: 'test system',
     messages: [{ role: 'user', content: 'Use Bash' }],
+    tools: [
+      {
+        name: 'Bash',
+        description: 'Run a shell command.',
+        input_schema: {
+          type: 'object',
+          properties: { command: { type: 'string' } },
+          required: ['command'],
+        },
+      },
+    ],
     max_tokens: 64,
     stream: false,
   })) as {
@@ -2584,7 +2946,7 @@ test('keeps terminal empty Bash tool arguments invalid in non-streaming response
   ])
 })
 
-test('normalizes plain string Bash tool arguments in streaming responses', async () => {
+test('normalizes mapped tool arguments when the stream ends with a truncated name', async () => {
   globalThis.fetch = (async (_input, _init) => {
     const chunks = makeStreamChunks([
       {
@@ -2602,7 +2964,7 @@ test('normalizes plain string Bash tool arguments in streaming responses', async
                   id: 'function-call-1',
                   type: 'function',
                   function: {
-                    name: 'Bash',
+                    name: 'Bas',
                     arguments: 'pwd',
                   },
                 },
@@ -2636,6 +2998,17 @@ test('normalizes plain string Bash tool arguments in streaming responses', async
       model: 'google/gemini-3.1-pro-preview',
       system: 'test system',
       messages: [{ role: 'user', content: 'Use Bash' }],
+      tools: [
+        {
+          name: 'Bash',
+          description: 'Run a shell command.',
+          input_schema: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
+            required: ['command'],
+          },
+        },
+      ],
       max_tokens: 64,
       stream: true,
     })
@@ -2657,6 +3030,16 @@ test('normalizes plain string Bash tool arguments in streaming responses', async
     .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
+  const toolStarts = events.filter(
+    event =>
+      event.type === 'content_block_start' &&
+      (event as { content_block?: { type?: string } }).content_block?.type ===
+        'tool_use',
+  )
+  expect(toolStarts).toHaveLength(1)
+  expect(toolStarts[0]).toMatchObject({
+    content_block: { name: 'Bash' },
+  })
   expect(normalizedInput).toBe('{"command":"pwd"}')
 })
 

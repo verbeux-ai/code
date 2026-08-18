@@ -25,7 +25,7 @@ import {
 } from 'src/services/analytics/index.js'
 import { ImageSizeError } from './utils/imageValidation.js'
 import { ImageResizeError } from './utils/imageResizer.js'
-import { findToolByName, type ToolUseContext } from './Tool.js'
+import { findToolByNameOrUniquePrefix, type ToolUseContext } from './Tool.js'
 import { asSystemPrompt, type SystemPrompt } from './utils/systemPromptType.js'
 import type {
   AssistantMessage,
@@ -947,7 +947,7 @@ async function* queryLoop(
                   typeof block.input === 'object' &&
                   block.input !== null
                 ) {
-                  const tool = findToolByName(
+                  const tool = findToolByNameOrUniquePrefix(
                     toolUseContext.options.tools,
                     block.name,
                   )

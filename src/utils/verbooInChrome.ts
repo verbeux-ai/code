@@ -7,6 +7,8 @@ export const VERBOO_IN_CHROME_MANAGED_MARKER = 'VERBOO_IN_CHROME_MANAGED'
 export const VERBOO_IN_CHROME_TOOL_NAMES = [
   'navigate',
   'read_page',
+  'find',
+  'extract_page_content',
   'structured_extract',
   'click',
   'type',

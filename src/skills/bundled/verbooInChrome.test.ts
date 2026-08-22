@@ -17,6 +17,8 @@ test('Verboo in Chrome skill exposes the real MCP tool contract', async () => {
   expect(skill?.allowedTools).toEqual([
     'mcp__verboo-in-chrome__navigate',
     'mcp__verboo-in-chrome__read_page',
+    'mcp__verboo-in-chrome__find',
+    'mcp__verboo-in-chrome__extract_page_content',
     'mcp__verboo-in-chrome__structured_extract',
     'mcp__verboo-in-chrome__click',
     'mcp__verboo-in-chrome__type',

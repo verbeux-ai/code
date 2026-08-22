@@ -111,6 +111,8 @@ test('browser guidance matches the tools exposed by the Verboo extension', () =>
   for (const tool of [
     'navigate',
     'read_page',
+    'find',
+    'extract_page_content',
     'structured_extract',
     'click',
     'type',

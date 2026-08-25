@@ -22,6 +22,7 @@ test('validates subscription and portal response contracts', async () => {
           {
             id: SUBSCRIPTION_ID,
             groupId: GROUP_ID,
+            source: 'managed_seat',
             status: 'past_due',
             cancelAtPeriodEnd: false,
           },
@@ -31,7 +32,9 @@ test('validates subscription and portal response contracts', async () => {
   })
   axios.get = get as typeof axios.get
 
-  await expect(fetchSubscriptions('access-token')).resolves.toHaveLength(1)
+  await expect(fetchSubscriptions('access-token')).resolves.toEqual([
+    expect.objectContaining({ source: 'managed_seat' }),
+  ])
   await expect(fetchPortalUrl('access-token')).resolves.toBe(
     'https://billing.example/session',
   )
@@ -53,6 +56,26 @@ test('does not turn a subscription API failure into an empty list', async () => 
     status: 503,
     code: 'subscriptions_unavailable',
   })
+})
+
+test('keeps entitlement responses forward-compatible with newer sources', async () => {
+  axios.get = mock(async () => ({
+    data: {
+      data: [
+        {
+          id: SUBSCRIPTION_ID,
+          groupId: GROUP_ID,
+          source: 'future_entitlement_source',
+          status: 'active',
+          cancelAtPeriodEnd: false,
+        },
+      ],
+    },
+  })) as typeof axios.get
+
+  await expect(fetchSubscriptions('access-token')).resolves.toEqual([
+    expect.objectContaining({ source: 'future_entitlement_source' }),
+  ])
 })
 
 test('rejects malformed subscription data', async () => {

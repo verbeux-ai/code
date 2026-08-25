@@ -6,6 +6,20 @@ import { logForDebugging } from '../../utils/debug.js'
 import { logError } from '../../utils/log.js'
 import { parseApiEnvelope, toVerbooApiError } from './verbooApiError.js'
 
+export const subscriptionSourceSchema = z.union([
+  z.enum([
+    'stripe',
+    'manual',
+    'trial',
+    'stripe_trial',
+    'woovi',
+    'managed_seat',
+  ]),
+  // Entitlement readers must stay forward-compatible with server-side
+  // sources introduced after a CLI release.
+  z.string().min(1),
+])
+
 const subscriptionSchema = z
   .object({
     id: z.string().uuid(),
@@ -23,7 +37,7 @@ const subscriptionSchema = z
       })
       .passthrough()
       .optional(),
-    source: z.string().optional(),
+    source: subscriptionSourceSchema.optional(),
     status: z.string().min(1),
     wooviSubscriptionId: z.string().optional(),
     currentPeriodStart: z.string().datetime({ offset: true }).optional(),

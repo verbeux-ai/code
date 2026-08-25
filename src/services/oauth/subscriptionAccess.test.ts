@@ -8,12 +8,15 @@ const NOW = new Date('2026-07-20T12:00:00Z').getTime()
 function subscription(
   status: string,
   currentPeriodEnd?: string,
+  source?: SubscriptionResponse['source'],
+  id = '11111111-1111-4111-8111-111111111111',
 ): SubscriptionResponse {
   return {
-    id: '11111111-1111-4111-8111-111111111111',
+    id,
     groupId: '22222222-2222-4222-8222-222222222222',
     status,
     currentPeriodEnd,
+    source,
     cancelAtPeriodEnd: false,
   }
 }
@@ -31,6 +34,20 @@ test('warns and keeps the CLI available with a current active subscription', () 
       NOW,
     ).kind,
   ).toBe('warn')
+})
+
+test('an active managed seat keeps access available beside a past-due personal subscription', () => {
+  const decision = getPastDueAccessDecision([
+    subscription('past_due', undefined, 'stripe'),
+    subscription(
+      'active',
+      undefined,
+      'managed_seat',
+      '33333333-3333-4333-8333-333333333333',
+    ),
+  ], NOW)
+
+  expect(decision.kind).toBe('warn')
 })
 
 test('warns and keeps the CLI available with a current trialing subscription', () => {

@@ -238,7 +238,13 @@ test('stream Responses rápido finaliza o timer sem aviso tardio', async () => {
             id: 'resp_1',
             model: 'fake-model',
             status: 'completed',
-            output: [],
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'oi' }],
+              },
+            ],
             usage: { input_tokens: 1, output_tokens: 1 },
           },
         })}\n\n`,

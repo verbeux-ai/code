@@ -449,11 +449,12 @@ const MessagesImpl = ({
       content: [streamingToolUse.contentBlock]
     });
     // Override randomUUID with deterministic value derived from content
-    // block ID to prevent React key changes on every memo recomputation.
+    // block ID and stream index to prevent React key changes on every memo
+    // recomputation while keeping protocol-distinct calls distinct.
     // Same class of bug fixed in normalizeMessages (commit 383326e613):
     // fresh randomUUID → unstable React keys → component remounts →
     // Ink rendering corruption (overlapping text from stale DOM nodes).
-    msg_1.uuid = deriveUUID(streamingToolUse.contentBlock.id as UUID, 0);
+    msg_1.uuid = deriveUUID(streamingToolUse.contentBlock.id as UUID, streamingToolUse.index);
     return normalizeMessages([msg_1]);
   }), [streamingToolUsesWithoutInProgress]);
   const isTranscriptMode = screen === 'transcript';

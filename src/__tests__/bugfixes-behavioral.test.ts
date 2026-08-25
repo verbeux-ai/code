@@ -1,5 +1,9 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
-import { createAssistantAPIErrorMessage, handleMessageFromStream } from '../utils/messages.ts'
+import {
+  createAssistantAPIErrorMessage,
+  handleMessageFromStream,
+  type StreamingToolUse,
+} from '../utils/messages.ts'
 import {
   createWatchdogState,
   tickWaitingWatchdog,
@@ -20,13 +24,29 @@ describe('messages.ts stream mode reset for API error messages', () => {
     })
 
     const streamModeCalls: string[] = []
+    let streamingToolUses: StreamingToolUse[] = [
+      {
+        index: 0,
+        contentBlock: {
+          type: 'tool_use',
+          id: 'stale_after_transport_error',
+          name: 'Read',
+          input: {},
+        },
+        unparsedToolInput: '{"file_path":"partial',
+      },
+    ]
     const callbacks = {
       onMessage: () => {},
       onUpdateLength: () => {},
       onSetStreamMode: (mode: string) => {
         streamModeCalls.push(mode)
       },
-      onStreamingToolUses: () => {},
+      onStreamingToolUses: (
+        update: (current: StreamingToolUse[]) => StreamingToolUse[],
+      ) => {
+        streamingToolUses = update(streamingToolUses)
+      },
     }
 
     handleMessageFromStream(
@@ -34,10 +54,170 @@ describe('messages.ts stream mode reset for API error messages', () => {
       callbacks.onMessage,
       callbacks.onUpdateLength,
       callbacks.onSetStreamMode as (mode: string) => void,
-      callbacks.onStreamingToolUses as (f: unknown) => void,
+      callbacks.onStreamingToolUses,
     )
 
     expect(streamModeCalls).toContain('tool-use')
+    expect(streamingToolUses).toEqual([])
+  })
+})
+
+describe('messages.ts idempotent streaming tool state', () => {
+  test('duplicate tool starts keep one entry and preserve JSON deltas', () => {
+    let streamingToolUses: StreamingToolUse[] = []
+    const handle = (event: Record<string, unknown>) =>
+      handleMessageFromStream(
+        { type: 'stream_event', event } as never,
+        () => {},
+        () => {},
+        () => {},
+        update => {
+          streamingToolUses = update(streamingToolUses)
+        },
+      )
+
+    handle({
+      type: 'content_block_start',
+      index: 0,
+      content_block: {
+        type: 'tool_use',
+        id: 'call_read',
+        name: 'Read',
+        input: {},
+      },
+    })
+    handle({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"file_' },
+    })
+    handle({
+      type: 'content_block_start',
+      index: 0,
+      content_block: {
+        type: 'tool_use',
+        id: 'call_read',
+        name: 'Read',
+        input: {},
+      },
+    })
+    handle({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: 'path":"x"}' },
+    })
+
+    expect(streamingToolUses).toHaveLength(1)
+    expect(streamingToolUses[0]?.contentBlock.id).toBe('call_read')
+    expect(streamingToolUses[0]?.contentBlock.name).toBe('Read')
+    expect(streamingToolUses[0]?.unparsedToolInput).toBe(
+      '{"file_path":"x"}',
+    )
+  })
+
+  test('message_start clears stale tool state left by an interrupted stream', () => {
+    let streamingToolUses: StreamingToolUse[] = [
+      {
+        index: 0,
+        contentBlock: {
+          type: 'tool_use',
+          id: 'stale_call',
+          name: 'Read',
+          input: {},
+        },
+        unparsedToolInput: '{"stale":true}',
+      },
+    ]
+
+    handleMessageFromStream(
+      {
+        type: 'stream_event',
+        event: { type: 'message_start', message: {} },
+      } as never,
+      () => {},
+      () => {},
+      () => {},
+      update => {
+        streamingToolUses = update(streamingToolUses)
+      },
+    )
+
+    expect(streamingToolUses).toEqual([])
+  })
+
+  test('same ID at a different index remains a distinct protocol call', () => {
+    let streamingToolUses: StreamingToolUse[] = []
+    const handleStart = (index: number) =>
+      handleMessageFromStream(
+        {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index,
+            content_block: {
+              type: 'tool_use',
+              id: 'shared_id',
+              name: 'Read',
+              input: {},
+            },
+          },
+        } as never,
+        () => {},
+        () => {},
+        () => {},
+        update => {
+          streamingToolUses = update(streamingToolUses)
+        },
+      )
+
+    handleStart(0)
+    handleStart(1)
+
+    expect(streamingToolUses.map(toolUse => toolUse.index)).toEqual([0, 1])
+  })
+
+  test('reusing an index with a new ID replaces stale identity and input', () => {
+    let streamingToolUses: StreamingToolUse[] = []
+    const handle = (event: Record<string, unknown>) =>
+      handleMessageFromStream(
+        { type: 'stream_event', event } as never,
+        () => {},
+        () => {},
+        () => {},
+        update => {
+          streamingToolUses = update(streamingToolUses)
+        },
+      )
+
+    handle({
+      type: 'content_block_start',
+      index: 0,
+      content_block: {
+        type: 'tool_use',
+        id: 'old_call',
+        name: 'Read',
+        input: {},
+      },
+    })
+    handle({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"old":true}' },
+    })
+    handle({
+      type: 'content_block_start',
+      index: 0,
+      content_block: {
+        type: 'tool_use',
+        id: 'new_call',
+        name: 'Bash',
+        input: {},
+      },
+    })
+
+    expect(streamingToolUses).toHaveLength(1)
+    expect(streamingToolUses[0]?.contentBlock.id).toBe('new_call')
+    expect(streamingToolUses[0]?.unparsedToolInput).toBe('')
   })
 })
 

@@ -386,11 +386,23 @@ export function resolveToolNameByUniquePrefix(
   const uniqueToolNames = [...new Set(toolNames)]
   if (uniqueToolNames.includes(name)) return name
 
-  if (name.length < 3 || name.startsWith('mcp__')) return undefined
-
-  const prefixMatches = uniqueToolNames.filter(toolName =>
-    toolName.startsWith(name),
+  const caseInsensitiveExactMatches = uniqueToolNames.filter(
+    toolName => toolName.toLowerCase() === name.toLowerCase(),
   )
+  if (caseInsensitiveExactMatches.length === 1) {
+    return caseInsensitiveExactMatches[0]
+  }
+
+  const normalizedName = name.toLowerCase()
+  if (name.length < 3) return undefined
+
+  const prefixMatches = uniqueToolNames.filter(toolName => {
+    const normalizedToolName = toolName.toLowerCase()
+    return (
+      !normalizedToolName.startsWith('mcp__') &&
+      normalizedToolName.startsWith(normalizedName)
+    )
+  })
   const oneCharacterCompletions = prefixMatches.filter(
     toolName => toolName.length === name.length + 1,
   )

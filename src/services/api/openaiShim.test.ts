@@ -44,6 +44,9 @@ const originalEnv = {
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
   MIMO_API_KEY: process.env.MIMO_API_KEY,
+  VERBOO_STREAM_IDLE_TIMEOUT_MS: process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS,
+  VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS:
+    process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS,
 }
 
 const originalFetch = globalThis.fetch
@@ -129,6 +132,8 @@ beforeEach(async () => {
   delete process.env.OPENROUTER_API_KEY
   delete process.env.DEEPSEEK_API_KEY
   delete process.env.MIMO_API_KEY
+  delete process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS
+  delete process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
 })
 
 afterEach(() => {
@@ -162,6 +167,14 @@ afterEach(() => {
     restoreEnv('OPENROUTER_API_KEY', originalEnv.OPENROUTER_API_KEY)
     restoreEnv('DEEPSEEK_API_KEY', originalEnv.DEEPSEEK_API_KEY)
     restoreEnv('MIMO_API_KEY', originalEnv.MIMO_API_KEY)
+    restoreEnv(
+      'VERBOO_STREAM_IDLE_TIMEOUT_MS',
+      originalEnv.VERBOO_STREAM_IDLE_TIMEOUT_MS,
+    )
+    restoreEnv(
+      'VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS',
+      originalEnv.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS,
+    )
     resetRouterRateLimitForTesting()
     globalThis.fetch = originalFetch
   } finally {
@@ -618,13 +631,14 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
     return new Response(
       JSON.stringify({
         id: 'resp-1',
+        status: 'completed',
         model: 'gpt-5.4',
         output: [
           {
             type: 'function_call',
             id: 'fc_read',
             call_id: 'call_read',
-            name: 'Rea',
+            name: 'rea',
             arguments: '{"file_path":"README.md"}',
           },
         ],
@@ -700,6 +714,7 @@ test('strips store from strict OpenAI-compatible responses providers', async () 
     return new Response(
       JSON.stringify({
         id: 'resp-1',
+        status: 'completed',
         model: 'kimi-k2.5',
         output: [
           {
@@ -740,7 +755,12 @@ test('strips store when providerOverride routes chat_completions to the Gemini h
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-gemini',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       { headers: { 'Content-Type': 'application/json' } },
     )
@@ -774,6 +794,7 @@ test('strips store when providerOverride routes responses API to the Gemini host
     return new Response(
       JSON.stringify({
         id: 'resp-gemini',
+        status: 'completed',
         output: [
           {
             type: 'message',
@@ -817,7 +838,12 @@ test('uses custom OpenAI-compatible auth header value when configured', async ()
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       {
         headers: {
@@ -853,7 +879,12 @@ test('uses Hicap api-key auth header for the Hicap route', async () => {
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       {
         headers: {
@@ -889,7 +920,12 @@ test('defaults Authorization custom auth header to bearer scheme', async () => {
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       {
         headers: {
@@ -925,7 +961,12 @@ test('honors bearer scheme for custom OpenAI-compatible auth headers', async () 
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       {
         headers: {
@@ -963,7 +1004,12 @@ test('ignores custom auth header value when no custom header is configured', asy
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
       }),
       {
         headers: {
@@ -1400,6 +1446,16 @@ test.each([
     expectedStopReason: 'max_tokens',
     expectedWarning: '[Response truncated',
   },
+  {
+    finishReason: 'content_filter',
+    expectedStopReason: 'end_turn',
+    expectedWarning: '[Content blocked',
+  },
+  {
+    finishReason: 'safety',
+    expectedStopReason: 'end_turn',
+    expectedWarning: '[Content blocked',
+  },
 ])(
   'streaming: finish-only $finishReason without tools is a valid terminal response',
   async ({ finishReason, expectedStopReason, expectedWarning }) => {
@@ -1449,9 +1505,46 @@ test.each([
     expect(stopEvent?.delta?.stop_reason).toBe(expectedStopReason)
     if (expectedWarning) expect(visibleText).toContain(expectedWarning)
     else expect(visibleText).toBe('')
+    const blockStarts = events
+      .filter(event => event.type === 'content_block_start')
+      .map(event => event.index)
+    const blockStops = events
+      .filter(event => event.type === 'content_block_stop')
+      .map(event => event.index)
+    expect(blockStops).toEqual(blockStarts)
     expect(events.at(-1)?.type).toBe('message_stop')
   },
 )
+
+test('streaming: rejects a successful response without an SSE body', async () => {
+  globalThis.fetch = (async () =>
+    new Response(null, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'fake-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('no readable body')
+  expect(events.map(event => event.type)).toEqual(['message_start'])
+})
 
 test('uses max_tokens instead of max_completion_tokens for local providers', async () => {
   process.env.OPENAI_BASE_URL = 'http://localhost:11434/v1'
@@ -2354,11 +2447,34 @@ test('preserves Gemini tool call extra_content from streaming chunks', async () 
                   extra_content: {
                     google: {
                       thought_signature: 'sig-stream',
+                      first: 'one',
                     },
+                    top: 'keep',
                   },
                   function: {
                     name: 'Bash',
                     arguments: '{"command":"pwd"}',
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        model: 'google/gemini-3.1-pro-preview',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  extra_content: {
+                    google: { second: 'two' },
                   },
                 },
               ],
@@ -2401,24 +2517,33 @@ test('preserves Gemini tool call extra_content from streaming chunks', async () 
     events.push(event)
   }
 
-  const toolStart = events.find(
+  const toolStarts = events.filter(
     (event) =>
       event.type === 'content_block_start' &&
       typeof event.content_block === 'object' &&
       event.content_block !== null &&
       (event.content_block as Record<string, unknown>).type === 'tool_use',
-  ) as { content_block?: Record<string, unknown> } | undefined
+  ) as Array<{ content_block?: Record<string, unknown> }>
 
-  expect(toolStart?.content_block).toMatchObject({
+  expect(toolStarts).toHaveLength(1)
+  expect(toolStarts[0]?.content_block).toMatchObject({
     type: 'tool_use',
     id: 'function-call-1',
     name: 'Bash',
     extra_content: {
       google: {
         thought_signature: 'sig-stream',
+        first: 'one',
+        second: 'two',
       },
+      top: 'keep',
     },
   })
+  expect(
+    events.filter(
+      event => event.type === 'content_block_stop' && event.index === 0,
+    ),
+  ).toHaveLength(1)
 })
 
 test('reassembles tool names split across OpenAI streaming chunks', async () => {
@@ -2437,7 +2562,7 @@ test('reassembles tool names split across OpenAI streaming chunks', async () => 
                   index: 0,
                   id: 'call_read_1',
                   type: 'function',
-                  function: { name: 'Rea', arguments: '{"file_path":' },
+                  function: { name: 'rea', arguments: '{"file_path":' },
                 },
               ],
             },
@@ -2575,6 +2700,718 @@ test('reassembles tool names split across OpenAI streaming chunks', async () => 
   ).toHaveLength(1)
 })
 
+test.each([
+  ['delta', ['Read', 'File']],
+  ['cumulative', ['Read', 'ReadFile']],
+])(
+  'resolves %s streamed names from a tool that is also an exact prefix',
+  async (_style, nameFragments) => {
+    globalThis.fetch = (async () => {
+      const chunks = makeStreamChunks([
+        ...nameFragments.map((name, position) => ({
+          id: 'chatcmpl-prefix-tool',
+          object: 'chat.completion.chunk',
+          model: 'prefix-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    ...(position === 0
+                      ? { id: 'call_read_file', type: 'function' }
+                      : {}),
+                    function: {
+                      name,
+                      ...(position === nameFragments.length - 1
+                        ? { arguments: '{"file_path":"README.md"}' }
+                        : {}),
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        })),
+        {
+          id: 'chatcmpl-prefix-tool',
+          object: 'chat.completion.chunk',
+          model: 'prefix-model',
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ])
+      return makeSseResponse(chunks)
+    }) as unknown as FetchType
+
+    const client = createOpenAIShimClient({}) as OpenAIShimClient
+    const result = await client.beta.messages
+      .create({
+        model: 'prefix-model',
+        messages: [{ role: 'user', content: 'Read README.md' }],
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a file.',
+            input_schema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'ReadFile',
+            description: 'Read a file with the alternate tool.',
+            input_schema: { type: 'object', properties: {} },
+          },
+        ],
+        max_tokens: 64,
+        stream: true,
+      })
+      .withResponse()
+
+    const events: Array<Record<string, unknown>> = []
+    for await (const event of result.data) events.push(event)
+    const toolStarts = events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ) as Array<{ content_block: { name: string } }>
+
+    expect(toolStarts).toHaveLength(1)
+    expect(toolStarts[0]?.content_block.name).toBe('ReadFile')
+  },
+)
+
+test('supports legacy streamed function_call with terminal-only commit', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-legacy',
+          object: 'chat.completion.chunk',
+          model: 'legacy-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                function_call: {
+                  name: 'rea',
+                  arguments: '{"file_path":',
+                },
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-legacy',
+          object: 'chat.completion.chunk',
+          model: 'legacy-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                function_call: {
+                  name: 'd',
+                  arguments: '"README.md"}',
+                },
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-legacy',
+          object: 'chat.completion.chunk',
+          model: 'legacy-model',
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'function_call' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'legacy-model',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) events.push(event)
+
+  const toolStarts = events.filter(
+    event =>
+      event.type === 'content_block_start' &&
+      (event as { content_block?: { type?: string } }).content_block?.type ===
+        'tool_use',
+  ) as Array<{ content_block: { id: string; name: string } }>
+  expect(toolStarts).toHaveLength(1)
+  expect(toolStarts[0]?.content_block.name).toBe('Read')
+  expect(toolStarts[0]?.content_block.id).toMatch(/^msg_.*_function_call$/)
+  expect(
+    events
+      .filter(
+        event =>
+          (event as { delta?: { type?: string } }).delta?.type ===
+          'input_json_delta',
+      )
+      .map(
+        event =>
+          (event as { delta: { partial_json: string } }).delta.partial_json,
+      )
+      .join(''),
+  ).toBe('{"file_path":"README.md"}')
+})
+
+test('supports legacy non-streaming function_call', async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        id: 'chatcmpl-legacy-nonstream',
+        model: 'legacy-model',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              function_call: {
+                name: 'rea',
+                arguments: '{"file_path":"README.md"}',
+              },
+            },
+            finish_reason: 'function_call',
+          },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const message = (await client.beta.messages.create({
+    model: 'legacy-model',
+    messages: [{ role: 'user', content: 'Read README.md' }],
+    tools: [
+      {
+        name: 'Read',
+        description: 'Read a file.',
+        input_schema: { type: 'object', properties: {} },
+      },
+    ],
+    max_tokens: 64,
+    stream: false,
+  })) as { content: Array<Record<string, unknown>>; stop_reason: string }
+
+  expect(message.stop_reason).toBe('tool_use')
+  expect(message.content).toContainEqual({
+    type: 'tool_use',
+    id: 'chatcmpl-legacy-nonstream_function_call',
+    name: 'Read',
+    input: { file_path: 'README.md' },
+  })
+})
+
+test.each([
+  ['empty batch', []],
+  [
+    'malformed call',
+    [{ id: 'call_bad', type: 'function', function: { name: null, arguments: '{}' } }],
+  ],
+  [
+    'duplicate IDs',
+    [
+      { id: 'same_call', type: 'function', function: { name: 'Read', arguments: '{}' } },
+      { id: 'same_call', type: 'function', function: { name: 'Bash', arguments: '{}' } },
+    ],
+  ],
+  [
+    'unadvertised call',
+    [
+      {
+        id: 'call_unadvertised',
+        type: 'function',
+        function: { name: 'Bash', arguments: '{}' },
+      },
+    ],
+  ],
+])('rejects non-streaming tool terminal with %s', async (_case, toolCalls) => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        id: 'chatcmpl-invalid-nonstream',
+        model: 'invalid-model',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: toolCalls,
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  let thrown: unknown
+  try {
+    await client.beta.messages.create({
+      model: 'invalid-model',
+      messages: [{ role: 'user', content: 'Use a tool' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('no tool was committed')
+})
+
+test('rejects conflicting streamed tool IDs without committing a tool', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-conflicting-id',
+          object: 'chat.completion.chunk',
+          model: 'test-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_a',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-conflicting-id',
+          object: 'chat.completion.chunk',
+          model: 'test-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_b',
+                    type: 'function',
+                    function: {},
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-conflicting-id',
+          object: 'chat.completion.chunk',
+          model: 'test-model',
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'Read' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+})
+
+test('rejects duplicate IDs across parallel streamed tool calls', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-duplicate-ids',
+          object: 'chat.completion.chunk',
+          model: 'duplicate-id-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'same_id',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{}' },
+                  },
+                  {
+                    index: 1,
+                    id: 'same_id',
+                    type: 'function',
+                    function: { name: 'Bash', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-duplicate-ids',
+          object: 'chat.completion.chunk',
+          model: 'duplicate-id-model',
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'duplicate-id-model',
+      messages: [{ role: 'user', content: 'Use tools' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'Bash',
+          description: 'Run.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('incomplete or ambiguous')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
+})
+
+test('rejects sparse parallel deltas when tool indices are missing', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-missing-indices',
+          object: 'chat.completion.chunk',
+          model: 'missing-index-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    id: 'call_read',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{"file_path":"A' },
+                  },
+                  {
+                    id: 'call_bash',
+                    type: 'function',
+                    function: { name: 'Bash', arguments: '{"command":"B' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-missing-indices',
+          object: 'chat.completion.chunk',
+          model: 'missing-index-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [{ function: { arguments: '2"}' } }],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'missing-index-model',
+      messages: [{ role: 'user', content: 'Use tools' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'Bash',
+          description: 'Run.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('omitted tool indices')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
+})
+
+test('rejects cumulative argument snapshots with non-word JSON keys', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-cumulative-arguments',
+          object: 'chat.completion.chunk',
+          model: 'cumulative-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_custom',
+                    type: 'function',
+                    function: { name: 'Custom', arguments: '{"file-path":' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-cumulative-arguments',
+          object: 'chat.completion.chunk',
+          model: 'cumulative-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { arguments: '{"file-path":1}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl-cumulative-arguments',
+          object: 'chat.completion.chunk',
+          model: 'cumulative-model',
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'cumulative-model',
+      messages: [{ role: 'user', content: 'Use custom tool' }],
+      tools: [
+        {
+          name: 'Custom',
+          description: 'Custom.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('incomplete or ambiguous')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
+})
+
+test('rejects ambiguous cumulative raw Bash argument snapshots before tool start', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_bash',
+                    type: 'function',
+                    function: { name: 'Bash', arguments: 'e' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { arguments: 'echo hi' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'cumulative-bash-model',
+      messages: [{ role: 'user', content: 'run command' }],
+      tools: [
+        {
+          name: 'Bash',
+          description: 'Run.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 32,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('incomplete or ambiguous')
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+})
+
 test('keeps fragmented parallel tool calls correlated and ordered', async () => {
   globalThis.fetch = (async () => {
     const chunk = (
@@ -2600,8 +3437,8 @@ test('keeps fragmented parallel tool calls correlated and ordered', async () => 
           { index: 1, id: 'call_bash', type: 'function' },
         ]),
         chunk([
-          { index: 0, type: 'function', function: { name: 'Rea' } },
-          { index: 1, type: 'function', function: { name: 'Ba' } },
+          { index: 0, type: 'function', function: { name: 'rea' } },
+          { index: 1, type: 'function', function: { name: 'ba' } },
         ]),
         chunk([
           { index: 1, type: 'function', function: { name: 'sh' } },
@@ -2667,6 +3504,107 @@ test('keeps fragmented parallel tool calls correlated and ordered', async () => 
   expect(toolStarts).toEqual([
     { index: 0, id: 'call_read', name: 'Read' },
     { index: 1, id: 'call_bash', name: 'Bash' },
+  ])
+})
+
+test('orders parallel tool blocks by protocol index instead of arrival order', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 1,
+                    id: 'call_one',
+                    type: 'function',
+                    function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_zero',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{"file_path":"README.md"}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'parallel-order-model',
+      messages: [{ role: 'user', content: 'use tools' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'Bash',
+          description: 'Run.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 32,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  for await (const event of result.data) events.push(event)
+  const starts = events.filter(
+    event =>
+      event.type === 'content_block_start' &&
+      (event as { content_block?: { type?: string } }).content_block?.type ===
+        'tool_use',
+  ) as Array<{ index: number; content_block: { id: string } }>
+  expect(starts.map(event => [event.index, event.content_block.id])).toEqual([
+    [0, 'call_zero'],
+    [1, 'call_one'],
+  ])
+  const stops = events.filter(event => event.type === 'content_block_stop')
+  expect(stops.map(event => event.index)).toEqual([0, 1])
+  const toolLifecycle = events
+    .filter(event =>
+      event.type === 'content_block_start' ||
+      event.type === 'content_block_delta' ||
+      event.type === 'content_block_stop',
+    )
+    .map(event => `${String(event.type)}:${String(event.index)}`)
+  expect(toolLifecycle).toEqual([
+    'content_block_start:0',
+    'content_block_delta:0',
+    'content_block_stop:0',
+    'content_block_start:1',
+    'content_block_delta:1',
+    'content_block_stop:1',
   ])
 })
 
@@ -3553,7 +4491,7 @@ test('normalizes streaming Bash arguments when the first chunk is only an openin
   expect(normalizedInput).toBe('{"command":"{ pwd; }"}')
 })
 
-test('repairs truncated structured Bash JSON in streaming responses', async () => {
+test('rejects truncated structured Bash JSON before committing a tool', async () => {
   globalThis.fetch = (async (_input, _init) => {
     const chunks = makeStreamChunks([
       {
@@ -3611,25 +4549,21 @@ test('repairs truncated structured Bash JSON in streaming responses', async () =
     .withResponse()
 
   const events: Array<Record<string, unknown>> = []
-  for await (const event of result.data) {
-    events.push(event)
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
   }
 
-  const normalizedInput = events
-    .filter(
-      (event) =>
-        event.type === 'content_block_delta' &&
-        typeof event.delta === 'object' &&
-        event.delta !== null &&
-        (event.delta as Record<string, unknown>).type === 'input_json_delta',
-    )
-    .map((event) => (event.delta as Record<string, unknown>).partial_json)
-    .join('')
-
-  expect(normalizedInput).toBe('{"command":"pwd"}')
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('incomplete or ambiguous')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
 })
 
-test('does not normalize incomplete streamed Bash commands when finish_reason is length', async () => {
+test('does not commit incomplete streamed Bash commands when finish_reason is length', async () => {
   globalThis.fetch = (async (_input, _init) => {
     const chunks = makeStreamChunks([
       {
@@ -3702,10 +4636,23 @@ test('does not normalize incomplete streamed Bash commands when finish_reason is
     .map((event) => (event.delta as Record<string, unknown>).partial_json)
     .join('')
 
-  expect(streamedInput).toBe('rg --fi')
+  expect(streamedInput).toBe('')
+  expect(
+    events.filter(
+      (event) =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+  const visibleStarts = events.filter(
+    event => event.type === 'content_block_start',
+  ) as Array<{ index: number }>
+  expect(visibleStarts).toHaveLength(1)
+  expect(visibleStarts[0]?.index).toBe(0)
 })
 
-test('repairs truncated JSON objects even without command field', async () => {
+test('rejects truncated JSON objects even without command field', async () => {
   globalThis.fetch = (async (_input, _init) => {
     const chunks = makeStreamChunks([
       {
@@ -3763,25 +4710,21 @@ test('repairs truncated JSON objects even without command field', async () => {
     .withResponse()
 
   const events: Array<Record<string, unknown>> = []
-  for await (const event of result.data) {
-    events.push(event)
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
   }
 
-  const streamedInput = events
-    .filter(
-      (event) =>
-        event.type === 'content_block_delta' &&
-        typeof event.delta === 'object' &&
-        event.delta !== null &&
-        (event.delta as Record<string, unknown>).type === 'input_json_delta',
-    )
-    .map((event) => (event.delta as Record<string, unknown>).partial_json)
-    .join('')
-
-  expect(streamedInput).toBe('{"cwd":"/tmp"}')
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('incomplete or ambiguous')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
 })
 
-test('preserves raw input for unknown plain string tool arguments', async () => {
+test('rejects raw input for unknown non-mapped tool arguments', async () => {
   globalThis.fetch = (async (_input, _init) => {
     return new Response(
       JSON.stringify({
@@ -3821,27 +4764,31 @@ test('preserves raw input for unknown plain string tool arguments', async () => 
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = (await client.beta.messages.create({
-    model: 'google/gemini-3.1-pro-preview',
-    system: 'test system',
-    messages: [{ role: 'user', content: 'Use tool' }],
-    max_tokens: 64,
-    stream: false,
-  })) as {
-    content?: Array<Record<string, unknown>>
+  let thrown: unknown
+  try {
+    await client.beta.messages.create({
+      model: 'google/gemini-3.1-pro-preview',
+      system: 'test system',
+      messages: [{ role: 'user', content: 'Use tool' }],
+      tools: [
+        {
+          name: 'UnknownTool',
+          description: 'Unknown.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
   }
 
-  expect(message.content).toEqual([
-    {
-      type: 'tool_use',
-      id: 'function-call-1',
-      name: 'UnknownTool',
-      input: {},
-    },
-  ])
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('no tool was committed')
 })
 
-test('preserves parsed string input for unknown JSON string tool arguments', async () => {
+test('rejects scalar JSON input for unknown non-mapped tool arguments', async () => {
   globalThis.fetch = (async (_input, _init) => {
     return new Response(
       JSON.stringify({
@@ -3881,24 +4828,28 @@ test('preserves parsed string input for unknown JSON string tool arguments', asy
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
 
-  const message = (await client.beta.messages.create({
-    model: 'google/gemini-3.1-pro-preview',
-    system: 'test system',
-    messages: [{ role: 'user', content: 'Use tool' }],
-    max_tokens: 64,
-    stream: false,
-  })) as {
-    content?: Array<Record<string, unknown>>
+  let thrown: unknown
+  try {
+    await client.beta.messages.create({
+      model: 'google/gemini-3.1-pro-preview',
+      system: 'test system',
+      messages: [{ role: 'user', content: 'Use tool' }],
+      tools: [
+        {
+          name: 'UnknownTool',
+          description: 'Unknown.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
   }
 
-  expect(message.content).toEqual([
-    {
-      type: 'tool_use',
-      id: 'function-call-1',
-      name: 'UnknownTool',
-      input: 'pwd',
-    },
-  ])
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toContain('no tool was committed')
 })
 
 test('sanitizes malformed MCP tool schemas before sending them to OpenAI', async () => {
@@ -6426,6 +7377,7 @@ test('strips Anthropic attribution header block from responses-API instructions 
     return new Response(
       JSON.stringify({
         id: 'resp-1',
+        status: 'completed',
         model: 'gpt-5.4',
         output: [
           {
@@ -6705,15 +7657,786 @@ test.each([
       (e as { content_block?: { type?: string } }).content_block?.type ===
         expectedBlockType,
   )
-  expect(blockStarts).toHaveLength(1)
+  const expectedCommittedBlocks = expectedBlockType === 'tool_use' ? 0 : 1
+  expect(blockStarts).toHaveLength(expectedCommittedBlocks)
 
   const blockStops = events.filter(
     (e) => e.type === 'content_block_stop' && (e as { index?: unknown }).index === 0,
   )
-  expect(blockStops).toHaveLength(1)
+  expect(blockStops).toHaveLength(expectedCommittedBlocks)
 
   // No message_stop — premature close is a transport error, not a clean stop
   expect(events.filter((e) => e.type === 'message_stop')).toHaveLength(0)
+})
+
+test.each([
+  [
+    'reader rejection',
+    () => {
+      const encoder = new TextEncoder()
+      let read = false
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (!read) {
+              read = true
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'visible' }, finish_reason: null }] })}\n\n`,
+                ),
+              )
+              return
+            }
+            controller.error(new Error('wire broke'))
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      )
+    },
+    /wire broke/,
+  ],
+  [
+    'malformed tool delta',
+    () =>
+      makeSseResponse(
+        makeStreamChunks([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { content: 'visible' },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 123,
+                      function: { name: 'Read', arguments: '{}' },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+        ]),
+      ),
+    /malformed tool call fields/,
+  ],
+  [
+    'invalid SSE JSON',
+    () =>
+      makeSseResponse([
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'visible' }, finish_reason: null }] })}\n\n`,
+        'data: {BROKEN JSON}\n\n',
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'lost' }, finish_reason: 'stop' }] })}\n\n`,
+        'data: [DONE]\n\n',
+      ]),
+    /invalid SSE JSON/,
+  ],
+])('balances visible blocks after %s', async (_case, responseFactory, errorPattern) => {
+  globalThis.fetch = (async () => responseFactory()) as unknown as FetchType
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'failure-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toMatch(errorPattern)
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test.each([
+  ['late text', { content: 'LATE' }],
+  [
+    'late tool delta',
+    {
+      tool_calls: [
+        {
+          index: 0,
+          id: 'call_late',
+          type: 'function',
+          function: { name: 'Read', arguments: '{}' },
+        },
+      ],
+    },
+  ],
+])('rejects %s after finish_reason without reopening blocks', async (
+  _case,
+  lateDelta,
+) => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'first' },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: lateDelta, finish_reason: null },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'terminal-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('after finish_reason')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test('rejects DONE without finish_reason immediately and balances the open block', async () => {
+  const encoder = new TextEncoder()
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'visible' }, finish_reason: null }] })}\n\ndata: [DONE]\n\n`,
+            ),
+          )
+          // Deliberately keep the transport open. [DONE] itself must end the
+          // protocol instead of waiting for EOF or the idle timeout.
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'done-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('[DONE] without finish_reason')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test.each([123, true, { reason: 'stop' }])(
+  'rejects malformed streaming finish_reason %p with a balanced block',
+  async malformedFinishReason => {
+    globalThis.fetch = (async () =>
+      makeSseResponse(
+        makeStreamChunks([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { content: 'visible' },
+                finish_reason: malformedFinishReason,
+              },
+            ],
+          },
+        ]),
+      )) as unknown as FetchType
+
+    const client = createOpenAIShimClient({}) as OpenAIShimClient
+    const result = await client.beta.messages
+      .create({
+        model: 'finish-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 16,
+        stream: true,
+      })
+      .withResponse()
+
+    const events: Array<Record<string, unknown>> = []
+    let thrown: unknown
+    try {
+      for await (const event of result.data) events.push(event)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect((thrown as Error).message).toContain('malformed finish_reason')
+    expect(
+      events.filter(event => event.type === 'content_block_start'),
+    ).toHaveLength(0)
+    expect(
+      events.filter(event => event.type === 'content_block_stop'),
+    ).toHaveLength(0)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+  },
+)
+
+test('rejects reasoning resumed after visible text without targeting a closed block', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { reasoning_content: 'R1' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'visible' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { reasoning_content: 'R2' },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'reasoning-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('reasoning after visible text')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(2)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(2)
+  const stoppedIndices = new Set(
+    events
+      .filter(event => event.type === 'content_block_stop')
+      .map(event => event.index),
+  )
+  for (const event of events.filter(
+    candidate => candidate.type === 'content_block_delta',
+  )) {
+    expect(stoppedIndices.has(event.index)).toBe(true)
+  }
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test('rejects reasoning first seen after visible text with a balanced text block', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'visible' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { reasoning_content: 'late reasoning' },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'reasoning-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('reasoning after visible text')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test('rejects text after a reserved OpenAI tool block without emitting indices out of order', async () => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'first' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_read',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'late' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'ordered-tool-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('text after a reserved tool block')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test('balances visible blocks after stream idle timeout', async () => {
+  process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS = '20'
+  const encoder = new TextEncoder()
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'visible' }, finish_reason: null }] })}\n\n`,
+            ),
+          )
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'timeout-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+
+  expect((thrown as Error).message).toContain('stream idle')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(1)
+  expect(
+    events.filter(event => event.type === 'content_block_stop'),
+  ).toHaveLength(1)
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test.each([
+  ['Custom', '{ dangerous; }', 'Custom'],
+  ['mcp__files__read', 'pwd', 'mcp__files__read'],
+  ['Bash', '{}', 'Read'],
+])('rejects invalid or unadvertised streaming call for %s', async (
+  toolName,
+  argumentsValue,
+  advertisedName,
+) => {
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_invalid_args',
+                    function: { name: toolName, arguments: argumentsValue },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'strict-arguments-model',
+      messages: [{ role: 'user', content: 'use tool' }],
+      tools: [
+        {
+          name: advertisedName,
+          description: 'Tool.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+  expect(thrown).toBeInstanceOf(Error)
+  expect(
+    events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        (event as { content_block?: { type?: string } }).content_block?.type ===
+          'tool_use',
+    ),
+  ).toHaveLength(0)
+})
+
+test('caps aggregate buffered tool arguments before tool start', async () => {
+  process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = '32'
+  globalThis.fetch = (async () =>
+    makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_oversized',
+                    function: { name: 'Bash', arguments: 'x'.repeat(33) },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+      ]),
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'bounded-model',
+      messages: [{ role: 'user', content: 'use tool' }],
+      tools: [
+        {
+          name: 'Bash',
+          description: 'Run.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+  expect((thrown as Error).message).toContain('safety limit')
+  expect(
+    events.filter(event => event.type === 'content_block_start'),
+  ).toHaveLength(0)
+})
+
+test('rejects non-streaming responses without a terminal choice', async () => {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ id: 'empty', model: 'empty', choices: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    })) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  let thrown: unknown
+  try {
+    await client.beta.messages.create({
+      model: 'empty',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
+  }
+  expect((thrown as Error).message).toContain('without a terminal choice')
+})
+
+test.each([
+  [
+    'missing status',
+    {
+      id: 'resp_missing_status',
+      output: [
+        {
+          id: 'fc_read',
+          call_id: 'call_read',
+          type: 'function_call',
+          name: 'Read',
+          arguments: '{}',
+        },
+      ],
+    },
+    /omitted its terminal status/,
+  ],
+  [
+    'failed status',
+    {
+      id: 'resp_failed',
+      status: 'failed',
+      error: { message: 'provider failed' },
+      output: [
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'partial' }],
+        },
+      ],
+    },
+    /response failed: provider failed/,
+  ],
+])('rejects a non-streaming Responses payload with %s', async (
+  _case,
+  payload,
+  errorPattern,
+) => {
+  process.env.OPENAI_API_FORMAT = 'responses'
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify(payload), {
+      headers: { 'Content-Type': 'application/json' },
+    })) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  let thrown: unknown
+  try {
+    await client.beta.messages.create({
+      model: 'responses-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 16,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
+  }
+
+  expect(thrown).toBeInstanceOf(Error)
+  expect((thrown as Error).message).toMatch(errorPattern)
 })
 
 // ---------------------------------------------------------------------------
@@ -6769,7 +8492,7 @@ test.each([
       }),
       { headers: { 'Content-Type': 'text/event-stream' } },
     )
-  }) as FetchType
+  }) as unknown as FetchType
 
   const client = createOpenAIShimClient({}) as OpenAIShimClient
   const result = await client.beta.messages
@@ -6800,12 +8523,13 @@ test.each([
       (e as { content_block?: { type?: string } }).content_block?.type ===
         expectedBlockType,
   )
-  expect(blockStarts).toHaveLength(1)
+  const expectedCommittedBlocks = expectedBlockType === 'tool_use' ? 0 : 1
+  expect(blockStarts).toHaveLength(expectedCommittedBlocks)
 
   const blockStops = events.filter(
     (e) => e.type === 'content_block_stop' && (e as { index?: unknown }).index === 0,
   )
-  expect(blockStops).toHaveLength(1)
+  expect(blockStops).toHaveLength(expectedCommittedBlocks)
 
   expect(events.filter((e) => e.type === 'message_stop')).toHaveLength(0)
 })

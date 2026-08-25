@@ -76,9 +76,154 @@ type ResponsesTool = {
   strict?: boolean
 }
 
+const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 64 * 1024 * 1024
+
+function maxBufferedToolArgumentChars(): number {
+  const raw = process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+}
+
 type CodexSseEvent = {
   event: string
   data: Record<string, any>
+}
+
+function parseCompletedCodexTool(item: Record<string, any>): {
+  input: Record<string, unknown>
+  toolUseId: string
+} {
+  if (
+    typeof item.name !== 'string' ||
+    !item.name ||
+    typeof item.arguments !== 'string' ||
+    item.arguments.length > maxBufferedToolArgumentChars()
+  ) {
+    throw new Error(
+      'Codex completed response contained a malformed tool call; no tool was committed',
+    )
+  }
+  for (const key of ['id', 'call_id'] as const) {
+    const value = item[key]
+    if (value != null && (typeof value !== 'string' || !value.trim())) {
+      throw new Error(
+        'Codex completed response contained a malformed tool call ID; no tool was committed',
+      )
+    }
+  }
+  const rawToolUseId = item.call_id ?? item.id
+  if (typeof rawToolUseId !== 'string' || !rawToolUseId.trim()) {
+    throw new Error(
+      'Codex completed response omitted its tool call ID; no tool was committed',
+    )
+  }
+  let input: unknown
+  try {
+    input = JSON.parse(item.arguments)
+  } catch {
+    throw new Error(
+      'Codex completed response contained invalid tool arguments; no tool was committed',
+    )
+  }
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error(
+      'Codex completed response contained non-object tool arguments; no tool was committed',
+    )
+  }
+  return {
+    input: input as Record<string, unknown>,
+    toolUseId: rawToolUseId,
+  }
+}
+
+function parseCodexSseEventChunk(chunk: string): CodexSseEvent | undefined {
+  const lines = chunk
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (lines.length === 0) return undefined
+
+  const eventLine = lines.find(line => line.startsWith('event:'))
+  const dataLines = lines.filter(line => line.startsWith('data:'))
+  if (dataLines.length === 0) return undefined
+
+  const rawData = dataLines
+    .map(line => line.slice('data:'.length).trimStart())
+    .join('\n')
+  if (rawData === '[DONE]') return undefined
+
+  let data: Record<string, any>
+  try {
+    const parsed = JSON.parse(rawData)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Codex SSE data was not a JSON object')
+    }
+    data = parsed as Record<string, any>
+  } catch (error) {
+    throw new Error(
+      'Codex SSE emitted invalid JSON; the response was not committed',
+      { cause: error },
+    )
+  }
+
+  const framedEvent = eventLine?.slice('event:'.length).trim() ?? ''
+  const payloadEvent = typeof data.type === 'string' ? data.type : ''
+  if (framedEvent && payloadEvent && framedEvent !== payloadEvent) {
+    throw new Error(
+      'Codex SSE event name contradicted its payload type; no tool was committed',
+    )
+  }
+  const event = framedEvent || payloadEvent
+  if (!event) {
+    throw new Error(
+      'Codex SSE data omitted its event type; the response was not committed',
+    )
+  }
+  return { event, data }
+}
+
+function completedCodexVisibleText(response: Record<string, any>): string {
+  const output = Array.isArray(response.output) ? response.output : []
+  let visible = ''
+  for (const item of output) {
+    if (item?.type !== 'message' || !Array.isArray(item.content)) continue
+    for (const part of item.content) {
+      if (part?.type === 'output_text' && typeof part.text === 'string') {
+        visible += stripThinkTags(part.text)
+      }
+    }
+  }
+  return visible
+}
+
+function requireCodexTerminalResponse(
+  payload: Record<string, any>,
+  expectedStatus: 'completed' | 'incomplete',
+): Record<string, any> {
+  const response = payload?.response
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error(
+      `Codex response.${expectedStatus} omitted its response object; the response was not committed`,
+    )
+  }
+  if (response.status !== expectedStatus) {
+    throw new Error(
+      `Codex response.${expectedStatus} carried a missing or contradictory status; the response was not committed`,
+    )
+  }
+  if (typeof response.id !== 'string' || !response.id.trim()) {
+    throw new Error(
+      `Codex response.${expectedStatus} omitted its response ID; the response was not committed`,
+    )
+  }
+  if (!Array.isArray(response.output)) {
+    throw new Error(
+      `Codex response.${expectedStatus} omitted its output array; the response was not committed`,
+    )
+  }
+  return response
 }
 
 function makeUsage(usage?: Record<string, unknown>): AnthropicUsage {
@@ -646,85 +791,117 @@ export async function performCodexRequest(options: {
 }
 
 async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGenerator<CodexSseEvent> {
-  const reader = response.body?.getReader()
-  if (!reader) return
+  const responseBody = response.body
+  if (!responseBody) return
+  const reader = responseBody.getReader()
+  type ReaderResult = Awaited<ReturnType<typeof reader.read>>
 
   const decoder = new TextDecoder()
   let buffer = ''
-  const STREAM_IDLE_TIMEOUT_MS = 120_000 // 2 minutes without data
+  const STREAM_IDLE_TIMEOUT_MS = (() => {
+    const raw = process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS
+    const parsed = raw ? parseInt(raw, 10) : NaN
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000
+  })()
   let lastDataTime = Date.now()
+  let pendingReaderCancellation: Promise<void> | undefined
+  let reachedEOF = false
+
+  const cancelReader = (reason: unknown): void => {
+    if (pendingReaderCancellation) return
+    pendingReaderCancellation = reader.cancel(reason).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
 
   /**
    * Read from the stream with an idle timeout. Respects the caller's
    * AbortSignal — clears the idle timer on abort so the AbortError
    * surfaces cleanly instead of a spurious idle timeout.
    */
-  async function readWithTimeout(): Promise<ReadableStreamReadResult<Uint8Array>> {
+  async function readWithTimeout(): Promise<ReaderResult> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      let abortCleanup: (() => void) | undefined
+      const cleanup = () => {
+        clearTimeout(timeoutId)
+        if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
+      }
+      const resolveOnce = (result: ReaderResult) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (result.value) lastDataTime = Date.now()
+        resolve(result)
+      }
+      const rejectOnce = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
       const timeoutId = setTimeout(() => {
         const elapsed = Math.round((Date.now() - lastDataTime) / 1000)
-        reject(new Error(
+        const timeoutError = new Error(
           `Codex SSE stream idle for ${elapsed}s (limit: ${STREAM_IDLE_TIMEOUT_MS / 1000}s). Connection likely dropped.`,
-        ))
+        )
+        cancelReader(timeoutError)
+        rejectOnce(timeoutError)
       }, STREAM_IDLE_TIMEOUT_MS)
 
-      let abortCleanup: (() => void) | undefined
       if (signal) {
         abortCleanup = () => {
-          clearTimeout(timeoutId)
+          const abortError =
+            signal.reason instanceof Error
+              ? signal.reason
+              : Object.assign(new Error('The operation was aborted'), {
+                  name: 'AbortError',
+                })
+          cancelReader(abortError)
+          rejectOnce(abortError)
+        }
+        if (signal.aborted) {
+          abortCleanup()
+          return
         }
         signal.addEventListener('abort', abortCleanup, { once: true })
       }
 
-      reader.read().then(
-        result => {
-          clearTimeout(timeoutId)
-          if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
-          if (result.value) lastDataTime = Date.now()
-          resolve(result)
-        },
-        err => {
-          clearTimeout(timeoutId)
-          if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
-          reject(err)
-        },
-      )
+      reader.read().then(resolveOnce, rejectOnce)
     })
   }
 
-  while (true) {
-    const { done, value } = await readWithTimeout()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const chunks = buffer.split('\n\n')
-    buffer = chunks.pop() ?? ''
-
-    for (const chunk of chunks) {
-      const lines = chunk
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean)
-      if (lines.length === 0) continue
-
-      const eventLine = lines.find(line => line.startsWith('event: '))
-      const dataLines = lines.filter(line => line.startsWith('data: '))
-      if (!eventLine || dataLines.length === 0) continue
-
-      const event = eventLine.slice(7).trim()
-      const rawData = dataLines.map(line => line.slice(6)).join('\n')
-      if (rawData === '[DONE]') continue
-
-      let data: Record<string, any>
-      try {
-        const parsed = JSON.parse(rawData)
-        if (!parsed || typeof parsed !== 'object') continue
-        data = parsed as Record<string, any>
-      } catch {
-        continue
+  try {
+    while (true) {
+      const { done, value } = await readWithTimeout()
+      if (done) {
+        reachedEOF = true
+        buffer += decoder.decode()
+        const finalEvent = parseCodexSseEventChunk(buffer)
+        if (finalEvent) yield finalEvent
+        break
       }
 
-      yield { event, data }
+      buffer += decoder.decode(value, { stream: true })
+      const chunks = buffer.split(/\r?\n\r?\n/)
+      buffer = chunks.pop() ?? ''
+
+      for (const chunk of chunks) {
+        const event = parseCodexSseEventChunk(chunk)
+        if (event) yield event
+      }
+    }
+  } finally {
+    if (!reachedEOF) {
+      cancelReader('Codex SSE consumer completed before transport EOF')
+    }
+    await pendingReaderCancellation
+    try {
+      reader.releaseLock()
+    } catch {
+      // A canceled stream can settle its pending read one microtask later.
+      // The body is already canceled, so never mask the original error.
     }
   }
 }
@@ -735,8 +912,9 @@ function determineStopReason(
 ): 'end_turn' | 'tool_use' | 'max_tokens' {
   const output = Array.isArray(response?.output) ? response.output : []
   if (
-    sawToolUse ||
-    output.some((item: { type?: string }) => item?.type === 'function_call')
+    response?.status !== 'incomplete' &&
+    (sawToolUse ||
+      output.some((item: { type?: string }) => item?.type === 'function_call'))
   ) {
     return 'tool_use'
   }
@@ -765,11 +943,19 @@ export async function collectCodexCompletedResponse(
       throw APIError.generate(500, undefined, msg, new Headers())
     }
 
-    if (
-      event.event === 'response.completed' ||
-      event.event === 'response.incomplete'
-    ) {
-      completedResponse = event.data?.response
+    if (event.event === 'response.completed') {
+      completedResponse = requireCodexTerminalResponse(
+        event.data,
+        'completed',
+      )
+      break
+    }
+
+    if (event.event === 'response.incomplete') {
+      completedResponse = requireCodexTerminalResponse(
+        event.data,
+        'incomplete',
+      )
       break
     }
   }
@@ -806,18 +992,26 @@ export async function* codexStreamToAnthropic(
     }
   >()
   let activeTextBlockIndex: number | null = null
+  let emittedVisibleText = ''
   const thinkFilter = createThinkTagFilter()
   let nextContentBlockIndex = 0
   let sawToolUse = false
   let finalResponse: Record<string, any> | undefined
+  let terminalEvent: 'completed' | 'incomplete' | 'failed' | undefined
+  let terminalErrorMessage: string | undefined
+  let totalBufferedToolArgumentChars = 0
+  const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
 
   const closeActiveTextBlock = async function* () {
     if (activeTextBlockIndex === null) return
+    const textBlockIndex = activeTextBlockIndex
+    activeTextBlockIndex = null
     const tail = thinkFilter.flush()
     if (tail) {
+      emittedVisibleText += tail
       yield {
         type: 'content_block_delta',
-        index: activeTextBlockIndex,
+        index: textBlockIndex,
         delta: {
           type: 'text_delta',
           text: tail,
@@ -826,9 +1020,8 @@ export async function* codexStreamToAnthropic(
     }
     yield {
       type: 'content_block_stop',
-      index: activeTextBlockIndex,
+      index: textBlockIndex,
     }
-    activeTextBlockIndex = null
   }
 
   const startTextBlockIfNeeded = async function* () {
@@ -845,6 +1038,44 @@ export async function* codexStreamToAnthropic(
     ReturnType<typeof toolBlocksByItemId.get>
   >
 
+  const replaceToolArguments = (
+    toolBlock: ActiveCodexToolBlock,
+    nextArguments: string,
+  ): void => {
+    const nextTotal =
+      totalBufferedToolArgumentChars -
+      toolBlock.argumentsBuffer.length +
+      nextArguments.length
+    if (
+      nextArguments.length > toolArgumentCharsLimit ||
+      nextTotal > toolArgumentCharsLimit
+    ) {
+      throw new Error(
+        'Codex tool arguments exceeded the configured safety limit; no tool was committed',
+      )
+    }
+    toolBlock.argumentsBuffer = nextArguments
+    totalBufferedToolArgumentChars = nextTotal
+  }
+
+  const appendToolArguments = (
+    toolBlock: ActiveCodexToolBlock,
+    delta: string,
+  ): void => {
+    if (
+      toolBlock.argumentsBuffer.length + delta.length >
+        toolArgumentCharsLimit ||
+      totalBufferedToolArgumentChars + delta.length >
+        toolArgumentCharsLimit
+    ) {
+      throw new Error(
+        'Codex tool arguments exceeded the configured safety limit; no tool was committed',
+      )
+    }
+    toolBlock.argumentsBuffer += delta
+    totalBufferedToolArgumentChars += delta.length
+  }
+
   const findToolBlockEntry = (
     item: Record<string, any>,
   ): [string, ActiveCodexToolBlock] | undefined => {
@@ -853,20 +1084,23 @@ export async function* codexStreamToAnthropic(
       const itemId = String(candidate)
       const toolBlock = toolBlocksByItemId.get(itemId)
       if (toolBlock) return [itemId, toolBlock]
+      for (const entry of toolBlocksByItemId) {
+        if (entry[0] === itemId || entry[1].toolUseId === itemId) return entry
+      }
     }
     return undefined
   }
-
-  const toolNameMayBeIncomplete = (name: string): boolean =>
-    Boolean(name) &&
-    !advertisedToolNames.includes(name) &&
-    advertisedToolNames.some(toolName => toolName.startsWith(name))
 
   const canonicalizeFinalToolName = (toolBlock: ActiveCodexToolBlock): void => {
     const resolvedName = resolveToolNameByUniquePrefix(
       advertisedToolNames,
       toolBlock.name,
     )
+    if (advertisedToolNames.length > 0 && !resolvedName) {
+      throw new Error(
+        'Codex completed response selected an unadvertised tool; no tool was committed',
+      )
+    }
     if (resolvedName) toolBlock.name = resolvedName
   }
 
@@ -877,12 +1111,11 @@ export async function* codexStreamToAnthropic(
     if (typeof item.name === 'string' && item.name) {
       toolBlock.name = item.name
     }
-    if (
-      typeof item.arguments === 'string' &&
-      (!toolBlock.hasStarted ||
-        item.arguments.startsWith(toolBlock.argumentsBuffer))
-    ) {
-      toolBlock.argumentsBuffer = item.arguments
+    if (typeof item.arguments === 'string') {
+      replaceToolArguments(toolBlock, item.arguments)
+    }
+    if (item.call_id != null || item.id != null) {
+      toolBlock.toolUseId = String(item.call_id ?? item.id)
     }
     canonicalizeFinalToolName(toolBlock)
   }
@@ -910,16 +1143,10 @@ export async function* codexStreamToAnthropic(
     toolBlock.emittedArgumentsLength = toolBlock.argumentsBuffer.length
   }
 
-  const startToolBlock = async function* (
-    toolBlock: ActiveCodexToolBlock,
-    force = false,
-  ) {
+  const startToolBlock = async function* (toolBlock: ActiveCodexToolBlock) {
     if (toolBlock.hasStarted) return
-    if (!force && (!toolBlock.name || toolNameMayBeIncomplete(toolBlock.name))) {
-      return
-    }
 
-    if (force) canonicalizeFinalToolName(toolBlock)
+    canonicalizeFinalToolName(toolBlock)
     toolBlock.hasStarted = true
     toolBlock.startedName = toolBlock.name || 'tool'
 
@@ -936,7 +1163,7 @@ export async function* codexStreamToAnthropic(
     yield* emitPendingToolArguments(toolBlock)
   }
 
-  const flushToolBlocks = async function* (force = false) {
+  const flushToolBlocks = async function* () {
     const orderedBlocks = [...toolBlocksByItemId.values()].sort(
       (a, b) => a.index - b.index,
     )
@@ -945,44 +1172,45 @@ export async function* codexStreamToAnthropic(
       if (toolBlock.hasStopped) continue
 
       if (!toolBlock.hasStarted) {
-        yield* startToolBlock(toolBlock, force || toolBlock.isDone)
-        // Do not release a later parallel block before an earlier block whose
-        // name is still incomplete.
+        // Responses can update the name in output_item.done or in the final
+        // response. Buffer until the call is complete so every block has one
+        // immutable start event.
+        if (!toolBlock.isDone) break
+        yield* startToolBlock(toolBlock)
         if (!toolBlock.hasStarted) break
-      }
-
-      if (
-        toolBlock.isDone &&
-        toolBlock.startedName !== (toolBlock.name || 'tool')
-      ) {
-        toolBlock.startedName = toolBlock.name || 'tool'
-        yield {
-          type: 'content_block_start',
-          index: toolBlock.index,
-          content_block: {
-            type: 'tool_use',
-            id: toolBlock.toolUseId,
-            name: toolBlock.startedName,
-            input: {},
-          },
-        }
       }
 
       yield* emitPendingToolArguments(toolBlock)
       if (toolBlock.isDone) {
+        toolBlock.hasStopped = true
         yield {
           type: 'content_block_stop',
           index: toolBlock.index,
         }
-        toolBlock.hasStopped = true
       }
     }
   }
 
   const removeStoppedToolBlocks = (): void => {
     for (const [itemId, toolBlock] of toolBlocksByItemId) {
-      if (toolBlock.hasStopped) toolBlocksByItemId.delete(itemId)
+      if (toolBlock.hasStopped) {
+        totalBufferedToolArgumentChars -= toolBlock.argumentsBuffer.length
+        toolBlocksByItemId.delete(itemId)
+      }
     }
+  }
+
+  const closeOpenBlocksForFailure = async function* () {
+    yield* closeActiveTextBlock()
+    const orderedBlocks = [...new Set(toolBlocksByItemId.values())].sort(
+      (a, b) => a.index - b.index,
+    )
+    for (const toolBlock of orderedBlocks) {
+      if (!toolBlock.hasStarted || toolBlock.hasStopped) continue
+      toolBlock.hasStopped = true
+      yield { type: 'content_block_stop', index: toolBlock.index }
+    }
+    toolBlocksByItemId.clear()
   }
 
   yield {
@@ -999,7 +1227,8 @@ export async function* codexStreamToAnthropic(
     },
   }
 
-  for await (const event of readSseEvents(response, signal)) {
+  try {
+    for await (const event of readSseEvents(response, signal)) {
     const payload = event.data
 
     if (event.event === 'response.output_item.added') {
@@ -1008,36 +1237,53 @@ export async function* codexStreamToAnthropic(
         yield* closeActiveTextBlock()
         const blockIndex = nextContentBlockIndex++
         const toolUseId = item.call_id ?? item.id ?? `call_${blockIndex}`
-        const toolBlock = {
+        const toolBlock: ActiveCodexToolBlock = {
           index: blockIndex,
           toolUseId,
           name: typeof item.name === 'string' ? item.name : '',
-          argumentsBuffer:
-            typeof item.arguments === 'string' ? item.arguments : '',
+          argumentsBuffer: '',
           emittedArgumentsLength: 0,
           hasStarted: false,
           isDone: false,
           hasStopped: false,
         }
-        toolBlocksByItemId.set(String(item.id ?? toolUseId), toolBlock)
-        sawToolUse = true
-        yield* flushToolBlocks()
+        if (typeof item.arguments === 'string') {
+          replaceToolArguments(toolBlock, item.arguments)
+        }
+        const itemKey = String(item.id ?? toolUseId)
+        if (toolBlocksByItemId.has(itemKey)) {
+          throw new Error(
+            'Codex stream repeated a tool item ID; no tool was committed',
+          )
+        }
+        toolBlocksByItemId.set(itemKey, toolBlock)
       }
       continue
     }
 
     if (event.event === 'response.content_part.added') {
       if (payload.part?.type === 'output_text') {
+        if (toolBlocksByItemId.size > 0) {
+          throw new Error(
+            'Codex emitted text after a reserved tool block; the out-of-order response was not committed',
+          )
+        }
         yield* startTextBlockIfNeeded()
       }
       continue
     }
 
     if (event.event === 'response.output_text.delta') {
+      if (toolBlocksByItemId.size > 0) {
+        throw new Error(
+          'Codex emitted text after a reserved tool block; the out-of-order response was not committed',
+        )
+      }
       yield* startTextBlockIfNeeded()
       if (activeTextBlockIndex !== null) {
         const visible = thinkFilter.feed(payload.delta ?? '')
         if (visible) {
+          emittedVisibleText += visible
           yield {
             type: 'content_block_delta',
             index: activeTextBlockIndex,
@@ -1055,9 +1301,8 @@ export async function* codexStreamToAnthropic(
       const toolBlock = toolBlocksByItemId.get(String(payload.item_id ?? ''))
       if (toolBlock) {
         if (typeof payload.delta === 'string') {
-          toolBlock.argumentsBuffer += payload.delta
+          appendToolArguments(toolBlock, payload.delta)
         }
-        yield* flushToolBlocks()
       }
       continue
     }
@@ -1070,8 +1315,6 @@ export async function* codexStreamToAnthropic(
           const [, toolBlock] = toolBlockEntry
           applyFinalToolItem(toolBlock, item)
           toolBlock.isDone = true
-          yield* flushToolBlocks()
-          removeStoppedToolBlocks()
         }
       } else if (item?.type === 'message') {
         yield* closeActiveTextBlock()
@@ -1079,35 +1322,179 @@ export async function* codexStreamToAnthropic(
       continue
     }
 
-    if (
-      event.event === 'response.completed' ||
-      event.event === 'response.incomplete'
-    ) {
-      finalResponse = payload.response
+    if (event.event === 'response.completed') {
+      terminalEvent = 'completed'
+      finalResponse = requireCodexTerminalResponse(payload, 'completed')
+      break
+    }
+
+    if (event.event === 'response.incomplete') {
+      terminalEvent = 'incomplete'
+      finalResponse = requireCodexTerminalResponse(payload, 'incomplete')
       break
     }
 
     if (event.event === 'response.failed') {
-      const msg = payload?.response?.error?.message ??
+      terminalEvent = 'failed'
+      terminalErrorMessage = payload?.response?.error?.message ??
         payload?.error?.message ?? 'Codex response failed'
-      throw APIError.generate(500, undefined, msg, new Headers())
+      break
     }
   }
 
   yield* closeActiveTextBlock()
+
+  if (terminalEvent === 'failed') {
+    toolBlocksByItemId.clear()
+    throw APIError.generate(
+      500,
+      undefined,
+      terminalErrorMessage ?? 'Codex response failed',
+      new Headers(),
+    )
+  }
+  if (!terminalEvent || !finalResponse) {
+    toolBlocksByItemId.clear()
+    throw APIError.generate(
+      500,
+      undefined,
+      'Codex response ended without a terminal payload',
+      new Headers(),
+    )
+  }
+
+  const finalVisibleText = completedCodexVisibleText(finalResponse)
+  let missingSuffix = ''
+  if (!emittedVisibleText) {
+    missingSuffix = finalVisibleText
+  } else if (finalVisibleText.startsWith(emittedVisibleText)) {
+    missingSuffix = finalVisibleText.slice(emittedVisibleText.length)
+  } else if (finalVisibleText !== emittedVisibleText) {
+    throw APIError.generate(
+      500,
+      undefined,
+      'Codex completed text contradicted streamed text; response was not committed',
+      new Headers(),
+    )
+  }
+  if (missingSuffix && toolBlocksByItemId.size > 0) {
+    toolBlocksByItemId.clear()
+    throw APIError.generate(
+      500,
+      undefined,
+      'Codex completed text arrived after a reserved tool block; the out-of-order response was not committed',
+      new Headers(),
+    )
+  }
+  if (missingSuffix) {
+    yield* startTextBlockIfNeeded()
+    if (activeTextBlockIndex !== null) {
+      emittedVisibleText += missingSuffix
+      yield {
+        type: 'content_block_delta',
+        index: activeTextBlockIndex,
+        delta: { type: 'text_delta', text: missingSuffix },
+      }
+    }
+    yield* closeActiveTextBlock()
+  }
+
+  if (terminalEvent === 'incomplete') {
+    toolBlocksByItemId.clear()
+    yield {
+      type: 'message_delta',
+      delta: {
+        stop_reason: determineStopReason(finalResponse, false),
+        stop_sequence: null,
+      },
+      usage: makeUsage(
+        finalResponse.usage as Record<string, unknown> | undefined,
+      ),
+    }
+    yield { type: 'message_stop' }
+    return
+  }
+
   const finalOutput = Array.isArray(finalResponse?.output)
     ? finalResponse.output
     : []
+  const reservedToolIndices = [...toolBlocksByItemId.values()].map(
+    toolBlock => toolBlock.index,
+  )
+  const firstFinalToolIndex = reservedToolIndices.length > 0
+    ? Math.min(...reservedToolIndices)
+    : nextContentBlockIndex
+  const completedToolBlocks = new Set<ActiveCodexToolBlock>()
+  const completedToolCallIds = new Set<string>()
   for (const item of finalOutput) {
     if (item?.type !== 'function_call') continue
-    const toolBlockEntry = findToolBlockEntry(item)
-    if (!toolBlockEntry) continue
+    try {
+      parseCompletedCodexTool(item)
+    } catch (error) {
+      toolBlocksByItemId.clear()
+      throw APIError.generate(
+        500,
+        undefined,
+        error instanceof Error ? error.message : 'Invalid Codex tool call',
+        new Headers(),
+      )
+    }
+    let toolBlockEntry = findToolBlockEntry(item)
+    if (!toolBlockEntry) {
+      const blockIndex = nextContentBlockIndex++
+      const { toolUseId } = parseCompletedCodexTool(item)
+      const toolBlock: ActiveCodexToolBlock = {
+        index: blockIndex,
+        toolUseId,
+        name: '',
+        argumentsBuffer: '',
+        emittedArgumentsLength: 0,
+        hasStarted: false,
+        isDone: false,
+        hasStopped: false,
+      }
+      const itemKey = String(item.id ?? item.call_id ?? toolUseId)
+      toolBlocksByItemId.set(itemKey, toolBlock)
+      toolBlockEntry = [itemKey, toolBlock]
+    }
+    if (completedToolBlocks.has(toolBlockEntry[1])) {
+      toolBlocksByItemId.clear()
+      throw APIError.generate(
+        500,
+        undefined,
+        'Codex completed response repeated a tool call; no tool was committed',
+        new Headers(),
+      )
+    }
     applyFinalToolItem(toolBlockEntry[1], item)
+    if (completedToolCallIds.has(toolBlockEntry[1].toolUseId)) {
+      toolBlocksByItemId.clear()
+      throw APIError.generate(
+        500,
+        undefined,
+        'Codex completed response reused a tool call ID; no tool was committed',
+        new Headers(),
+      )
+    }
+    completedToolCallIds.add(toolBlockEntry[1].toolUseId)
+    toolBlockEntry[1].isDone = true
+    completedToolBlocks.add(toolBlockEntry[1])
   }
-  for (const toolBlock of toolBlocksByItemId.values()) {
-    toolBlock.isDone = true
+  let authoritativeToolOffset = 0
+  for (const toolBlock of completedToolBlocks) {
+    toolBlock.index = firstFinalToolIndex + authoritativeToolOffset++
   }
-  yield* flushToolBlocks(true)
+  if (completedToolBlocks.size > 0) {
+    nextContentBlockIndex = firstFinalToolIndex + completedToolBlocks.size
+  }
+  for (const [itemId, toolBlock] of toolBlocksByItemId) {
+    if (!completedToolBlocks.has(toolBlock)) {
+      totalBufferedToolArgumentChars -= toolBlock.argumentsBuffer.length
+      toolBlocksByItemId.delete(itemId)
+    }
+  }
+  sawToolUse = completedToolBlocks.size > 0
+  yield* flushToolBlocks()
   removeStoppedToolBlocks()
 
   yield {
@@ -1125,7 +1512,13 @@ export async function* codexStreamToAnthropic(
       finalResponse?.usage as Record<string, unknown> | undefined,
     ),
   }
-  yield { type: 'message_stop' }
+    yield { type: 'message_stop' }
+  } catch (error) {
+    // A rejected network read or any malformed terminal payload must not leave
+    // Ink with an unterminated text/tool block.
+    yield* closeOpenBlocksForFailure()
+    throw error
+  }
 }
 
 export function convertCodexResponseToAnthropicMessage(
@@ -1135,6 +1528,27 @@ export function convertCodexResponseToAnthropicMessage(
 ): Record<string, unknown> {
   const content: Array<Record<string, unknown>> = []
   const output = Array.isArray(data.output) ? data.output : []
+  if (data.status == null) {
+    throw new Error(
+      'Codex response omitted its terminal status; the response was not committed',
+    )
+  }
+  if (data.status === 'failed') {
+    const failureMessage =
+      typeof data.error?.message === 'string'
+        ? `: ${data.error.message}`
+        : ''
+    throw new Error(`Codex response failed${failureMessage}`)
+  }
+  if (data.status !== 'completed' && data.status !== 'incomplete') {
+    throw new Error(
+      `Codex response carried non-terminal status "${String(data.status)}"; the response was not committed`,
+    )
+  }
+  const mayCommitTools = data.status === 'completed'
+  const completedToolCallIds = new Set<string>()
+  let completedToolArgumentChars = 0
+  const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
 
   for (const item of output) {
     if (item?.type === 'message' && Array.isArray(item.content)) {
@@ -1149,21 +1563,35 @@ export function convertCodexResponseToAnthropicMessage(
       continue
     }
 
-    if (item?.type === 'function_call') {
+    if (item?.type === 'function_call' && mayCommitTools) {
+      const { input, toolUseId } = parseCompletedCodexTool(item)
+      completedToolArgumentChars += item.arguments.length
+      if (completedToolArgumentChars > toolArgumentCharsLimit) {
+        throw new Error(
+          'Codex tool arguments exceeded the configured safety limit; no tool was committed',
+        )
+      }
+      if (completedToolCallIds.has(toolUseId)) {
+        throw new Error(
+          'Codex completed response reused a tool call ID; no tool was committed',
+        )
+      }
+      completedToolCallIds.add(toolUseId)
       const toolName =
         resolveToolNameByUniquePrefix(advertisedToolNames, item.name ?? '') ??
         item.name ??
         'tool'
-      let input: unknown
-      try {
-        input = JSON.parse(item.arguments ?? '{}')
-      } catch {
-        input = { raw: item.arguments ?? '' }
+      if (
+        advertisedToolNames.length > 0 &&
+        !resolveToolNameByUniquePrefix(advertisedToolNames, item.name ?? '')
+      ) {
+        throw new Error(
+          'Codex completed response selected an unadvertised tool; no tool was committed',
+        )
       }
-
       content.push({
         type: 'tool_use',
-        id: item.call_id ?? item.id ?? makeMessageId(),
+        id: toolUseId,
         name: toolName,
         input,
       })

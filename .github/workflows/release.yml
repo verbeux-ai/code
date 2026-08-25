@@ -77,8 +77,11 @@ jobs:
         run: |
           bun run desktop:test
           bun test --max-concurrency=1 \
+            src/Tool.test.ts \
+            src/__tests__/bugfixes-behavioral.test.ts \
             src/commands/effort/effort.verboo.test.ts \
             src/commands/logout/logoutState.test.ts \
+            src/services/api/codexShim.test.ts \
             src/services/api/openaiShim.test.ts \
             src/services/api/verbooCheckout.test.ts \
             src/services/api/verbooModels.test.ts \
@@ -86,7 +89,8 @@ jobs:
             src/services/oauth/pastDueFlow.test.tsx \
             src/services/oauth/subscriptionAccess.test.ts \
             src/services/oauth/verbooStartupAuth.test.ts \
-            src/utils/auth.refresh.test.ts
+            src/utils/auth.refresh.test.ts \
+            src/utils/messages.toolNameNormalization.test.ts
 
       - name: Smoke test
         run: bun run smoke

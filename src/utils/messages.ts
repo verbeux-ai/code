@@ -2740,7 +2740,9 @@ export function normalizeContentFromAPI(
           resolvedTool &&
           resolvedTool.name !== contentBlock.name &&
           !resolvedTool.aliases?.includes(contentBlock.name) &&
-          resolvedTool.name.startsWith(contentBlock.name)
+          resolvedTool.name
+            .toLowerCase()
+            .startsWith(contentBlock.name.toLowerCase())
             ? resolvedTool.name
             : contentBlock.name
 
@@ -3024,6 +3026,7 @@ export function handleMessageFromStream(
       // 'thinking' mode when the stream aborts mid-thinking (H3).
       if (isSyntheticApiErrorMessage(message)) {
         onSetStreamMode('tool-use')
+        onStreamingToolUses(() => [])
       }
     }
     // Clear streaming text NOW so the render can switch displayedMessages
@@ -3040,6 +3043,9 @@ export function handleMessageFromStream(
   }
 
   if (message.event.type === 'message_start') {
+    // A previous transport error may have ended without message_stop. A new
+    // message is a hard lifecycle boundary; never carry stale tool rows into it.
+    onStreamingToolUses(() => [])
     if (message.ttftMs != null) {
       onApiMetrics?.({ ttftMs: message.ttftMs })
     }
@@ -3073,14 +3079,47 @@ export function handleMessageFromStream(
           onSetStreamMode('tool-input')
           const contentBlock = message.event.content_block
           const index = message.event.index
-          onStreamingToolUses(_ => [
-            ..._,
-            {
-              index,
-              contentBlock,
-              unparsedToolInput: '',
-            },
-          ])
+          onStreamingToolUses(current => {
+            const exactMatchIndex = current.findIndex(
+              toolUse =>
+                toolUse.index === index &&
+                toolUse.contentBlock.id === contentBlock.id,
+            )
+            if (exactMatchIndex !== -1) {
+              return current.map((toolUse, currentIndex) =>
+                currentIndex === exactMatchIndex
+                  ? { ...toolUse, contentBlock }
+                  : toolUse,
+              )
+            }
+
+            const reusedIndex = current.findIndex(
+              toolUse => toolUse.index === index,
+            )
+            if (reusedIndex !== -1) {
+              // The stream index is the address used by later JSON deltas. If
+              // a provider reuses it for a different ID, replace the stale
+              // identity and do not inherit arguments from the previous call.
+              return current.map((toolUse, currentIndex) =>
+                currentIndex === reusedIndex
+                  ? {
+                      index,
+                      contentBlock,
+                      unparsedToolInput: '',
+                    }
+                  : toolUse,
+              )
+            }
+
+            return [
+              ...current,
+              {
+                index,
+                contentBlock,
+                unparsedToolInput: '',
+              },
+            ]
+          })
           return
         }
         case 'server_tool_use':
@@ -3115,13 +3154,14 @@ export function handleMessageFromStream(
             if (!element) {
               return _
             }
-            return [
-              ..._.filter(_ => _ !== element),
-              {
-                ...element,
-                unparsedToolInput: element.unparsedToolInput + delta,
-              },
-            ]
+            return _.map(toolUse =>
+              toolUse === element
+                ? {
+                    ...toolUse,
+                    unparsedToolInput: toolUse.unparsedToolInput + delta,
+                  }
+                : toolUse,
+            )
           })
           return
         }

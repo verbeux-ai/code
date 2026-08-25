@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { acquireSharedMutationLock, releaseSharedMutationLock } from '../../test/sharedMutationLock.js'
 import {
   codexStreamToAnthropic,
+  collectCodexCompletedResponse,
   convertAnthropicMessagesToResponsesInput,
   convertCodexResponseToAnthropicMessage,
   convertSystemPrompt,
@@ -19,6 +20,9 @@ const originalEnv = {
   OPENAI_API_BASE: process.env.OPENAI_API_BASE,
   CLAUDE_CODE_USE_GITHUB: process.env.CLAUDE_CODE_USE_GITHUB,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
+  VERBOO_STREAM_IDLE_TIMEOUT_MS: process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS,
+  VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS:
+    process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS,
 }
 
 beforeEach(async () => {
@@ -38,6 +42,20 @@ afterEach(() => {
 
     if (originalEnv.OPENAI_MODEL === undefined) delete process.env.OPENAI_MODEL
     else process.env.OPENAI_MODEL = originalEnv.OPENAI_MODEL
+
+    if (originalEnv.VERBOO_STREAM_IDLE_TIMEOUT_MS === undefined) {
+      delete process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS
+    } else {
+      process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS =
+        originalEnv.VERBOO_STREAM_IDLE_TIMEOUT_MS
+    }
+
+    if (originalEnv.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS === undefined) {
+      delete process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+    } else {
+      process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS =
+        originalEnv.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+    }
 
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop()
@@ -696,6 +714,7 @@ describe('Codex request translation', () => {
     const message = convertCodexResponseToAnthropicMessage(
       {
         id: 'resp_1',
+        status: 'completed',
         model: 'gpt-5.3-codex-spark',
         output: [
           {
@@ -727,6 +746,7 @@ describe('Codex request translation', () => {
     const message = convertCodexResponseToAnthropicMessage(
       {
         id: 'resp_1',
+        status: 'completed',
         model: 'gpt-5.4',
         output: [
           {
@@ -758,6 +778,7 @@ describe('Codex request translation', () => {
     const message = convertCodexResponseToAnthropicMessage(
       {
         id: 'resp_1',
+        status: 'completed',
         model: 'gpt-5.4',
         output: [
           {
@@ -1037,16 +1058,16 @@ describe('Codex request translation', () => {
   test('recovers a truncated Responses API tool name before releasing buffered arguments', async () => {
     const responseText = [
       'event: response.output_item.added',
-      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":""},"output_index":0}',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"rea","arguments":""},"output_index":0}',
       '',
       'event: response.function_call_arguments.delta',
       'data: {"type":"response.function_call_arguments.delta","item_id":"fc_read","delta":"{\\"file_path\\":\\"README.md\\"}"}',
       '',
       'event: response.output_item.done',
-      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":"{\\"file_path\\":\\"README.md\\"}"},"output_index":0}',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"rea","arguments":"{\\"file_path\\":\\"README.md\\"}"},"output_index":0}',
       '',
       'event: response.completed',
-      'data: {"type":"response.completed","response":{"id":"resp_read","status":"completed","model":"gpt-5.4","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":"{\\"file_path\\":\\"README.md\\"}"}],"usage":{"input_tokens":2,"output_tokens":2}}}',
+      'data: {"type":"response.completed","response":{"id":"resp_read","status":"completed","model":"gpt-5.4","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"rea","arguments":"{\\"file_path\\":\\"README.md\\"}"}],"usage":{"input_tokens":2,"output_tokens":2}}}',
       '',
     ].join('\n')
     const stream = new ReadableStream({
@@ -1082,6 +1103,311 @@ describe('Codex request translation', () => {
       .map(event => event.delta?.partial_json)
       .join('')
     expect(input).toBe('{"file_path":"README.md"}')
+  })
+
+  test('does not commit a tool when Responses SSE ends before response.completed', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":""},"output_index":0}',
+      '',
+      'event: response.output_item.done',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{\\"file_path\\":\\"README.md\\"}"},"output_index":0}',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain('without a terminal payload')
+    expect(
+      events.filter(event => event.content_block?.type === 'tool_use'),
+    ).toHaveLength(0)
+  })
+
+  test('does not commit tools from response.incomplete', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":""},"output_index":0}',
+      '',
+      'event: response.output_item.done',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"},"output_index":0}',
+      '',
+      'event: response.incomplete',
+      'data: {"type":"response.incomplete","response":{"id":"resp_incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"}]}}',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const events: AnthropicStreamEvent[] = []
+
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.4',
+      undefined,
+      ['Read'],
+    )) {
+      events.push(event)
+    }
+
+    expect(
+      events.filter(event => event.content_block?.type === 'tool_use'),
+    ).toHaveLength(0)
+    expect(events.find(event => event.type === 'message_delta')?.delta).toMatchObject({
+      stop_reason: 'max_tokens',
+    })
+    expect(events.at(-1)?.type).toBe('message_stop')
+  })
+
+  test('uses authoritative completed tools and adds final-only calls', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":""},"output_index":0}',
+      '',
+      'event: response.output_item.done',
+      'data: {"type":"response.output_item.done","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Rea","arguments":"{\\"file_path\\":\\"stale.md\\"}"},"output_index":0}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_final","status":"completed","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{\\"file_path\\":\\"README.md\\"}"},{"id":"fc_bash","call_id":"call_bash","type":"function_call","name":"Bash","arguments":"{\\"command\\":\\"pwd\\"}"}]}}',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const events: AnthropicStreamEvent[] = []
+
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.4',
+      undefined,
+      ['Read', 'Bash'],
+    )) {
+      events.push(event)
+    }
+
+    const toolStarts = events
+      .filter(event => event.content_block?.type === 'tool_use')
+      .map(event => event.content_block)
+    expect(toolStarts).toEqual([
+      { type: 'tool_use', id: 'call_read', name: 'Read', input: {} },
+      { type: 'tool_use', id: 'call_bash', name: 'Bash', input: {} },
+    ])
+    const inputs = events
+      .filter(event => event.delta?.type === 'input_json_delta')
+      .map(event => event.delta?.partial_json)
+    expect(inputs).toEqual([
+      '{"file_path":"README.md"}',
+      '{"command":"pwd"}',
+    ])
+  })
+
+  test('orders Codex tool blocks by authoritative final output instead of arrival', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_one","call_id":"call_one","type":"function_call","name":"Bash","arguments":""},"output_index":1}',
+      '',
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_zero","call_id":"call_zero","type":"function_call","name":"Read","arguments":""},"output_index":0}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_ordered","status":"completed","output":[{"id":"fc_zero","call_id":"call_zero","type":"function_call","name":"Read","arguments":"{\\"file_path\\":\\"README.md\\"}"},{"id":"fc_one","call_id":"call_one","type":"function_call","name":"Bash","arguments":"{\\"command\\":\\"pwd\\"}"}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.4',
+      undefined,
+      ['Read', 'Bash'],
+    )) {
+      events.push(event)
+    }
+    const starts = events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        event.content_block?.type === 'tool_use',
+    )
+    expect(starts.map(event => [event.index, event.content_block?.id])).toEqual([
+      [0, 'call_zero'],
+      [1, 'call_one'],
+    ])
+    const lifecycle = events
+      .filter(event =>
+        event.type === 'content_block_start' ||
+        event.type === 'content_block_delta' ||
+        event.type === 'content_block_stop',
+      )
+      .map(event => `${event.type}:${String(event.index)}`)
+    expect(lifecycle).toEqual([
+      'content_block_start:0',
+      'content_block_delta:0',
+      'content_block_stop:0',
+      'content_block_start:1',
+      'content_block_delta:1',
+      'content_block_stop:1',
+    ])
+  })
+
+  test('rejects duplicate completed tool IDs before committing a block', async () => {
+    const responseText = [
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_duplicate_calls","status":"completed","output":[{"type":"function_call","id":"fc_read","call_id":"same_call","name":"Read","arguments":"{}"},{"type":"function_call","id":"fc_bash","call_id":"same_call","name":"Bash","arguments":"{}"}]}}',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const response = new Response(stream)
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        response,
+        'gpt-test',
+        undefined,
+        ['Read', 'Bash'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect(String((thrown as Error).message)).toContain('no tool was committed')
+    expect(
+      events.filter(event => event.type === 'content_block_start'),
+    ).toHaveLength(0)
+  })
+
+  test('completed-response conversion suppresses tools for incomplete status', () => {
+    const message = convertCodexResponseToAnthropicMessage(
+      {
+        id: 'resp_incomplete',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output: [
+          {
+            id: 'fc_read',
+            call_id: 'call_read',
+            type: 'function_call',
+            name: 'Read',
+            arguments: '{}',
+          },
+        ],
+      },
+      'gpt-5.4',
+      ['Read'],
+    ) as { content: Array<{ type?: string }>; stop_reason: string }
+
+    expect(message.content.filter(item => item.type === 'tool_use')).toHaveLength(0)
+    expect(message.stop_reason).toBe('max_tokens')
+  })
+
+  test.each([
+    [
+      'missing',
+      {
+        id: 'resp_missing_status',
+        output: [
+          {
+            id: 'fc_read',
+            call_id: 'call_read',
+            type: 'function_call',
+            name: 'Read',
+            arguments: '{}',
+          },
+        ],
+      },
+      /omitted its terminal status/,
+    ],
+    [
+      'failed',
+      {
+        id: 'resp_failed',
+        status: 'failed',
+        error: { message: 'provider failed' },
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: 'partial' }],
+          },
+        ],
+      },
+      /response failed: provider failed/,
+    ],
+  ])('completed-response conversion rejects %s terminal status', (
+    _case,
+    response,
+    errorPattern,
+  ) => {
+    expect(() =>
+      convertCodexResponseToAnthropicMessage(
+        response,
+        'gpt-5.4',
+        ['Read'],
+      ),
+    ).toThrow(errorPattern)
+  })
+
+  test('completed-response conversion rejects duplicate or malformed tools', () => {
+    const baseCall = {
+      type: 'function_call',
+      id: 'fc_read',
+      call_id: 'same_call',
+      name: 'Read',
+      arguments: '{}',
+    }
+    expect(() =>
+      convertCodexResponseToAnthropicMessage(
+        { status: 'completed', output: [baseCall, { ...baseCall, id: 'fc_2' }] },
+        'gpt-5.4',
+        ['Read'],
+      ),
+    ).toThrow('reused a tool call ID')
+    expect(() =>
+      convertCodexResponseToAnthropicMessage(
+        {
+          status: 'completed',
+          output: [{ ...baseCall, call_id: 'call_invalid', arguments: '{"x":' }],
+        },
+        'gpt-5.4',
+        ['Read'],
+      ),
+    ).toThrow('invalid tool arguments')
   })
 
   test('strips <think> tag block from Codex SSE text stream', async () => {
@@ -1166,6 +1492,473 @@ describe('Codex request translation', () => {
     expect(textDeltas.join('')).toBe(
       'I should note that the user role requires a briefly concise friendly response format.',
     )
+  })
+
+  test('balances text blocks when the Codex reader rejects', async () => {
+    const encoder = new TextEncoder()
+    let read = false
+    const stream = new ReadableStream({
+      pull(controller) {
+        if (!read) {
+          read = true
+          controller.enqueue(
+            encoder.encode(
+              [
+                'event: response.output_text.delta',
+                'data: {"type":"response.output_text.delta","delta":"visible"}',
+                '',
+                '',
+              ].join('\n'),
+            ),
+          )
+          return
+        }
+        controller.error(new Error('wire broke'))
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect((thrown as Error).message).toContain('wire broke')
+    expect(events.filter(event => event.type === 'content_block_start')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'content_block_stop')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+  })
+
+  test('cancels a Codex response body when a terminal event arrives before transport EOF', async () => {
+    const terminalPayload = [
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_terminal","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"done"}]}]}}',
+      '',
+      '',
+    ].join('\n')
+    const makeOpenResponse = (onCancel: () => void) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(terminalPayload))
+          },
+          cancel() {
+            onCancel()
+          },
+        }),
+      )
+
+    let streamCancelCount = 0
+    const events: AnthropicStreamEvent[] = []
+    for await (const event of codexStreamToAnthropic(
+      makeOpenResponse(() => streamCancelCount++),
+      'gpt-5.4',
+    )) {
+      events.push(event)
+    }
+    expect(events.at(-1)?.type).toBe('message_stop')
+    expect(streamCancelCount).toBe(1)
+
+    let collectCancelCount = 0
+    const collected = await collectCodexCompletedResponse(
+      makeOpenResponse(() => collectCancelCount++),
+    )
+    expect(collected.status).toBe('completed')
+    expect(collectCancelCount).toBe(1)
+  })
+
+  test('balances text blocks when Codex SSE contains invalid JSON', async () => {
+    const responseText = [
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","delta":"visible"}',
+      '',
+      'event: response.output_text.delta',
+      'data: {BROKEN JSON}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_lost","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"visible-lost"}]}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect((thrown as Error).message).toContain('invalid JSON')
+    expect(events.filter(event => event.type === 'content_block_start')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'content_block_stop')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+  })
+
+  test('emits text present only in the authoritative completed payload', async () => {
+    const responseText = [
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_final_text","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final-only"}]}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.4',
+    )) {
+      events.push(event)
+    }
+    const text = events
+      .filter(event => event.delta?.type === 'text_delta')
+      .map(event => event.delta?.text ?? '')
+      .join('')
+    expect(text).toBe('final-only')
+    expect(events.filter(event => event.type === 'content_block_start')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'content_block_stop')).toHaveLength(1)
+  })
+
+  test('rejects final-only text after a reserved tool block before emitting either block', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":""},"output_index":0}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_out_of_order","status":"completed","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final-only"}]}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect((thrown as Error).message).toContain('reserved tool block')
+    expect(
+      events.filter(event => event.type === 'content_block_start'),
+    ).toHaveLength(0)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+  })
+
+  test('rejects streamed text after a reserved tool block before emitting either block', async () => {
+    const responseText = [
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","item":{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":""},"output_index":0}',
+      '',
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","item_id":"msg_after_tool","output_index":1,"content_index":0,"delta":"visible"}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_out_of_order_stream","status":"completed","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible"}]}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect((thrown as Error).message).toContain('text after a reserved tool block')
+    expect(
+      events.filter(event => event.type === 'content_block_start'),
+    ).toHaveLength(0)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+  })
+
+  test('rejects streamed text absent from the authoritative final output before tools start', async () => {
+    const responseText = [
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","delta":"stale"}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_stale","status":"completed","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"}]}}',
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).message).toContain('contradicted streamed text')
+    expect(
+      events.filter(
+        event =>
+          event.type === 'content_block_start' &&
+          event.content_block?.type === 'tool_use',
+      ),
+    ).toHaveLength(0)
+    expect(events.filter(event => event.type === 'content_block_start')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'content_block_stop')).toHaveLength(1)
+  })
+
+  test('rejects contradictory incomplete terminal status without committing tools', async () => {
+    const responseText = [
+      'event: response.incomplete',
+      'data: {"type":"response.incomplete","response":{"id":"resp_bad_status","status":"completed","output":[{"id":"fc_read","call_id":"call_read","type":"function_call","name":"Read","arguments":"{}"}]}}',
+      '',
+      '',
+    ].join('\n')
+    const makeResponse = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(responseText))
+            controller.close()
+          },
+        }),
+      )
+
+    const events: AnthropicStreamEvent[] = []
+    let streamError: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        makeResponse(),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      streamError = error
+    }
+    expect((streamError as Error).message).toContain('contradictory status')
+    expect(
+      events.filter(event => event.content_block?.type === 'tool_use'),
+    ).toHaveLength(0)
+
+    let collectedError: unknown
+    try {
+      await collectCodexCompletedResponse(makeResponse())
+    } catch (error) {
+      collectedError = error
+    }
+    expect((collectedError as Error).message).toContain('contradictory status')
+  })
+
+  test.each([
+    ['missing response object', { type: 'response.completed' }, /response object/],
+    ['null response object', { type: 'response.completed', response: null }, /response object/],
+    ['scalar response object', { type: 'response.completed', response: 'bad' }, /response object/],
+    [
+      'missing terminal status',
+      { type: 'response.completed', response: { id: 'resp_bad', output: [] } },
+      /missing or contradictory status/,
+    ],
+    [
+      'missing response ID',
+      { type: 'response.completed', response: { status: 'completed', output: [] } },
+      /response ID/,
+    ],
+    [
+      'missing output array',
+      { type: 'response.completed', response: { id: 'resp_bad', status: 'completed' } },
+      /output array/,
+    ],
+  ])('rejects completed terminal payload with %s in stream and collection', async (
+    _case,
+    terminalPayload,
+    errorPattern,
+  ) => {
+    const responseText = [
+      'event: response.completed',
+      `data: ${JSON.stringify(terminalPayload)}`,
+      '',
+      '',
+    ].join('\n')
+    const makeResponse = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(responseText))
+            controller.close()
+          },
+        }),
+      )
+
+    const events: AnthropicStreamEvent[] = []
+    let streamError: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        makeResponse(),
+        'gpt-5.4',
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      streamError = error
+    }
+    expect((streamError as Error).message).toMatch(errorPattern)
+    expect(events.filter(event => event.type === 'content_block_start')).toHaveLength(0)
+    expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+
+    let collectedError: unknown
+    try {
+      await collectCodexCompletedResponse(makeResponse())
+    } catch (error) {
+      collectedError = error
+    }
+    expect((collectedError as Error).message).toMatch(errorPattern)
+  })
+
+  test('rejects missing final Codex tool IDs in streaming and completed conversion', async () => {
+    const finalTool = {
+      type: 'function_call',
+      name: 'Read',
+      arguments: '{}',
+    }
+    const responseText = [
+      'event: response.completed',
+      `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'resp_missing_id', status: 'completed', output: [finalTool] } })}`,
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let streamError: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      streamError = error
+    }
+    expect((streamError as Error).message).toContain('omitted its tool call ID')
+    expect(
+      events.filter(event => event.content_block?.type === 'tool_use'),
+    ).toHaveLength(0)
+    expect(() =>
+      convertCodexResponseToAnthropicMessage(
+        { id: 'resp_missing_id', status: 'completed', output: [finalTool] },
+        'gpt-5.4',
+        ['Read'],
+      ),
+    ).toThrow(/omitted its tool call ID/)
+  })
+
+  test('caps Codex tool argument buffering before tool start', async () => {
+    process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = '32'
+    const responseText = [
+      'event: response.output_item.added',
+      `data: ${JSON.stringify({ type: 'response.output_item.added', item: { id: 'fc_large', call_id: 'call_large', type: 'function_call', name: 'Read', arguments: '' } })}`,
+      '',
+      'event: response.function_call_arguments.delta',
+      `data: ${JSON.stringify({ type: 'response.function_call_arguments.delta', item_id: 'fc_large', delta: 'x'.repeat(33) })}`,
+      '',
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['Read'],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).message).toContain('safety limit')
+    expect(
+      events.filter(event => event.content_block?.type === 'tool_use'),
+    ).toHaveLength(0)
   })
 })
 

@@ -972,8 +972,9 @@ interface OpenAIStreamChunk {
       role?: string
       content?: string | null
       reasoning_content?: string | null
+      function_call?: { name?: string; arguments?: string }
       tool_calls?: Array<{
-        index: number
+        index?: number
         id?: string
         type?: string
         function?: { name?: string; arguments?: string }
@@ -992,6 +993,10 @@ interface OpenAIStreamChunk {
   }
 }
 
+type OpenAIStreamToolCallDelta = NonNullable<
+  OpenAIStreamChunk['choices'][number]['delta']['tool_calls']
+>[number]
+
 function makeMessageId(): string {
   return `msg_${randomUUID().replace(/-/g, '')}`
 }
@@ -1008,61 +1013,143 @@ function convertChunkUsage(
   )
 }
 
-const JSON_REPAIR_SUFFIXES = [
-  '}',
-  '"}',
-  ']}',
-  '"]}',
-  '}}',
-  '"}}',
-  ']}}',
-  '"]}}',
-  '"]}]}',
-  '}]}',
-]
-
-function repairPossiblyTruncatedObjectJson(raw: string): string | null {
-  try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? raw
-      : null
-  } catch {
-    for (const combo of JSON_REPAIR_SUFFIXES) {
-      try {
-        const repaired = raw + combo
-        const parsed = JSON.parse(repaired)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return repaired
-        }
-      } catch {}
+function hasInvalidToolArguments(
+  raw: string,
+  toolName: string,
+): boolean {
+  const trimmed = raw.trim()
+  if (!hasToolFieldMapping(toolName)) {
+    try {
+      const parsed = JSON.parse(raw)
+      return parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
+    } catch {
+      return true
     }
-    return null
   }
+
+  if (!trimmed.startsWith('{')) return false
+  try {
+    JSON.parse(raw)
+    return false
+  } catch {
+    // Keep the long-standing Bash compatibility for complete compound
+    // commands such as `{ pwd; }`. Every other brace-prefixed malformed value
+    // is treated as a broken JSON object and must never be repaired/executed.
+    return !(
+      toolName.toLowerCase() === 'bash' &&
+      /^\{\s*[^{}]*;\s*\}$/.test(trimmed)
+    )
+  }
+}
+
+// Terminal-only commit requires buffering provider fragments. Keep a generous
+// hard ceiling so a broken or hostile stream cannot grow the CLI heap without
+// bound before it ever produces a valid terminal event.
+const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 64 * 1024 * 1024
+
+function maxBufferedToolArgumentChars(): number {
+  const raw = process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
+}
+
+function mergeOpaqueMetadata(
+  current: Record<string, unknown> | undefined,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = Object.fromEntries(
+    Object.entries(current ?? {}),
+  ) as Record<string, unknown>
+  for (const [key, nextValue] of Object.entries(next)) {
+    const currentValue = merged[key]
+    if (
+      currentValue !== null &&
+      nextValue !== null &&
+      typeof currentValue === 'object' &&
+      typeof nextValue === 'object' &&
+      !Array.isArray(currentValue) &&
+      !Array.isArray(nextValue)
+    ) {
+      Object.defineProperty(merged, key, {
+        value: mergeOpaqueMetadata(
+          currentValue as Record<string, unknown>,
+          nextValue as Record<string, unknown>,
+        ),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+    } else {
+      Object.defineProperty(merged, key, {
+        value: nextValue,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+    }
+  }
+  return merged
 }
 
 type ActiveOpenAIToolCall = {
   id: string
   name: string
-  index: number
+  idFragments: string[]
+  nameFragments: string[]
+  index: number | null
   jsonBuffer: string
+  ambiguousArgumentFraming: boolean
   emittedJsonLength: number
   normalizeAtStop: boolean
   hasStarted: boolean
-  readyToStart: boolean
-  startedName?: string
+  hasStopped: boolean
   extra_content?: Record<string, unknown>
 }
 
-/**
- * OpenAI-compatible providers are allowed to stream function names as deltas.
- * Some also repeat the cumulative/full name on later chunks, so support both
- * shapes without turning `Rea` + `d` into a permanently truncated `Rea`.
- */
-function mergeStreamedToolName(current: string, fragment: string): string {
-  if (!fragment) return current
-  if (!current || fragment.startsWith(current)) return fragment
-  return current + fragment
+function resolveStreamedToolName(
+  advertisedToolNames: readonly string[],
+  fragments: readonly string[],
+): { name: string; ambiguous: boolean } {
+  const nonEmpty = fragments.filter(Boolean)
+  const concatenated = nonEmpty.join('')
+  if (advertisedToolNames.length === 0) {
+    return { name: concatenated, ambiguous: false }
+  }
+
+  // The OpenAI contract defines deltas, while a few compatible providers send
+  // cumulative snapshots. Resolve every plausible representation against the
+  // advertised catalog and accept it only when they all identify one tool.
+  const candidates = new Set<string>([concatenated])
+  let cumulative = ''
+  for (const fragment of nonEmpty) {
+    if (!cumulative) {
+      cumulative = fragment
+      continue
+    }
+    const currentFolded = cumulative.toLowerCase()
+    const fragmentFolded = fragment.toLowerCase()
+    if (fragmentFolded.startsWith(currentFolded)) {
+      cumulative = fragment
+    } else if (!currentFolded.startsWith(fragmentFolded)) {
+      cumulative += fragment
+    }
+  }
+  candidates.add(cumulative)
+
+  const resolved = new Set<string>()
+  for (const candidate of candidates) {
+    const toolName = resolveToolNameByUniquePrefix(
+      advertisedToolNames,
+      candidate,
+    )
+    if (toolName) resolved.add(toolName)
+  }
+  if (resolved.size === 1) {
+    return { name: [...resolved][0]!, ambiguous: false }
+  }
+  return { name: concatenated, ambiguous: true }
 }
 
 function getAdvertisedToolNames(params: ShimCreateParams): string[] {
@@ -1205,7 +1292,11 @@ async function* openaiStreamToAnthropic(
   let lastStopReason: 'tool_use' | 'max_tokens' | 'end_turn' | null = null
   let hasEmittedFinalUsage = false
   let hasProcessedFinishReason = false
+  let sawDoneMarker = false
   const streamState = createStreamState()
+  let nextSyntheticProtocolIndex = -2
+  let totalBufferedToolArgumentChars = 0
+  const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
 
   // Emit message_start
   yield {
@@ -1227,8 +1318,12 @@ async function* openaiStreamToAnthropic(
     },
   }
 
-  const reader = response.body?.getReader()
-  if (!reader) return
+  const responseBody = response.body
+  if (!responseBody) {
+    throw new Error('Upstream SSE response had no readable body')
+  }
+  const reader = responseBody.getReader()
+  type ReaderResult = Awaited<ReturnType<typeof reader.read>>
 
   const decoder = new TextDecoder()
   let buffer = ''
@@ -1242,7 +1337,14 @@ async function* openaiStreamToAnthropic(
   })()
   let lastDataTime = Date.now()
   const streamStartedAt = Date.now()
+  let pendingReaderCancellation: Promise<void> | undefined
 
+  const cancelReader = (reason: unknown): void => {
+    pendingReaderCancellation = reader.cancel(reason).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
 
   /**
    * Read from the stream with an idle timeout. If no data arrives within
@@ -1252,44 +1354,59 @@ async function* openaiStreamToAnthropic(
    * Respects the caller's AbortSignal — clears the idle timer on abort
    * so the rejection reason is AbortError, not a spurious idle timeout.
    */
-  async function readWithTimeout(): Promise<
-    ReadableStreamReadResult<Uint8Array>
-  > {
+  async function readWithTimeout(): Promise<ReaderResult> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      let abortCleanup: (() => void) | undefined
+      const cleanup = () => {
+        clearTimeout(timeoutId)
+        if (signal && abortCleanup) {
+          signal.removeEventListener('abort', abortCleanup)
+        }
+      }
+      const resolveOnce = (result: ReaderResult) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (result.value) lastDataTime = Date.now()
+        resolve(result)
+      }
+      const rejectOnce = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
       const timeoutId = setTimeout(() => {
         const elapsed = Math.round((Date.now() - lastDataTime) / 1000)
-        reject(
-          new Error(
-            `OpenAI/Gemini SSE stream idle for ${elapsed}s (limit: ${STREAM_IDLE_TIMEOUT_MS / 1000}s). Connection likely dropped.`,
-          ),
+        const timeoutError = new Error(
+          `OpenAI/Gemini SSE stream idle for ${elapsed}s (limit: ${STREAM_IDLE_TIMEOUT_MS / 1000}s). Connection likely dropped.`,
         )
+        // Cancel the still-pending read so the reader lock can be released and
+        // a late chunk cannot outlive this failed request.
+        cancelReader(timeoutError)
+        rejectOnce(timeoutError)
       }, STREAM_IDLE_TIMEOUT_MS)
 
-      // If the caller aborts, clear the timer so the AbortError surfaces
-      // cleanly instead of being masked by a spurious idle timeout.
-      let abortCleanup: (() => void) | undefined
       if (signal) {
         abortCleanup = () => {
-          clearTimeout(timeoutId)
+          const abortError =
+            signal.reason instanceof Error
+              ? signal.reason
+              : Object.assign(new Error('The operation was aborted'), {
+                  name: 'AbortError',
+                })
+          cancelReader(abortError)
+          rejectOnce(abortError)
+        }
+        if (signal.aborted) {
+          abortCleanup()
+          return
         }
         signal.addEventListener('abort', abortCleanup, { once: true })
       }
 
-      reader.read().then(
-        (result) => {
-          clearTimeout(timeoutId)
-          if (signal && abortCleanup)
-            signal.removeEventListener('abort', abortCleanup)
-          if (result.value) lastDataTime = Date.now()
-          resolve(result)
-        },
-        (err) => {
-          clearTimeout(timeoutId)
-          if (signal && abortCleanup)
-            signal.removeEventListener('abort', abortCleanup)
-          reject(err)
-        },
-      )
+      reader.read().then(resolveOnce, rejectOnce)
     })
   }
 
@@ -1313,35 +1430,50 @@ async function* openaiStreamToAnthropic(
     hasEmittedContentStart = false
   }
 
-  const toolNameMayBeIncomplete = (name: string): boolean =>
-    Boolean(name) &&
-    !advertisedToolNames.includes(name) &&
-    advertisedToolNames.some(toolName => toolName.startsWith(name))
+  const finalizeToolCall = (toolCall: ActiveOpenAIToolCall): string | null => {
+    const distinctIds = [...new Set(toolCall.idFragments.filter(Boolean))]
+    if (distinctIds.length > 1) {
+      return 'conflicting_tool_call_ids'
+    }
+    if (distinctIds.length === 1) toolCall.id = distinctIds[0]!
 
-  const canonicalizeFinalToolName = (toolCall: ActiveOpenAIToolCall): void => {
-    const resolvedName = resolveToolNameByUniquePrefix(
+    const resolvedName = resolveStreamedToolName(
       advertisedToolNames,
-      toolCall.name,
+      toolCall.nameFragments,
     )
-    if (resolvedName) toolCall.name = resolvedName
+    toolCall.name = resolvedName.name
+    if (resolvedName.ambiguous) return 'ambiguous_tool_name_fragments'
+    if (!toolCall.id.trim()) return 'missing_tool_call_id'
+    if (!toolCall.name.trim()) return 'missing_tool_name'
+    if (toolCall.ambiguousArgumentFraming) {
+      return 'ambiguous_tool_argument_fragments'
+    }
+    if (
+      hasInvalidToolArguments(
+        toolCall.jsonBuffer,
+        toolCall.name,
+      )
+    ) {
+      return 'malformed_structured_tool_arguments'
+    }
+    return null
   }
 
-  const startToolCall = async function* (
-    toolCall: ActiveOpenAIToolCall,
-    force = false,
-  ) {
-    if (toolCall.hasStarted || !toolCall.id || !toolCall.name) return
-    if (!force && toolNameMayBeIncomplete(toolCall.name)) return
-
-    if (force) canonicalizeFinalToolName(toolCall)
+  const startToolCall = async function* (toolCall: ActiveOpenAIToolCall) {
+    if (
+      toolCall.hasStarted ||
+      toolCall.index === null ||
+      !toolCall.id ||
+      !toolCall.name
+    ) return
+    const blockIndex = toolCall.index
 
     toolCall.normalizeAtStop = hasToolFieldMapping(toolCall.name)
     toolCall.hasStarted = true
-    toolCall.startedName = toolCall.name
 
     yield {
       type: 'content_block_start' as const,
-      index: toolCall.index,
+      index: blockIndex,
       content_block: {
         type: 'tool_use' as const,
         id: toolCall.id,
@@ -1362,7 +1494,7 @@ async function* openaiStreamToAnthropic(
     if (!toolCall.normalizeAtStop && toolCall.jsonBuffer) {
       yield {
         type: 'content_block_delta' as const,
-        index: toolCall.index,
+        index: blockIndex,
         delta: {
           type: 'input_json_delta' as const,
           partial_json: toolCall.jsonBuffer,
@@ -1372,25 +1504,37 @@ async function* openaiStreamToAnthropic(
     }
   }
 
-  const flushReadyToolCalls = async function* (force = false) {
-    const orderedCalls = [...activeToolCalls.values()].sort(
-      (a, b) => a.index - b.index,
-    )
+  const orderedActiveToolCalls = (): ActiveOpenAIToolCall[] =>
+    [...activeToolCalls.entries()]
+      .sort(([leftProtocolIndex], [rightProtocolIndex]) =>
+        leftProtocolIndex - rightProtocolIndex,
+      )
+      .map(([, toolCall]) => toolCall)
 
-    for (const toolCall of orderedCalls) {
+  const flushReadyToolCalls = async function* () {
+    for (const toolCall of orderedActiveToolCalls()) {
+      if (toolCall.index === null) {
+        toolCall.index = contentBlockIndex++
+      }
       if (!toolCall.hasStarted) {
-        if (!force && !toolCall.readyToStart) break
-        yield* startToolCall(toolCall, force)
+        yield* startToolCall(toolCall)
         if (!toolCall.hasStarted) {
-          if (!force) break
           continue
         }
       }
 
-      if (
-        !toolCall.normalizeAtStop &&
-        toolCall.emittedJsonLength < toolCall.jsonBuffer.length
-      ) {
+      if (toolCall.normalizeAtStop) {
+        yield {
+          type: 'content_block_delta' as const,
+          index: toolCall.index,
+          delta: {
+            type: 'input_json_delta' as const,
+            partial_json: JSON.stringify(
+              normalizeToolArguments(toolCall.name, toolCall.jsonBuffer),
+            ),
+          },
+        }
+      } else if (toolCall.emittedJsonLength < toolCall.jsonBuffer.length) {
         yield {
           type: 'content_block_delta' as const,
           index: toolCall.index,
@@ -1403,7 +1547,80 @@ async function* openaiStreamToAnthropic(
         }
         toolCall.emittedJsonLength = toolCall.jsonBuffer.length
       }
+      toolCall.hasStopped = true
+      yield { type: 'content_block_stop' as const, index: toolCall.index }
     }
+  }
+
+  const discardActiveToolCalls = (reason: string): void => {
+    if (activeToolCalls.size > 0) {
+      logForDebugging(
+        JSON.stringify({
+          type: 'discarded_uncommitted_tool_calls',
+          model,
+          reason,
+          count: activeToolCalls.size,
+        }),
+        { level: 'warn' },
+      )
+    }
+    activeToolCalls.clear()
+  }
+
+  const closeOpenBlocksForFailure = async function* () {
+    if (hasEmittedContentStart) {
+      yield* closeActiveContentBlock()
+    }
+    if (hasEmittedThinkingStart && !hasClosedThinking) {
+      const thinkingBlockIndex = contentBlockIndex
+      hasClosedThinking = true
+      contentBlockIndex++
+      yield { type: 'content_block_stop', index: thinkingBlockIndex }
+    }
+
+    for (const toolCall of orderedActiveToolCalls()) {
+      if (
+        !toolCall.hasStarted ||
+        toolCall.hasStopped ||
+        toolCall.index === null
+      ) continue
+      toolCall.hasStopped = true
+      yield { type: 'content_block_stop', index: toolCall.index }
+    }
+    discardActiveToolCalls('stream_exception')
+  }
+
+  const resolveProtocolIndex = (
+    toolCall: OpenAIStreamToolCallDelta,
+    batchSize: number,
+  ): number => {
+    if (Number.isInteger(toolCall.index)) return toolCall.index as number
+
+    if (typeof toolCall.id === 'string' && toolCall.id) {
+      const matches = [...activeToolCalls.entries()].filter(([, active]) =>
+        active.idFragments.includes(toolCall.id!),
+      )
+      if (matches.length === 1) return matches[0]![0]
+      if (matches.length > 1) {
+        throw new Error(
+          'Upstream omitted tool index and reused an ambiguous tool call ID; no tool was committed.',
+        )
+      }
+      if (activeToolCalls.size === 1 && batchSize === 1) {
+        return activeToolCalls.keys().next().value as number
+      }
+      return nextSyntheticProtocolIndex--
+    }
+
+    if (batchSize === 1 && activeToolCalls.size === 1) {
+      return activeToolCalls.keys().next().value as number
+    }
+    if (batchSize === 1 && activeToolCalls.size === 0) {
+      return nextSyntheticProtocolIndex--
+    }
+    throw new Error(
+      'Upstream omitted tool indices for parallel calls; no tool was committed.',
+    )
   }
 
   try {
@@ -1427,20 +1644,7 @@ async function* openaiStreamToAnthropic(
             }),
             { level: 'error' },
           )
-          // Close any active block before throwing so consumers
-          // see a clean content event sequence (H1 fix).
-          if (hasEmittedContentStart) {
-            yield* closeActiveContentBlock()
-          }
-          if (hasEmittedThinkingStart && !hasClosedThinking) {
-            yield { type: 'content_block_stop', index: contentBlockIndex }
-          }
-          for (const [, toolCall] of activeToolCalls) {
-            if (toolCall.hasStarted) {
-              yield { type: 'content_block_stop', index: toolCall.index }
-            }
-          }
-          activeToolCalls.clear()
+          discardActiveToolCalls('premature_eof')
           throw new Error(
             `Upstream stream closed without finish_reason after ${elapsedSec}s — likely a guard_proxy/vLLM disconnect. The session was interrupted, not completed.`,
           )
@@ -1454,14 +1658,26 @@ async function* openaiStreamToAnthropic(
 
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed || trimmed === 'data: [DONE]') continue
+        if (!trimmed) continue
+        if (trimmed === 'data: [DONE]') {
+          if (!hasProcessedFinishReason) {
+            throw new Error(
+              'Upstream SSE emitted [DONE] without finish_reason; the response was not committed.',
+            )
+          }
+          sawDoneMarker = true
+          cancelReader('OpenAI SSE completed')
+          break
+        }
         if (!trimmed.startsWith('data: ')) continue
 
         let chunk: OpenAIStreamChunk
         try {
           chunk = JSON.parse(trimmed.slice(6))
         } catch {
-          continue
+          throw new Error(
+            'Upstream emitted invalid SSE JSON; the response was not committed.',
+          )
         }
 
         // Router status signal (e.g. verboo-code-router emite quando o backend
@@ -1494,20 +1710,7 @@ async function* openaiStreamToAnthropic(
             typeof inStreamError.message === 'string'
               ? inStreamError.message
               : 'Provider returned an in-stream error'
-          // Close any open content block before error so consumers
-          // see a clean content event sequence (H3 fix).
-          if (hasEmittedContentStart) {
-            yield* closeActiveContentBlock()
-          }
-          if (hasEmittedThinkingStart && !hasClosedThinking) {
-            yield { type: 'content_block_stop', index: contentBlockIndex }
-          }
-          for (const [, toolCall] of activeToolCalls) {
-            if (toolCall.hasStarted) {
-              yield { type: 'content_block_stop', index: toolCall.index }
-            }
-          }
-          activeToolCalls.clear()
+          discardActiveToolCalls('in_stream_error')
           // Do NOT yield message_stop here — the synthetic API error
           // message (createAssistantAPIErrorMessage) is responsible for
           // resetting the TUI spinner. Yielding message_stop before the
@@ -1530,7 +1733,47 @@ async function* openaiStreamToAnthropic(
         const chunkUsage = convertChunkUsage(chunk.usage)
 
         for (const choice of chunk.choices ?? []) {
-          const delta = choice.delta
+          const delta = choice.delta ?? {}
+
+          if (
+            choice.finish_reason != null &&
+            (typeof choice.finish_reason !== 'string' ||
+              !choice.finish_reason.trim())
+          ) {
+            throw new Error(
+              'Upstream emitted a malformed finish_reason; the response was not committed.',
+            )
+          }
+
+          if (hasProcessedFinishReason) {
+            const hasLateOutput = Object.entries(delta).some(([key, value]) => {
+              if (key === 'role' || value == null || value === '') return false
+              if (Array.isArray(value)) return value.length > 0
+              if (typeof value === 'object') {
+                return Object.keys(value as Record<string, unknown>).length > 0
+              }
+              return true
+            })
+            if (hasLateOutput) {
+              throw new Error(
+                'Upstream emitted assistant output after finish_reason; the late output was not committed.',
+              )
+            }
+            // Tolerate providers that repeat an empty terminal choice, but a
+            // terminal event can never reopen text or tool protocol state.
+            continue
+          }
+
+          if (
+            activeToolCalls.size > 0 &&
+            ((delta.reasoning_content != null &&
+              delta.reasoning_content !== '') ||
+              (delta.content != null && delta.content !== ''))
+          ) {
+            throw new Error(
+              'Upstream emitted text after a reserved tool block; the out-of-order response was not committed.',
+            )
+          }
 
           // Reasoning models (e.g. GLM-5, DeepSeek) may stream chain-of-thought
           // in `reasoning_content` before the actual reply appears in `content`.
@@ -1539,6 +1782,11 @@ async function* openaiStreamToAnthropic(
             delta.reasoning_content != null &&
             delta.reasoning_content !== ''
           ) {
+            if (hasClosedThinking || hasEmittedContentStart) {
+              throw new Error(
+                'Upstream emitted reasoning after visible text; the out-of-order delta was not committed.',
+              )
+            }
             if (!hasEmittedThinkingStart) {
               yield {
                 type: 'content_block_start',
@@ -1549,9 +1797,7 @@ async function* openaiStreamToAnthropic(
             }
             yield {
               type: 'content_block_delta',
-              index: hasClosedThinking
-                ? contentBlockIndex - 1
-                : contentBlockIndex,
+              index: contentBlockIndex,
               delta: {
                 type: 'thinking_delta',
                 thinking: delta.reasoning_content,
@@ -1588,10 +1834,44 @@ async function* openaiStreamToAnthropic(
             processStreamChunk(streamState, delta.content)
           }
 
-          // Tool calls
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              let active = activeToolCalls.get(tc.index)
+          // Tool calls. Legacy `function_call` is normalized into the same
+          // buffered lifecycle and receives a deterministic synthetic ID.
+          const streamedToolCalls: OpenAIStreamToolCallDelta[] = [
+            ...(delta.tool_calls ?? []),
+          ]
+          if (delta.function_call) {
+            streamedToolCalls.push({
+              index: -1,
+              id: `${messageId}_function_call`,
+              type: 'function',
+              function: delta.function_call,
+            })
+          }
+          if (streamedToolCalls.length > 0) {
+            for (const tc of streamedToolCalls) {
+              if (
+                (tc.id != null && typeof tc.id !== 'string') ||
+                (tc.function?.name != null &&
+                  typeof tc.function.name !== 'string') ||
+                (tc.function?.arguments != null &&
+                  typeof tc.function.arguments !== 'string')
+              ) {
+                discardActiveToolCalls('malformed_tool_call_delta')
+                throw new Error(
+                  'Upstream returned malformed tool call fields; no tool was committed.',
+                )
+              }
+              let protocolIndex: number
+              try {
+                protocolIndex = resolveProtocolIndex(
+                  tc,
+                  streamedToolCalls.length,
+                )
+              } catch (error) {
+                discardActiveToolCalls('ambiguous_missing_tool_index')
+                throw error
+              }
+              let active = activeToolCalls.get(protocolIndex)
               if (!active) {
                 // A tool call may arrive as separate id, name, and argument
                 // chunks. Reserve its block once, keyed by the OpenAI index,
@@ -1611,61 +1891,82 @@ async function* openaiStreamToAnthropic(
                 active = {
                   id: '',
                   name: '',
-                  index: contentBlockIndex++,
+                  idFragments: [],
+                  nameFragments: [],
+                  index: null,
                   jsonBuffer: '',
+                  ambiguousArgumentFraming: false,
                   emittedJsonLength: 0,
                   normalizeAtStop: false,
                   hasStarted: false,
-                  readyToStart: false,
+                  hasStopped: false,
                 }
-                activeToolCalls.set(tc.index, active)
+                activeToolCalls.set(protocolIndex, active)
               }
 
-              if (tc.id && !active.id) {
-                active.id = tc.id
+              if (tc.id) {
+                active.idFragments.push(tc.id)
               }
 
               const nameFragment = tc.function?.name
               if (nameFragment) {
-                active.name = mergeStreamedToolName(
-                  active.name,
-                  nameFragment,
-                )
+                active.nameFragments.push(nameFragment)
               }
 
               const argumentFragment = tc.function?.arguments
               if (typeof argumentFragment === 'string') {
+                if (
+                  argumentFragment.length > 0 &&
+                  active.jsonBuffer.length > 0 &&
+                  argumentFragment.startsWith(active.jsonBuffer)
+                ) {
+                  // A valid delta and a cumulative snapshot are indistinguishable
+                  // here. Concatenating the latter can silently change a raw Bash
+                  // command or file path, so fail closed at the terminal instead
+                  // of guessing which wire convention the provider intended.
+                  active.ambiguousArgumentFraming = true
+                }
+                if (
+                  active.jsonBuffer.length + argumentFragment.length >
+                    toolArgumentCharsLimit ||
+                  totalBufferedToolArgumentChars + argumentFragment.length >
+                    toolArgumentCharsLimit
+                ) {
+                  discardActiveToolCalls('tool_arguments_limit_exceeded')
+                  throw new Error(
+                    'Upstream tool arguments exceeded the configured safety limit; no tool was committed.',
+                  )
+                }
                 active.jsonBuffer += argumentFragment
+                totalBufferedToolArgumentChars += argumentFragment.length
                 processStreamChunk(streamState, argumentFragment)
               }
 
               // Capture extra_content / thought_signature whether it arrives
               // with the initial metadata, arguments, or in its own chunk.
-              const thoughtSignature = (tc as any).thought_signature as
-                string | undefined
-              const extraContent = tc.extra_content
-                ? { ...tc.extra_content }
-                : thoughtSignature
-                  ? { google: { thought_signature: thoughtSignature } }
-                  : undefined
-              if (extraContent) {
-                active.extra_content = {
-                  ...(active.extra_content ?? {}),
-                  ...extraContent,
+              const thoughtSignature = (tc as any).thought_signature
+              let extraContent: Record<string, unknown> | undefined
+              if (typeof thoughtSignature === 'string' && thoughtSignature) {
+                extraContent = {
+                  google: { thought_signature: thoughtSignature },
                 }
               }
-
-              // An empty arguments scaffold can arrive before the final name
-              // fragment (`Rea`, then `d`). A non-blank argument is the first
-              // reliable boundary after the streamed function name.
-              if (argumentFragment?.trim()) {
-                active.readyToStart = true
+              if (tc.extra_content) {
+                extraContent = mergeOpaqueMetadata(extraContent, tc.extra_content)
               }
+              if (extraContent) {
+                active.extra_content = mergeOpaqueMetadata(
+                  active.extra_content,
+                  extraContent,
+                )
+              }
+
             }
 
-            // Preserve the provider's tool-call order even when argument
-            // deltas for parallel calls arrive interleaved.
-            yield* flushReadyToolCalls()
+            // Keep the call buffered until finish_reason. The provider can
+            // still send late name fragments or metadata after arguments;
+            // emitting early would require a protocol-invalid second
+            // content_block_start to correct the block later.
           }
 
           // Finish — guard ensures we only process finish_reason once even if
@@ -1683,130 +1984,43 @@ async function* openaiStreamToAnthropic(
             if (hasEmittedContentStart) {
               yield* closeActiveContentBlock()
             }
-            // Close active tool calls
-            for (const toolCall of activeToolCalls.values()) {
-              canonicalizeFinalToolName(toolCall)
-              // Mapped tools buffer their raw provider arguments so they can
-              // be normalized once the complete name is known. Recompute the
-              // decision when no raw JSON has escaped yet.
-              if (toolCall.emittedJsonLength === 0) {
+            const isToolFinish =
+              choice.finish_reason === 'tool_calls' ||
+              choice.finish_reason === 'function_call'
+            if (!isToolFinish) {
+              discardActiveToolCalls(`finish_reason:${choice.finish_reason}`)
+            } else {
+              const invalidReasons: string[] = []
+              const finalizedToolCallIds = new Set<string>()
+              for (const toolCall of activeToolCalls.values()) {
+                const invalidReason = finalizeToolCall(toolCall)
+                if (invalidReason) invalidReasons.push(invalidReason)
+                if (toolCall.id) {
+                  if (finalizedToolCallIds.has(toolCall.id)) {
+                    invalidReasons.push('duplicate_tool_call_id_across_indices')
+                  }
+                  finalizedToolCallIds.add(toolCall.id)
+                }
                 toolCall.normalizeAtStop = hasToolFieldMapping(toolCall.name)
               }
-            }
-            const startedBeforeFinish = new Set(
-              [...activeToolCalls.values()]
-                .filter(toolCall => toolCall.hasStarted)
-                .map(toolCall => toolCall.index),
-            )
-            yield* flushReadyToolCalls(true)
-            for (const [, tc] of activeToolCalls) {
-              const wasStarted = startedBeforeFinish.has(tc.index)
-              if (!tc.hasStarted) {
-                continue
+              if (activeToolCalls.size === 0 || invalidReasons.length > 0) {
+                discardActiveToolCalls(
+                  invalidReasons.length > 0
+                    ? invalidReasons.join(',')
+                    : 'tool_finish_without_tool_call',
+                )
+                throw new Error(
+                  `Upstream returned ${choice.finish_reason} with an incomplete or ambiguous tool call; no tool was committed.`,
+                )
               }
 
-              // Re-emit content_block_start with final extra_content so that
-              // late-arriving thought_signature chunks (Gemini thinking models)
-              // and any non-standard late name fragment are reflected in the
-              // stored message block before it is finalized.
-              if (
-                wasStarted &&
-                (tc.extra_content || tc.startedName !== tc.name)
-              ) {
-                yield {
-                  type: 'content_block_start' as const,
-                  index: tc.index,
-                  content_block: {
-                    type: 'tool_use' as const,
-                    id: tc.id,
-                    name: tc.name,
-                    input: {},
-                    ...(tc.extra_content
-                      ? { extra_content: tc.extra_content }
-                      : {}),
-                    ...((tc.extra_content?.google as any)?.thought_signature
-                      ? {
-                          signature: (tc.extra_content?.google as any)
-                            .thought_signature,
-                        }
-                      : {}),
-                  },
-                }
-              }
-              if (tc.normalizeAtStop) {
-                let partialJson: string
-                if (choice.finish_reason === 'length') {
-                  // Truncated by max tokens — preserve raw buffer to avoid
-                  // turning an incomplete tool call into an executable command
-                  partialJson = tc.jsonBuffer
-                } else {
-                  const repairedStructuredJson =
-                    repairPossiblyTruncatedObjectJson(tc.jsonBuffer)
-                  if (repairedStructuredJson) {
-                    partialJson = repairedStructuredJson
-                  } else {
-                    partialJson = JSON.stringify(
-                      normalizeToolArguments(tc.name, tc.jsonBuffer),
-                    )
-                  }
-                }
-
-                yield {
-                  type: 'content_block_delta',
-                  index: tc.index,
-                  delta: {
-                    type: 'input_json_delta',
-                    partial_json: partialJson,
-                  },
-                }
-                yield { type: 'content_block_stop', index: tc.index }
-                continue
-              }
-
-              if (tc.emittedJsonLength < tc.jsonBuffer.length) {
-                yield {
-                  type: 'content_block_delta',
-                  index: tc.index,
-                  delta: {
-                    type: 'input_json_delta',
-                    partial_json: tc.jsonBuffer.slice(tc.emittedJsonLength),
-                  },
-                }
-                tc.emittedJsonLength = tc.jsonBuffer.length
-              }
-
-              let suffixToAdd = ''
-              if (tc.jsonBuffer) {
-                try {
-                  JSON.parse(tc.jsonBuffer)
-                } catch {
-                  const str = tc.jsonBuffer.trimEnd()
-                  for (const combo of JSON_REPAIR_SUFFIXES) {
-                    try {
-                      JSON.parse(str + combo)
-                      suffixToAdd = combo
-                      break
-                    } catch {}
-                  }
-                }
-              }
-
-              if (suffixToAdd) {
-                yield {
-                  type: 'content_block_delta',
-                  index: tc.index,
-                  delta: {
-                    type: 'input_json_delta',
-                    partial_json: suffixToAdd,
-                  },
-                }
-              }
-
-              yield { type: 'content_block_stop', index: tc.index }
+              yield* flushReadyToolCalls()
+              activeToolCalls.clear()
             }
 
             const stopReason =
-              choice.finish_reason === 'tool_calls'
+              choice.finish_reason === 'tool_calls' ||
+              choice.finish_reason === 'function_call'
                 ? 'tool_use'
                 : choice.finish_reason === 'length'
                   ? 'max_tokens'
@@ -1855,6 +2069,13 @@ async function* openaiStreamToAnthropic(
                 },
               }
             }
+            // Safety/length warnings above open a synthetic text block after
+            // the original content was closed. Balance that block before the
+            // terminal message events so Ink never receives an unterminated
+            // content lifecycle.
+            if (hasEmittedContentStart) {
+              yield* closeActiveContentBlock()
+            }
             lastStopReason = stopReason
 
             yield {
@@ -1882,9 +2103,25 @@ async function* openaiStreamToAnthropic(
           hasEmittedFinalUsage = true
         }
       }
+      if (sawDoneMarker) break
     }
+  } catch (error) {
+    // Any rejected read, idle timeout, malformed delta, or conversion error
+    // must leave Anthropic's block lifecycle balanced before surfacing the
+    // failure. Ink otherwise retains a half-open node and can render stale,
+    // overlapping characters on subsequent updates.
+    yield* closeOpenBlocksForFailure()
+    throw error
   } finally {
-    reader.releaseLock()
+    await pendingReaderCancellation
+    try {
+      reader.releaseLock()
+    } catch (releaseError) {
+      logForDebugging(
+        `Failed to release OpenAI stream reader after cancellation: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
+        { level: 'warn' },
+      )
+    }
   }
 
   const stats = getStreamStats(streamState)
@@ -3150,6 +3387,7 @@ class OpenAIShimMessages {
           role?: string
           content?: string | null | Array<{ type?: string; text?: string }>
           reasoning_content?: string | null
+          function_call?: { name: string; arguments: string }
           tool_calls?: Array<{
             id: string
             function: { name: string; arguments: string }
@@ -3170,6 +3408,16 @@ class OpenAIShimMessages {
     advertisedToolNames: readonly string[] = [],
   ) {
     const choice = data.choices?.[0]
+    const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
+    if (
+      !choice ||
+      typeof choice.finish_reason !== 'string' ||
+      !choice.finish_reason.trim()
+    ) {
+      throw new Error(
+        'Upstream non-streaming response ended without a terminal choice; no output was committed.',
+      )
+    }
     const content: Array<Record<string, unknown>> = []
 
     // Some reasoning models (e.g. GLM-5) put their chain-of-thought in
@@ -3209,8 +3457,69 @@ class OpenAIShimMessages {
       }
     }
 
-    if (choice?.message?.tool_calls) {
-      for (const tc of choice.message.tool_calls) {
+    const isToolFinish =
+      choice?.finish_reason === 'tool_calls' ||
+      choice?.finish_reason === 'function_call'
+    const completedToolCalls: Array<{
+      id: string
+      function: { name: string; arguments: string }
+      extra_content?: Record<string, unknown>
+    }> = [
+      ...(choice?.message?.tool_calls ?? []),
+      ...(choice?.message?.function_call
+        ? [
+            {
+              id: `${data.id ?? makeMessageId()}_function_call`,
+              function: choice.message.function_call,
+            },
+          ]
+        : []),
+    ]
+    if (isToolFinish) {
+      if (completedToolCalls.length === 0) {
+        throw new Error(
+          'Upstream returned a tool finish reason without a tool call; no tool was committed.',
+        )
+      }
+      const completedToolCallIds = new Set<string>()
+      let completedToolArgumentChars = 0
+      for (const tc of completedToolCalls) {
+        const resolvedToolName =
+          typeof tc.function?.name === 'string'
+            ? resolveToolNameByUniquePrefix(
+                advertisedToolNames,
+                tc.function.name,
+              )
+            : undefined
+        if (
+          typeof tc.id !== 'string' ||
+          !tc.id.trim() ||
+          typeof tc.function?.name !== 'string' ||
+          !tc.function.name.trim() ||
+          typeof tc.function?.arguments !== 'string' ||
+          tc.function.arguments.length > toolArgumentCharsLimit ||
+          (advertisedToolNames.length > 0 && !resolvedToolName) ||
+          hasInvalidToolArguments(
+            tc.function.arguments,
+            resolvedToolName ?? tc.function.name,
+          ) ||
+          completedToolCallIds.has(tc.id)
+        ) {
+          throw new Error(
+            'Upstream returned malformed, incomplete, or duplicate tool calls; no tool was committed.',
+          )
+        }
+        completedToolArgumentChars += tc.function.arguments.length
+        if (
+          completedToolArgumentChars > toolArgumentCharsLimit
+        ) {
+          throw new Error(
+            'Upstream tool arguments exceeded the configured safety limit; no tool was committed.',
+          )
+        }
+        completedToolCallIds.add(tc.id)
+      }
+      for (const tc of completedToolCalls) {
         const toolName =
           resolveToolNameByUniquePrefix(
             advertisedToolNames,
@@ -3228,14 +3537,28 @@ class OpenAIShimMessages {
           ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           // Extract Gemini signature from extra_content
           ...((tc.extra_content?.google as any)?.thought_signature
-            ? { signature: (tc.extra_content.google as any).thought_signature }
+            ? {
+                signature: (tc.extra_content?.google as any)
+                  .thought_signature,
+              }
             : {}),
         })
       }
+    } else if (completedToolCalls.length > 0) {
+      logForDebugging(
+        JSON.stringify({
+          type: 'discarded_uncommitted_tool_calls',
+          model,
+          reason: `finish_reason:${choice?.finish_reason ?? 'missing'}`,
+          count: completedToolCalls.length,
+        }),
+        { level: 'warn' },
+      )
     }
 
     const stopReason =
-      choice?.finish_reason === 'tool_calls'
+      choice?.finish_reason === 'tool_calls' ||
+      choice?.finish_reason === 'function_call'
         ? 'tool_use'
         : choice?.finish_reason === 'length'
           ? 'max_tokens'

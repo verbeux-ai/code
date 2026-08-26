@@ -213,8 +213,15 @@ export const windowsCredentialStorage: SecureStorage = {
         [System.IO.File]::WriteAllText(
           $path,
           $protectedBase64,
-          [System.Text.Encoding]::UTF8
+          (New-Object System.Text.UTF8Encoding($false))
         )
+        $writtenBytes = [System.IO.File]::ReadAllBytes($path)
+        $writtenText = [System.Text.Encoding]::ASCII.GetString($writtenBytes)
+        if ($writtenText -cne $protectedBase64) {
+          Write-Error 'DPAPI post-write validation failed: file is not exact UTF-8 base64 without BOM'
+          exit 1
+        }
+        [void][Convert]::FromBase64String($writtenText)
       } catch {
         Write-Error $_.Exception.Message
         exit 1

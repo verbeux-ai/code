@@ -4,7 +4,9 @@ import { runOAuthLoginFlow } from '../../cli/handlers/auth.js'
 import {
   getOauthConfig,
   isVerbooMode,
+  VERBOO_ROUTER_URL,
 } from '../../constants/oauth.js'
+import { getApiKeyFromFileDescriptor } from '../../utils/authFileDescriptor.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
   clearOAuthTokenCache,
@@ -56,7 +58,105 @@ import {
 export type VerbooSessionResult =
   | { kind: 'ok'; tokens: OAuthTokens; refreshed: boolean }
   | { kind: 'unauthenticated' }
+  | { kind: 'invalid-api-key' }
   | { kind: 'degraded'; reason: string }
+
+export const VERBOO_API_KEY_PREFIX = 'vbk_'
+export const VERBOO_API_KEY_INVALID_MESSAGE = 'API key inválida ou expirada'
+export const HEADLESS_UNAUTHENTICATED_MESSAGE =
+  'Não autenticado no Verboo. Execute `verboo /login` em um terminal interativo antes de usar o modo headless.'
+
+type RouterGet = (
+  url: string,
+  config?: {
+    headers?: Record<string, string>
+    timeout?: number
+    validateStatus?: () => boolean
+  },
+) => Promise<{ status: number; data?: unknown }>
+
+function isVerbooApiKey(value: string | null | undefined): value is string {
+  return Boolean(value?.startsWith(VERBOO_API_KEY_PREFIX))
+}
+
+/** ANTHROPIC_API_KEY first (what the desktop injects), then the FD equivalent. */
+export function readHeadlessVerbooApiKey(
+  fromFd: () => string | null = getApiKeyFromFileDescriptor,
+): string | undefined {
+  const fromEnv = process.env.ANTHROPIC_API_KEY?.trim()
+  if (isVerbooApiKey(fromEnv)) return fromEnv
+  const fd = fromFd()?.trim()
+  if (isVerbooApiKey(fd)) return fd
+  return undefined
+}
+
+/**
+ * Router `/models` is the endpoint the desktop already uses with Bearer vbk_
+ * (model_service.rs). `/api/me` is the OAuth account API — fake vbk_ and fake
+ * JWT both return the same 401, so we do not claim it accepts API keys.
+ */
+export async function validateVerbooApiKey(
+  key: string,
+  get: RouterGet = axios.get,
+): Promise<'ok' | 'unauthorized' | 'error'> {
+  const endpoint = `${VERBOO_ROUTER_URL}/models`
+  try {
+    const response = await get(endpoint, {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 5_000,
+      validateStatus: () => true,
+    })
+    if (response.status === 200) return 'ok'
+    if (response.status === 401 || response.status === 403) return 'unauthorized'
+    return 'error'
+  } catch {
+    return 'error'
+  }
+}
+
+function apiKeySessionTokens(key: string): OAuthTokens {
+  return {
+    accessToken: key,
+    refreshToken: null,
+    expiresAt: null,
+    scopes: [],
+    subscriptionType: null,
+    rateLimitTier: null,
+  }
+}
+
+async function sessionFromVerbooApiKey(): Promise<VerbooSessionResult> {
+  const key = readHeadlessVerbooApiKey()
+  if (!key) return { kind: 'unauthenticated' }
+  const check = await validateVerbooApiKey(key)
+  if (check === 'ok') {
+    return { kind: 'ok', tokens: apiKeySessionTokens(key), refreshed: false }
+  }
+  if (check === 'unauthorized') return { kind: 'invalid-api-key' }
+  return { kind: 'degraded', reason: 'API key validation failed' }
+}
+
+async function unauthenticatedOrApiKey(): Promise<VerbooSessionResult> {
+  const apiKeySession = await sessionFromVerbooApiKey()
+  if (apiKeySession.kind !== 'unauthenticated') return apiKeySession
+  return { kind: 'unauthenticated' }
+}
+
+function isApiKeySession(tokens: OAuthTokens): boolean {
+  return tokens.accessToken.startsWith(VERBOO_API_KEY_PREFIX)
+}
+
+export function headlessSessionFailureError(
+  session: { kind: 'invalid-api-key' | 'unauthenticated' },
+): Error {
+  if (session.kind === 'invalid-api-key') {
+    return new Error(VERBOO_API_KEY_INVALID_MESSAGE)
+  }
+  return new Error(HEADLESS_UNAUTHENTICATED_MESSAGE)
+}
 
 export type VerbooLoginPreflightResult =
   | {
@@ -146,7 +246,9 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
 
   const tokens = await getClaudeAIOAuthTokensAsync()
   if (!tokens?.accessToken) {
-    return { kind: 'unauthenticated' }
+    // OAuth is primary; vbk_ is the headless fallback (desktop injects it
+    // as ANTHROPIC_API_KEY).
+    return sessionFromVerbooApiKey()
   }
 
   let result = await callApiMe(tokens.accessToken)
@@ -158,10 +260,10 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
       if (!didOAuthRefreshRecover(outcome)) {
         return outcome === 'transient_error'
           ? { kind: 'degraded', reason: 'temporary OAuth refresh failure' }
-          : { kind: 'unauthenticated' }
+          : unauthenticatedOrApiKey()
       }
       const refreshed = await getClaudeAIOAuthTokensAsync()
-      if (!refreshed?.accessToken) return { kind: 'unauthenticated' }
+      if (!refreshed?.accessToken) return unauthenticatedOrApiKey()
       result = await callApiMe(refreshed.accessToken)
       if (result.status === 'ok' && result.data) {
         persistAccount(result.data)
@@ -170,7 +272,7 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
     } catch (err) {
       logError(err as Error)
     }
-    return { kind: 'unauthenticated' }
+    return unauthenticatedOrApiKey()
   }
 
   if (result.status === 'ok') {
@@ -184,7 +286,7 @@ export async function validateVerbooSession(): Promise<VerbooSessionResult> {
   }
 
   if (result.status === 'unauthorized') {
-    return { kind: 'unauthenticated' }
+    return unauthenticatedOrApiKey()
   }
 
   // Erro de rede / 5xx: deixar passar com warning para não bloquear startup
@@ -341,8 +443,18 @@ export async function preflightVerbooLogin(): Promise<VerbooLoginPreflightResult
   if (session.kind === 'unauthenticated') {
     return { kind: 'needs-oauth', reason: 'unauthenticated' }
   }
+  if (session.kind === 'invalid-api-key') {
+    return { kind: 'degraded', reason: VERBOO_API_KEY_INVALID_MESSAGE }
+  }
   if (session.kind === 'degraded') {
     return { kind: 'degraded', reason: session.reason }
+  }
+  if (isApiKeySession(session.tokens)) {
+    return {
+      kind: 'ready',
+      tokens: session.tokens,
+      refreshed: session.refreshed,
+    }
   }
 
   const terms = await fetchVerbooTermsStatus(session.tokens.accessToken)
@@ -392,8 +504,10 @@ export async function ensureVerbooAuthenticated(
   const session = await validateVerbooSession()
 
   if (session.kind === 'ok') {
-    await ensureVerbooTermsAccepted(session.tokens.accessToken)
-    await ensureCLIEntitlement(session.tokens.accessToken)
+    if (!isApiKeySession(session.tokens)) {
+      await ensureVerbooTermsAccepted(session.tokens.accessToken)
+      await ensureCLIEntitlement(session.tokens.accessToken)
+    }
     await loadVerbooCatalog(session.tokens.accessToken)
     await primeCodexCatalogIfAuthenticated()
     await primeClaudeCatalogIfAuthenticated()
@@ -419,11 +533,13 @@ export async function ensureVerbooAuthenticated(
     return
   }
 
+  if (session.kind === 'invalid-api-key') {
+    throw headlessSessionFailureError(session)
+  }
+
   // unauthenticated → precisa abrir login. Só faz sentido em TTY.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error(
-      'Não autenticado no Verboo. Execute `verboo /login` em um terminal interativo antes de usar o modo headless.',
-    )
+    throw headlessSessionFailureError(session)
   }
 
   process.stdout.write(

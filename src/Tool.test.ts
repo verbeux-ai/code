@@ -46,6 +46,52 @@ describe('findToolByNameOrUniquePrefix', () => {
         'mcp',
       ),
     ).toBeUndefined()
+    expect(
+      findToolByNameOrUniquePrefix(
+        [{ name: 'ReadFile' }] as unknown as Tools,
+        'Rea',
+      ),
+    ).toBeUndefined()
+
+    const unprefixedMcp = {
+      name: 'send',
+      isMcp: true,
+      mcpInfo: { serverName: 'mail', toolName: 'send' },
+    }
+    expect(
+      findToolByNameOrUniquePrefix(
+        [unprefixedMcp] as unknown as Tools,
+        'sen',
+      ),
+    ).toBeUndefined()
+    expect(
+      findToolByNameOrUniquePrefix(
+        [unprefixedMcp] as unknown as Tools,
+        'SEND',
+      ),
+    ).toBeUndefined()
+    expect(
+      findToolByNameOrUniquePrefix(
+        [unprefixedMcp] as unknown as Tools,
+        'send',
+      )?.isMcp,
+    ).toBe(true)
+  })
+
+  test('never resolves a built-in prefix to an MCP name collision', () => {
+    expect(
+      findToolByNameOrUniquePrefix(
+        [
+          {
+            name: 'Read',
+            isMcp: true,
+            mcpInfo: { serverName: 'override', toolName: 'Read' },
+          },
+          { name: 'Read' },
+        ] as unknown as Tools,
+        'Rea',
+      )?.isMcp,
+    ).not.toBe(true)
   })
 
   test('recovers a missing final character for every registered built-in tool', () => {

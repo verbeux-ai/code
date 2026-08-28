@@ -27,7 +27,10 @@
 
 import { randomUUID } from 'crypto'
 import { APIError } from '@anthropic-ai/sdk'
-import { resolveToolNameByUniquePrefix } from '../../Tool.js'
+import {
+  resolveToolNameByUniquePrefix,
+  TOOL_NAME_PREFIX_RECOVERY_ALLOWED,
+} from '../../Tool.js'
 import { getSessionId } from '../../bootstrap/state.js'
 import { isVerbooMode, VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import {
@@ -82,6 +85,7 @@ import {
   classifyOpenAINetworkFailure,
 } from './openaiErrorClassification.js'
 import { sanitizeSchemaForOpenAICompat } from '../../utils/schemaSanitizer.js'
+import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
 import { redactSecretValueForDisplay } from '../../utils/providerProfile.js'
 import { shouldRedactUrlQueryParam } from '../../utils/urlRedaction.js'
 import {
@@ -97,6 +101,17 @@ import {
 import { stableStringifyJson } from '../../utils/stableStringify.js'
 import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
 import { updateRouterRateLimitFromHeaders } from '../routerRateLimit.js'
+import {
+  hasInvalidUnicodeScalar,
+  hasInvalidUnicodeScalarDeep,
+  resolveStreamedToolName,
+} from './openaiProtocolReliability.js'
+import {
+  BoundedResponseBodyError,
+  drainBoundedResponseBody,
+  readBoundedResponseJson,
+  readBoundedResponseText,
+} from './boundedResponseBody.js'
 
 type SecretValueSource = Partial<{
   OPENAI_API_KEY: string
@@ -113,6 +128,134 @@ const GITHUB_429_BASE_DELAY_SEC = 1
 const GITHUB_429_MAX_DELAY_SEC = 32
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com'
 const VERBOO_SESSION_HEADER = 'X-Verboo-Session-Id'
+const VERBOO_REQUEST_ID_HEADER = 'x-verboo-request-id'
+
+type ClientDiagnosticStage =
+  | 'client_decode'
+  | 'client_parse'
+  | 'client_semantic'
+  | 'client_render'
+type ClientDiagnosticReason =
+  | 'invalid_utf8'
+  | 'invalid_json'
+  | 'invalid_sse_json'
+  | 'missing_terminal'
+  | 'post_terminal_output'
+  | 'tool_name_unique_prefix'
+  | 'tool_name_unmatched'
+  | 'tool_arguments_invalid'
+  | 'resource_limit_exceeded'
+  | 'invalid_unicode_scalar'
+type ClientDiagnosticReporter = (
+  stage: ClientDiagnosticStage,
+  reason: ClientDiagnosticReason,
+) => void
+
+const clientDiagnosticReporters = new WeakMap<
+  Response,
+  ClientDiagnosticReporter
+>()
+
+const MAX_NON_STREAM_RESPONSE_BODY_BYTES = 8 * 1024 * 1024
+const MAX_PROVIDER_ERROR_BODY_BYTES = 1024 * 1024
+
+function reportBoundedResponseFailure(
+  response: Response,
+  error: unknown,
+): void {
+  if (!(error instanceof BoundedResponseBodyError)) return
+  const report = clientDiagnosticReporters.get(response)
+  if (error.failure === 'invalid_utf8') {
+    report?.('client_decode', 'invalid_utf8')
+  } else if (error.failure === 'invalid_json') {
+    report?.('client_parse', 'invalid_json')
+  } else if (error.failure === 'too_large') {
+    report?.('client_decode', 'resource_limit_exceeded')
+  }
+}
+
+async function readSuccessfulResponseJson<T>(response: Response): Promise<T> {
+  try {
+    return await readBoundedResponseJson<T>(
+      response,
+      MAX_NON_STREAM_RESPONSE_BODY_BYTES,
+    )
+  } catch (error) {
+    reportBoundedResponseFailure(response, error)
+    throw error
+  }
+}
+
+async function readSuccessfulResponseText(response: Response): Promise<string> {
+  try {
+    return await readBoundedResponseText(
+      response,
+      MAX_NON_STREAM_RESPONSE_BODY_BYTES,
+    )
+  } catch (error) {
+    reportBoundedResponseFailure(response, error)
+    throw error
+  }
+}
+
+async function readProviderErrorBody(response: Response): Promise<string> {
+  try {
+    return await readBoundedResponseText(
+      response,
+      MAX_PROVIDER_ERROR_BODY_BYTES,
+    )
+  } catch (error) {
+    if (error instanceof BoundedResponseBodyError) {
+      return `[provider error body ${error.failure}]`
+    }
+    return '[provider error body unreadable]'
+  }
+}
+
+function registerClientDiagnosticReporter(
+  response: Response,
+  baseUrl: string,
+  requestHeaders: Readonly<Record<string, string>>,
+): void {
+  if (!isVerbooRouterUrl(baseUrl)) return
+  const requestId = response.headers.get(VERBOO_REQUEST_ID_HEADER)?.trim() ?? ''
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      requestId,
+    )
+  ) {
+    return
+  }
+  const authorization = Object.entries(requestHeaders).find(
+    ([name]) => name.toLowerCase() === 'authorization',
+  )?.[1]
+  if (!authorization) return
+  const endpoint = `${baseUrl.replace(/\/+$/, '')}/client-diagnostics/protocol`
+  const sent = new Set<string>()
+  clientDiagnosticReporters.set(response, (stage, reason) => {
+    const dedupeKey = `${stage}:${reason}`
+    if (sent.has(dedupeKey)) return
+    sent.add(dedupeKey)
+    const diagnosticTimeout = createCombinedAbortSignal(undefined, {
+      timeoutMs: 3000,
+    })
+    void fetchWithProxyRetry(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authorization,
+        'User-Agent': getVerbooCodeUserAgent(),
+      },
+      body: JSON.stringify({ requestId, stage, reason }),
+      signal: diagnosticTimeout.signal,
+    }).then(
+      diagnosticResponse => {
+        void diagnosticResponse.body?.cancel().catch(() => {})
+      },
+      () => undefined,
+    ).finally(diagnosticTimeout.cleanup)
+  })
+}
 const COPILOT_HEADERS: Record<string, string> = {
   'User-Agent': 'GitHubCopilotChat/0.26.7',
   'Editor-Version': 'vscode/1.99.3',
@@ -1017,6 +1160,7 @@ function hasInvalidToolArguments(
   raw: string,
   toolName: string,
 ): boolean {
+  if (toolArgumentsContainInvalidUnicode(raw)) return true
   const trimmed = raw.trim()
   if (!hasToolFieldMapping(toolName)) {
     try {
@@ -1042,23 +1186,47 @@ function hasInvalidToolArguments(
   }
 }
 
+function toolArgumentsContainInvalidUnicode(raw: string): boolean {
+  if (hasInvalidUnicodeScalar(raw)) return true
+  try {
+    return hasInvalidUnicodeScalarDeep(JSON.parse(raw))
+  } catch {
+    return false
+  }
+}
+
 // Terminal-only commit requires buffering provider fragments. Keep a generous
 // hard ceiling so a broken or hostile stream cannot grow the CLI heap without
 // bound before it ever produces a valid terminal event.
-const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 64 * 1024 * 1024
+const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 8 * 1024 * 1024
+const HARD_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 8 * 1024 * 1024
+const MAX_ACTIVE_TOOL_CALLS = 128
+const MAX_TOOL_ID_OR_NAME_FRAGMENT_CHARS = 512
+const MAX_TOOL_IDENTITY_CHARS_PER_CALL = 4096
+const MAX_BUFFERED_TOOL_IDENTITY_CHARS = 256 * 1024
+const MAX_SSE_LINE_BUFFER_CHARS = 4 * 1024 * 1024
+const MAX_SSE_READ_CHUNK_BYTES = 8 * 1024 * 1024
+const MAX_OPENAI_RENDERABLE_TEXT_CHARS = 8 * 1024 * 1024
+const MAX_OPAQUE_TOOL_METADATA_CHARS_PER_CALL = 1024 * 1024
+const MAX_BUFFERED_OPAQUE_TOOL_METADATA_CHARS = 2 * 1024 * 1024
+const MAX_OPAQUE_TOOL_METADATA_DEPTH = 32
 
 function maxBufferedToolArgumentChars(): number {
   const raw = process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
   return Number.isSafeInteger(parsed) && parsed > 0
-    ? parsed
+    ? Math.min(parsed, HARD_MAX_BUFFERED_TOOL_ARGUMENT_CHARS)
     : DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
 }
 
 function mergeOpaqueMetadata(
   current: Record<string, unknown> | undefined,
   next: Record<string, unknown>,
+	depth = 0,
 ): Record<string, unknown> {
+	if (depth >= MAX_OPAQUE_TOOL_METADATA_DEPTH) {
+	  throw new Error('opaque tool metadata exceeded nesting limit')
+	}
   const merged = Object.fromEntries(
     Object.entries(current ?? {}),
   ) as Record<string, unknown>
@@ -1076,6 +1244,7 @@ function mergeOpaqueMetadata(
         value: mergeOpaqueMetadata(
           currentValue as Record<string, unknown>,
           nextValue as Record<string, unknown>,
+		  depth + 1,
         ),
         enumerable: true,
         configurable: true,
@@ -1098,6 +1267,7 @@ type ActiveOpenAIToolCall = {
   name: string
   idFragments: string[]
   nameFragments: string[]
+  identityChars: number
   index: number | null
   jsonBuffer: string
   ambiguousArgumentFraming: boolean
@@ -1106,60 +1276,29 @@ type ActiveOpenAIToolCall = {
   hasStarted: boolean
   hasStopped: boolean
   extra_content?: Record<string, unknown>
+  extraContentChars: number
 }
 
-function resolveStreamedToolName(
-  advertisedToolNames: readonly string[],
-  fragments: readonly string[],
-): { name: string; ambiguous: boolean } {
-  const nonEmpty = fragments.filter(Boolean)
-  const concatenated = nonEmpty.join('')
-  if (advertisedToolNames.length === 0) {
-    return { name: concatenated, ambiguous: false }
-  }
-
-  // The OpenAI contract defines deltas, while a few compatible providers send
-  // cumulative snapshots. Resolve every plausible representation against the
-  // advertised catalog and accept it only when they all identify one tool.
-  const candidates = new Set<string>([concatenated])
-  let cumulative = ''
-  for (const fragment of nonEmpty) {
-    if (!cumulative) {
-      cumulative = fragment
-      continue
-    }
-    const currentFolded = cumulative.toLowerCase()
-    const fragmentFolded = fragment.toLowerCase()
-    if (fragmentFolded.startsWith(currentFolded)) {
-      cumulative = fragment
-    } else if (!currentFolded.startsWith(fragmentFolded)) {
-      cumulative += fragment
-    }
-  }
-  candidates.add(cumulative)
-
-  const resolved = new Set<string>()
-  for (const candidate of candidates) {
-    const toolName = resolveToolNameByUniquePrefix(
-      advertisedToolNames,
-      candidate,
-    )
-    if (toolName) resolved.add(toolName)
-  }
-  if (resolved.size === 1) {
-    return { name: [...resolved][0]!, ambiguous: false }
-  }
-  return { name: concatenated, ambiguous: true }
-}
-
-function getAdvertisedToolNames(params: ShimCreateParams): string[] {
-  return (params.tools ?? []).flatMap(tool =>
-    typeof tool.name === 'string' &&
-    tool.name &&
-    tool.name !== 'ToolSearchTool'
-      ? [tool.name]
-      : [],
+function getAdvertisedToolResolution(params: ShimCreateParams): {
+  names: string[]
+  recoverableNames: string[]
+} {
+  const tools = (params.tools ?? []).filter(
+    tool =>
+      typeof tool.name === 'string' &&
+      tool.name &&
+      tool.name !== 'ToolSearchTool',
   )
+  return {
+    names: tools.map(tool => tool.name as string),
+    recoverableNames: tools.flatMap(tool =>
+      (tool as unknown as Record<PropertyKey, unknown>)[
+        TOOL_NAME_PREFIX_RECOVERY_ALLOWED
+      ] === true
+        ? [tool.name as string]
+        : [],
+    ),
+  }
 }
 
 /**
@@ -1281,6 +1420,8 @@ async function* openaiStreamToAnthropic(
   signal?: AbortSignal,
   warmingHint?: WarmingHintController,
   advertisedToolNames: readonly string[] = [],
+  recoverableToolNames: readonly string[] = [],
+  reportDiagnostic?: ClientDiagnosticReporter,
 ): AsyncGenerator<AnthropicStreamEvent> {
   const messageId = makeMessageId()
   let contentBlockIndex = 0
@@ -1296,7 +1437,31 @@ async function* openaiStreamToAnthropic(
   const streamState = createStreamState()
   let nextSyntheticProtocolIndex = -2
   let totalBufferedToolArgumentChars = 0
+  let totalBufferedToolIdentityChars = 0
+	let totalBufferedOpaqueToolMetadataChars = 0
+  let emittedRenderableTextChars = 0
   const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
+
+  const requireRenderableUnicode = (value: string): void => {
+    if (!hasInvalidUnicodeScalar(value)) return
+    reportDiagnostic?.('client_render', 'invalid_unicode_scalar')
+    throw new Error(
+      'Upstream text contained an invalid Unicode scalar; the corrupted text was not rendered.',
+    )
+  }
+
+  const reserveRenderableText = (value: string): void => {
+    if (
+      emittedRenderableTextChars + value.length >
+      MAX_OPENAI_RENDERABLE_TEXT_CHARS
+    ) {
+      reportDiagnostic?.('client_render', 'resource_limit_exceeded')
+      throw new Error(
+        'Upstream text exceeded the client rendering safety limit; the remaining output was not rendered.',
+      )
+    }
+    emittedRenderableTextChars += value.length
+  }
 
   // Emit message_start
   yield {
@@ -1325,7 +1490,7 @@ async function* openaiStreamToAnthropic(
   const reader = responseBody.getReader()
   type ReaderResult = Awaited<ReturnType<typeof reader.read>>
 
-  const decoder = new TextDecoder()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   let buffer = ''
   // Default raised from 2min to 10min: long Qwen reasoning runs under vLLM
   // scheduler preemption can pause minutes between chunks even when healthy.
@@ -1335,6 +1500,12 @@ async function* openaiStreamToAnthropic(
     const v = raw ? parseInt(raw, 10) : NaN
     return Number.isFinite(v) && v > 0 ? v : 600_000
   })()
+  // After [DONE], compliant streams close immediately. A short grace read
+  // catches coalesced or immediately-following protocol bytes without making
+  // a provider that leaves keep-alive open add material latency to every turn.
+  const STREAM_TERMINAL_GRACE_MS = 250
+  let terminalGraceDeadline: number | undefined
+  let pendingDoneEventDelimiter = false
   let lastDataTime = Date.now()
   const streamStartedAt = Date.now()
   let pendingReaderCancellation: Promise<void> | undefined
@@ -1354,7 +1525,10 @@ async function* openaiStreamToAnthropic(
    * Respects the caller's AbortSignal — clears the idle timer on abort
    * so the rejection reason is AbortError, not a spurious idle timeout.
    */
-  async function readWithTimeout(): Promise<ReaderResult> {
+  async function readWithTimeout(
+    timeoutMs = STREAM_IDLE_TIMEOUT_MS,
+    timeoutCompletesStream = false,
+  ): Promise<ReaderResult> {
     return new Promise((resolve, reject) => {
       let settled = false
       let abortCleanup: (() => void) | undefined
@@ -1380,13 +1554,17 @@ async function* openaiStreamToAnthropic(
       const timeoutId = setTimeout(() => {
         const elapsed = Math.round((Date.now() - lastDataTime) / 1000)
         const timeoutError = new Error(
-          `OpenAI/Gemini SSE stream idle for ${elapsed}s (limit: ${STREAM_IDLE_TIMEOUT_MS / 1000}s). Connection likely dropped.`,
+          `OpenAI/Gemini SSE stream idle for ${elapsed}s (limit: ${timeoutMs / 1000}s). Connection likely dropped.`,
         )
         // Cancel the still-pending read so the reader lock can be released and
         // a late chunk cannot outlive this failed request.
         cancelReader(timeoutError)
-        rejectOnce(timeoutError)
-      }, STREAM_IDLE_TIMEOUT_MS)
+        if (timeoutCompletesStream) {
+          resolveOnce({ done: true, value: undefined })
+        } else {
+          rejectOnce(timeoutError)
+        }
+      }, timeoutMs)
 
       if (signal) {
         abortCleanup = () => {
@@ -1415,6 +1593,7 @@ async function* openaiStreamToAnthropic(
 
     const tail = thinkFilter.flush()
     if (tail) {
+      reserveRenderableText(tail)
       yield {
         type: 'content_block_delta',
         index: contentBlockIndex,
@@ -1440,12 +1619,29 @@ async function* openaiStreamToAnthropic(
     const resolvedName = resolveStreamedToolName(
       advertisedToolNames,
       toolCall.nameFragments,
+      recoverableToolNames,
     )
     toolCall.name = resolvedName.name
-    if (resolvedName.ambiguous) return 'ambiguous_tool_name_fragments'
+    if (resolvedName.recoveredUniquePrefix) {
+      reportDiagnostic?.('client_semantic', 'tool_name_unique_prefix')
+    }
+    if (resolvedName.ambiguous) {
+      reportDiagnostic?.('client_semantic', 'tool_name_unmatched')
+      return 'ambiguous_tool_name_fragments'
+    }
     if (!toolCall.id.trim()) return 'missing_tool_call_id'
     if (!toolCall.name.trim()) return 'missing_tool_name'
+    if (
+      hasInvalidUnicodeScalar(toolCall.id) ||
+      hasInvalidUnicodeScalar(toolCall.name) ||
+      hasInvalidUnicodeScalarDeep(toolCall.extra_content) ||
+      toolArgumentsContainInvalidUnicode(toolCall.jsonBuffer)
+    ) {
+      reportDiagnostic?.('client_semantic', 'invalid_unicode_scalar')
+      return 'invalid_tool_protocol_unicode'
+    }
     if (toolCall.ambiguousArgumentFraming) {
+      reportDiagnostic?.('client_semantic', 'tool_arguments_invalid')
       return 'ambiguous_tool_argument_fragments'
     }
     if (
@@ -1454,6 +1650,7 @@ async function* openaiStreamToAnthropic(
         toolCall.name,
       )
     ) {
+      reportDiagnostic?.('client_semantic', 'tool_arguments_invalid')
       return 'malformed_structured_tool_arguments'
     }
     return null
@@ -1625,14 +1822,47 @@ async function* openaiStreamToAnthropic(
 
   try {
     while (true) {
-      const { done, value } = await readWithTimeout()
+      let readResult: ReaderResult
+      if (sawDoneMarker) {
+        const remaining = (terminalGraceDeadline ?? Date.now()) - Date.now()
+        if (remaining <= 0) {
+          cancelReader('OpenAI SSE terminal grace elapsed')
+          readResult = { done: true, value: undefined }
+        } else {
+          readResult = await readWithTimeout(remaining, true)
+        }
+      } else {
+        readResult = await readWithTimeout()
+      }
+      const { done, value } = readResult
       if (done) {
+        try {
+          buffer += decoder.decode()
+        } catch {
+          reportDiagnostic?.('client_decode', 'invalid_utf8')
+          throw new Error(
+            'Upstream SSE contained invalid UTF-8; the response was not committed.',
+          )
+        }
+        if (buffer.length > MAX_SSE_LINE_BUFFER_CHARS) {
+          reportDiagnostic?.('client_decode', 'resource_limit_exceeded')
+          throw new Error(
+            'Upstream SSE line exceeded the client safety limit; the response was not committed.',
+          )
+        }
+        if (sawDoneMarker && buffer.length > 0) {
+          reportDiagnostic?.('client_semantic', 'post_terminal_output')
+          throw new Error(
+            'Upstream SSE emitted bytes after [DONE]; the late output was not committed.',
+          )
+        }
         // Distinguish a real end-of-stream (we already saw finish_reason) from
         // an upstream that closed mid-flight (no finish_reason yet). The latter
         // used to look like a natural turn end, which is the silent-stop bug
         // users reported on long runs. Throw so withRetry/error UI surfaces it
         // instead of yielding message_stop with no stop_reason.
         if (!hasProcessedFinishReason) {
+          reportDiagnostic?.('client_semantic', 'missing_terminal')
           const elapsedSec = Math.round((Date.now() - streamStartedAt) / 1000)
           logForDebugging(
             JSON.stringify({
@@ -1649,25 +1879,65 @@ async function* openaiStreamToAnthropic(
             `Upstream stream closed without finish_reason after ${elapsedSec}s — likely a guard_proxy/vLLM disconnect. The session was interrupted, not completed.`,
           )
         }
+		if (!sawDoneMarker) {
+		  reportDiagnostic?.('client_semantic', 'missing_terminal')
+		  throw new Error(
+			'Upstream stream closed without [DONE]; the response was not committed.',
+		  )
+		}
         break
       }
 
-      buffer += decoder.decode(value, { stream: true })
+      if (value.byteLength > MAX_SSE_READ_CHUNK_BYTES) {
+        reportDiagnostic?.('client_decode', 'resource_limit_exceeded')
+        throw new Error(
+          'Upstream SSE transport chunk exceeded the client safety limit; the response was not committed.',
+        )
+      }
+      try {
+        buffer += decoder.decode(value, { stream: true })
+      } catch {
+        reportDiagnostic?.('client_decode', 'invalid_utf8')
+        throw new Error(
+          'Upstream SSE contained invalid UTF-8; the response was not committed.',
+        )
+      }
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
+      if (
+        buffer.length > MAX_SSE_LINE_BUFFER_CHARS ||
+        lines.some(line => line.length > MAX_SSE_LINE_BUFFER_CHARS)
+      ) {
+        reportDiagnostic?.('client_decode', 'resource_limit_exceeded')
+        throw new Error(
+          'Upstream SSE line exceeded the client safety limit; the response was not committed.',
+        )
+      }
 
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed) continue
+		if (sawDoneMarker) {
+		  if (!trimmed && pendingDoneEventDelimiter) {
+			pendingDoneEventDelimiter = false
+			continue
+		  }
+		  reportDiagnostic?.('client_semantic', 'post_terminal_output')
+		  throw new Error(
+			'Upstream SSE emitted bytes after [DONE]; the late output was not committed.',
+		  )
+		}
+		if (!trimmed) continue
         if (trimmed === 'data: [DONE]') {
           if (!hasProcessedFinishReason) {
+            reportDiagnostic?.('client_semantic', 'missing_terminal')
             throw new Error(
               'Upstream SSE emitted [DONE] without finish_reason; the response was not committed.',
             )
           }
           sawDoneMarker = true
-          cancelReader('OpenAI SSE completed')
-          break
+          pendingDoneEventDelimiter = true
+          terminalGraceDeadline ??= Date.now() + STREAM_TERMINAL_GRACE_MS
+          continue
         }
         if (!trimmed.startsWith('data: ')) continue
 
@@ -1675,6 +1945,7 @@ async function* openaiStreamToAnthropic(
         try {
           chunk = JSON.parse(trimmed.slice(6))
         } catch {
+          reportDiagnostic?.('client_parse', 'invalid_sse_json')
           throw new Error(
             'Upstream emitted invalid SSE JSON; the response was not committed.',
           )
@@ -1755,6 +2026,7 @@ async function* openaiStreamToAnthropic(
               return true
             })
             if (hasLateOutput) {
+              reportDiagnostic?.('client_semantic', 'post_terminal_output')
               throw new Error(
                 'Upstream emitted assistant output after finish_reason; the late output was not committed.',
               )
@@ -1782,6 +2054,8 @@ async function* openaiStreamToAnthropic(
             delta.reasoning_content != null &&
             delta.reasoning_content !== ''
           ) {
+			requireRenderableUnicode(delta.reasoning_content)
+            reserveRenderableText(delta.reasoning_content)
             if (hasClosedThinking || hasEmittedContentStart) {
               throw new Error(
                 'Upstream emitted reasoning after visible text; the out-of-order delta was not committed.',
@@ -1808,6 +2082,7 @@ async function* openaiStreamToAnthropic(
           // Text content — use != null to distinguish absent field from empty string,
           // some providers send "" as first delta to signal streaming start
           if (delta.content != null && delta.content !== '') {
+			requireRenderableUnicode(delta.content)
             // Close thinking block if transitioning from reasoning to content
             if (hasEmittedThinkingStart && !hasClosedThinking) {
               yield { type: 'content_block_stop', index: contentBlockIndex }
@@ -1825,6 +2100,7 @@ async function* openaiStreamToAnthropic(
 
             const visible = thinkFilter.feed(delta.content)
             if (visible) {
+              reserveRenderableText(visible)
               yield {
                 type: 'content_block_delta',
                 index: contentBlockIndex,
@@ -1873,6 +2149,13 @@ async function* openaiStreamToAnthropic(
               }
               let active = activeToolCalls.get(protocolIndex)
               if (!active) {
+				if (activeToolCalls.size >= MAX_ACTIVE_TOOL_CALLS) {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_call_count_limit_exceeded')
+				  throw new Error(
+				    'Upstream emitted too many parallel tool calls; no tool was committed.',
+				  )
+				}
                 // A tool call may arrive as separate id, name, and argument
                 // chunks. Reserve its block once, keyed by the OpenAI index,
                 // instead of requiring id + name to be co-located.
@@ -1893,6 +2176,7 @@ async function* openaiStreamToAnthropic(
                   name: '',
                   idFragments: [],
                   nameFragments: [],
+				  identityChars: 0,
                   index: null,
                   jsonBuffer: '',
                   ambiguousArgumentFraming: false,
@@ -1900,17 +2184,72 @@ async function* openaiStreamToAnthropic(
                   normalizeAtStop: false,
                   hasStarted: false,
                   hasStopped: false,
+				  extraContentChars: 0,
                 }
                 activeToolCalls.set(protocolIndex, active)
               }
 
               if (tc.id) {
-                active.idFragments.push(tc.id)
+				if (hasInvalidUnicodeScalar(tc.id)) {
+				  reportDiagnostic?.('client_semantic', 'invalid_unicode_scalar')
+				  discardActiveToolCalls('invalid_tool_call_id_unicode')
+				  throw new Error(
+				    'Upstream tool call ID contained an invalid Unicode scalar; no tool was committed.',
+				  )
+				}
+				if (tc.id.length > MAX_TOOL_ID_OR_NAME_FRAGMENT_CHARS) {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_call_id_limit_exceeded')
+				  throw new Error(
+				    'Upstream tool call ID exceeded the client safety limit; no tool was committed.',
+				  )
+				}
+				if (active.idFragments.at(-1) !== tc.id) {
+				  if (
+				    active.identityChars + tc.id.length > MAX_TOOL_IDENTITY_CHARS_PER_CALL ||
+				    totalBufferedToolIdentityChars + tc.id.length > MAX_BUFFERED_TOOL_IDENTITY_CHARS
+				  ) {
+				    reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				    discardActiveToolCalls('tool_call_identity_limit_exceeded')
+				    throw new Error(
+				      'Upstream tool call identity exceeded the client safety limit; no tool was committed.',
+				    )
+				  }
+				  active.idFragments.push(tc.id)
+				  active.identityChars += tc.id.length
+				  totalBufferedToolIdentityChars += tc.id.length
+				}
               }
 
               const nameFragment = tc.function?.name
               if (nameFragment) {
-                active.nameFragments.push(nameFragment)
+				if (hasInvalidUnicodeScalar(nameFragment)) {
+				  reportDiagnostic?.('client_semantic', 'invalid_unicode_scalar')
+				  discardActiveToolCalls('invalid_tool_name_unicode')
+				  throw new Error(
+				    'Upstream tool name contained an invalid Unicode scalar; no tool was committed.',
+				  )
+				}
+				if (nameFragment.length > MAX_TOOL_ID_OR_NAME_FRAGMENT_CHARS) {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_name_fragment_limit_exceeded')
+				  throw new Error(
+				    'Upstream tool name fragment exceeded the client safety limit; no tool was committed.',
+				  )
+				}
+				if (
+				  active.identityChars + nameFragment.length > MAX_TOOL_IDENTITY_CHARS_PER_CALL ||
+				  totalBufferedToolIdentityChars + nameFragment.length > MAX_BUFFERED_TOOL_IDENTITY_CHARS
+				) {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_call_identity_limit_exceeded')
+				  throw new Error(
+				    'Upstream tool call identity exceeded the client safety limit; no tool was committed.',
+				  )
+				}
+				active.nameFragments.push(nameFragment)
+				active.identityChars += nameFragment.length
+				totalBufferedToolIdentityChars += nameFragment.length
               }
 
               const argumentFragment = tc.function?.arguments
@@ -1932,6 +2271,7 @@ async function* openaiStreamToAnthropic(
                   totalBufferedToolArgumentChars + argumentFragment.length >
                     toolArgumentCharsLimit
                 ) {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
                   discardActiveToolCalls('tool_arguments_limit_exceeded')
                   throw new Error(
                     'Upstream tool arguments exceeded the configured safety limit; no tool was committed.',
@@ -1952,13 +2292,56 @@ async function* openaiStreamToAnthropic(
                 }
               }
               if (tc.extra_content) {
-                extraContent = mergeOpaqueMetadata(extraContent, tc.extra_content)
+				if (hasInvalidUnicodeScalarDeep(tc.extra_content)) {
+				  reportDiagnostic?.('client_semantic', 'invalid_unicode_scalar')
+				  discardActiveToolCalls('invalid_tool_metadata_unicode')
+				  throw new Error(
+					'Upstream tool metadata contained an invalid Unicode scalar; no tool was committed.',
+				  )
+				}
+				try {
+				  if (
+					JSON.stringify(tc.extra_content).length >
+					MAX_OPAQUE_TOOL_METADATA_CHARS_PER_CALL
+				  ) {
+					throw new Error('opaque tool metadata exceeded size limit')
+				  }
+				  extraContent = mergeOpaqueMetadata(extraContent, tc.extra_content)
+				} catch {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_metadata_limit_exceeded')
+				  throw new Error(
+					'Upstream tool metadata exceeded the client safety limit; no tool was committed.',
+				  )
+				}
               }
               if (extraContent) {
-                active.extra_content = mergeOpaqueMetadata(
-                  active.extra_content,
-                  extraContent,
-                )
+				try {
+				  const merged = mergeOpaqueMetadata(
+					active.extra_content,
+					extraContent,
+				  )
+				  const mergedChars = JSON.stringify(merged).length
+				  const nextTotal =
+					totalBufferedOpaqueToolMetadataChars -
+					active.extraContentChars +
+					mergedChars
+				  if (
+					mergedChars > MAX_OPAQUE_TOOL_METADATA_CHARS_PER_CALL ||
+					nextTotal > MAX_BUFFERED_OPAQUE_TOOL_METADATA_CHARS
+				  ) {
+					throw new Error('opaque tool metadata exceeded size limit')
+				  }
+				  active.extra_content = merged
+				  active.extraContentChars = mergedChars
+				  totalBufferedOpaqueToolMetadataChars = nextTotal
+				} catch {
+				  reportDiagnostic?.('client_semantic', 'resource_limit_exceeded')
+				  discardActiveToolCalls('tool_metadata_limit_exceeded')
+				  throw new Error(
+					'Upstream tool metadata exceeded the client safety limit; no tool was committed.',
+				  )
+				}
               }
 
             }
@@ -2029,6 +2412,9 @@ async function* openaiStreamToAnthropic(
               choice.finish_reason === 'content_filter' ||
               choice.finish_reason === 'safety'
             ) {
+              const warning =
+                '\n\n[Content blocked by provider safety filter]'
+              reserveRenderableText(warning)
               // Gemini/Azure content safety filter blocked the response.
               // Emit a visible text block so the user knows why output was truncated.
               if (!hasEmittedContentStart) {
@@ -2044,10 +2430,13 @@ async function* openaiStreamToAnthropic(
                 index: contentBlockIndex,
                 delta: {
                   type: 'text_delta',
-                  text: '\n\n[Content blocked by provider safety filter]',
+                  text: warning,
                 },
               }
             } else if (choice.finish_reason === 'length') {
+              const warning =
+                '\n\n[Response truncated — reached length limit or upstream stalled. Ask the model to continue.]'
+              reserveRenderableText(warning)
               // Response was truncated — either the model hit max_tokens, or
               // an upstream/gateway watchdog synthesized a graceful end after
               // detecting a stalled stream. Either way, the user should know
@@ -2065,7 +2454,7 @@ async function* openaiStreamToAnthropic(
                 index: contentBlockIndex,
                 delta: {
                   type: 'text_delta',
-                  text: '\n\n[Response truncated — reached length limit or upstream stalled. Ask the model to continue.]',
+                  text: warning,
                 },
               }
             }
@@ -2103,7 +2492,6 @@ async function* openaiStreamToAnthropic(
           hasEmittedFinalUsage = true
         }
       }
-      if (sawDoneMarker) break
     }
   } catch (error) {
     // Any rejected read, idle timeout, malformed delta, or conversion error
@@ -2331,7 +2719,10 @@ class OpenAIShimMessages {
     options?: { signal?: AbortSignal; headers?: Record<string, string> },
   ) {
     const self = this
-    const advertisedToolNames = getAdvertisedToolNames(params)
+    const {
+      names: advertisedToolNames,
+      recoverableNames: recoverableToolNames,
+    } = getAdvertisedToolResolution(params)
 
     let httpResponse: Response | undefined
 
@@ -2369,6 +2760,7 @@ class OpenAIShimMessages {
                 request.resolvedModel,
                 options?.signal,
                 advertisedToolNames,
+                recoverableToolNames,
               )
             : openaiStreamToAnthropic(
                 response,
@@ -2376,6 +2768,8 @@ class OpenAIShimMessages {
                 options?.signal,
                 warmingHint,
                 advertisedToolNames,
+                recoverableToolNames,
+                clientDiagnosticReporters.get(response),
               ),
           warmingHint,
         )
@@ -2394,6 +2788,7 @@ class OpenAIShimMessages {
           data,
           request.resolvedModel,
           advertisedToolNames,
+          recoverableToolNames,
         )
       }
 
@@ -2405,7 +2800,7 @@ class OpenAIShimMessages {
       ) {
         const contentType = response.headers.get('content-type') ?? ''
         if (contentType.includes('application/json')) {
-          const parsed = (await response.json()) as Record<string, unknown>
+          const parsed = await readSuccessfulResponseJson<any>(response)
           if (
             parsed &&
             typeof parsed === 'object' &&
@@ -2415,27 +2810,32 @@ class OpenAIShimMessages {
               parsed,
               request.resolvedModel,
               advertisedToolNames,
+              recoverableToolNames,
             )
           }
           return self._convertNonStreamingResponse(
             parsed,
             request.resolvedModel,
             advertisedToolNames,
+            recoverableToolNames,
           )
         }
       }
 
       const contentType = response.headers.get('content-type') ?? ''
       if (contentType.includes('application/json')) {
-        const data = await response.json()
+        const data = await readSuccessfulResponseJson<any>(response)
         return self._convertNonStreamingResponse(
           data,
           request.resolvedModel,
           advertisedToolNames,
+          recoverableToolNames,
         )
       }
 
-      const textBody = await response.text().catch(() => '')
+      const textBody = await readSuccessfulResponseText(response).catch(
+        () => '',
+      )
       throw APIError.generate(
         response.status,
         undefined,
@@ -2451,7 +2851,9 @@ class OpenAIShimMessages {
           data,
           response: httpResponse ?? new Response(),
           request_id:
-            httpResponse?.headers.get('x-request-id') ?? makeMessageId(),
+            httpResponse?.headers.get(VERBOO_REQUEST_ID_HEADER) ??
+            httpResponse?.headers.get('x-request-id') ??
+            makeMessageId(),
         }
       }
 
@@ -3201,30 +3603,19 @@ class OpenAIShimMessages {
       captureRouterRateLimit(response.headers, requestUrl)
 
       if (response.ok) {
-        let tokensIn = 0
-        let tokensOut = 0
-        // Skip clone() for streaming responses - it blocks until full body is received,
-        // defeating the purpose of streaming. Usage data is already sent via
-        // stream_options: { include_usage: true } and can be extracted from the stream.
-        if (!params.stream) {
-          try {
-            const clone = response.clone()
-            const data = await clone.json()
-            tokensIn = data.usage?.prompt_tokens ?? 0
-            tokensOut = data.usage?.completion_tokens ?? 0
-          } catch {
-            /* ignore */
-          }
-        }
+        // Do not clone a response stream just to inspect usage. Fetch tees can
+        // buffer the slower branch without a bound; the actual parser below
+        // records usage while consuming the one authoritative body.
         logApiCallEnd(
           correlationId,
           startTime,
           request.resolvedModel,
           'success',
-          tokensIn,
-          tokensOut,
+          0,
+          0,
           Boolean(params.stream),
         )
+        registerClientDiagnosticReporter(response, request.baseUrl, headers)
         return response
       }
 
@@ -3236,7 +3627,10 @@ class OpenAIShimMessages {
       ) {
         didRetryVerbooAuth = true
         const failedApiKey = getApiKey()
-        await response.text().catch(() => {})
+        await drainBoundedResponseBody(
+          response,
+          MAX_PROVIDER_ERROR_BODY_BYTES,
+        )
         const refreshedApiKey =
           await this.providerOverride.refreshApiKey(failedApiKey)
         if (refreshedApiKey) {
@@ -3246,7 +3640,10 @@ class OpenAIShimMessages {
       }
 
       if (isGithub && response.status === 429 && attempt < maxAttempts - 1) {
-        await response.text().catch(() => {})
+        await drainBoundedResponseBody(
+          response,
+          MAX_PROVIDER_ERROR_BODY_BYTES,
+        )
         const delaySec = Math.min(
           GITHUB_429_BASE_DELAY_SEC * 2 ** attempt,
           GITHUB_429_MAX_DELAY_SEC,
@@ -3256,7 +3653,7 @@ class OpenAIShimMessages {
       }
       // Read body exactly once here — Response body is a stream that can only
       // be consumed a single time.
-      const errorBody = await response.text().catch(() => 'unknown error')
+      const errorBody = await readProviderErrorBody(response)
       const rateHint =
         isGithub && response.status === 429
           ? formatRetryAfterHint(response)
@@ -3289,9 +3686,9 @@ class OpenAIShimMessages {
           if (responsesResponse.ok) {
             return responsesResponse
           }
-          const responsesErrorBody = await responsesResponse
-            .text()
-            .catch(() => 'unknown error')
+          const responsesErrorBody = await readProviderErrorBody(
+            responsesResponse,
+          )
           const responsesFailure = classifyOpenAIHttpFailure({
             status: responsesResponse.status,
             body: responsesErrorBody,
@@ -3406,6 +3803,7 @@ class OpenAIShimMessages {
     },
     model: string,
     advertisedToolNames: readonly string[] = [],
+    recoverableToolNames: readonly string[] = [],
   ) {
     const choice = data.choices?.[0]
     const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
@@ -3425,6 +3823,11 @@ class OpenAIShimMessages {
     // block, but do not surface it as visible assistant text.
     const reasoningText = choice?.message?.reasoning_content
     if (typeof reasoningText === 'string' && reasoningText) {
+	  if (hasInvalidUnicodeScalar(reasoningText)) {
+		throw new Error(
+		  'Upstream reasoning contained an invalid Unicode scalar; no output was committed.',
+		)
+	  }
       content.push({ type: 'thinking', thinking: reasoningText })
     }
     const rawContent =
@@ -3432,6 +3835,11 @@ class OpenAIShimMessages {
         ? choice?.message?.content
         : null
     if (typeof rawContent === 'string' && rawContent) {
+	  if (hasInvalidUnicodeScalar(rawContent)) {
+		throw new Error(
+		  'Upstream text contained an invalid Unicode scalar; no output was committed.',
+		)
+	  }
       content.push({
         type: 'text',
         text: stripThinkTags(rawContent),
@@ -3445,6 +3853,11 @@ class OpenAIShimMessages {
           part.type === 'text' &&
           typeof part.text === 'string'
         ) {
+		  if (hasInvalidUnicodeScalar(part.text)) {
+			throw new Error(
+			  'Upstream text contained an invalid Unicode scalar; no output was committed.',
+			)
+		  }
           parts.push(part.text)
         }
       }
@@ -3489,15 +3902,20 @@ class OpenAIShimMessages {
             ? resolveToolNameByUniquePrefix(
                 advertisedToolNames,
                 tc.function.name,
+                recoverableToolNames,
               )
             : undefined
         if (
           typeof tc.id !== 'string' ||
           !tc.id.trim() ||
+          hasInvalidUnicodeScalar(tc.id) ||
           typeof tc.function?.name !== 'string' ||
           !tc.function.name.trim() ||
+          hasInvalidUnicodeScalar(tc.function.name) ||
           typeof tc.function?.arguments !== 'string' ||
+          toolArgumentsContainInvalidUnicode(tc.function.arguments) ||
           tc.function.arguments.length > toolArgumentCharsLimit ||
+          hasInvalidUnicodeScalarDeep(tc.extra_content) ||
           (advertisedToolNames.length > 0 && !resolvedToolName) ||
           hasInvalidToolArguments(
             tc.function.arguments,
@@ -3524,6 +3942,7 @@ class OpenAIShimMessages {
           resolveToolNameByUniquePrefix(
             advertisedToolNames,
             tc.function.name,
+            recoverableToolNames,
           ) ?? tc.function.name
         const input = normalizeToolArguments(
           toolName,

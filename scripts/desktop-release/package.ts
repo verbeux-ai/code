@@ -136,6 +136,7 @@ export async function packageDesktopCli(
   try {
     const payload = await materializePayload({ ...input, stagingRoot })
     await smokePayload(input.nodeExecutable, payload, input.version)
+    await smokeProtocolContract(input.nodeExecutable, payload)
     await smokeProviderAccounts(input.nodeExecutable, payload)
     await runProcess('tar', [
       '-czf',
@@ -195,6 +196,47 @@ async function smokePayload(
     throw new Error(
       `CLI smoke version mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(result.stdout.trim())}`,
     )
+  }
+}
+
+async function smokeProtocolContract(
+  nodeExecutable: string,
+  payload: string,
+): Promise<void> {
+  const result = await runProcess(
+    nodeExecutable,
+    [join(payload, 'dist', 'cli.mjs'), '--internal-protocol-self-test'],
+    payload,
+  )
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(result.stdout.trim())
+  } catch {
+    throw new Error('Packaged protocol smoke did not return JSON')
+  }
+  const record = envelope as {
+    schemaVersion?: unknown
+    ok?: unknown
+    marker?: unknown
+    checks?: unknown[]
+  }
+  const requiredChecks = [
+    'split_tool_name',
+    'terminal_tool_prefix',
+    'unprefixed_mcp_exact_only',
+    'visible_unicode',
+    'post_terminal',
+    'strict_utf8',
+    'invalid_unicode_scalar',
+  ]
+  if (
+    record.schemaVersion !== 1 ||
+    record.ok !== true ||
+    record.marker !== 'Verboo: ação, ç, 你好, 👩🏽‍💻, e\u0301' ||
+    !Array.isArray(record.checks) ||
+    !requiredChecks.every(check => record.checks?.includes(check))
+  ) {
+    throw new Error('Packaged protocol smoke returned an invalid contract')
   }
 }
 

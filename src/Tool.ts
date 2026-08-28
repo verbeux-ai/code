@@ -374,6 +374,13 @@ export function findToolByName(tools: Tools, name: string): Tool | undefined {
   return tools.find(t => toolMatchesName(t, name))
 }
 
+// Internal-only marker carried by tool schema objects while they are passed to
+// OpenAI-compatible adapters. Symbol keys are ignored by JSON serialization,
+// so this cannot leak a Verboo-specific field into an upstream API contract.
+export const TOOL_NAME_PREFIX_RECOVERY_ALLOWED = Symbol.for(
+  'verboo.tool-name-prefix-recovery-allowed',
+)
+
 /**
  * Resolves a canonical tool name from an exact match or an unambiguous
  * provider-truncated prefix. This string-only form is shared by API adapters,
@@ -382,11 +389,21 @@ export function findToolByName(tools: Tools, name: string): Tool | undefined {
 export function resolveToolNameByUniquePrefix(
   toolNames: readonly string[],
   name: string,
+  recoverableToolNames: readonly string[] = [],
 ): string | undefined {
   const uniqueToolNames = [...new Set(toolNames)]
   if (uniqueToolNames.includes(name)) return name
 
-  const caseInsensitiveExactMatches = uniqueToolNames.filter(
+  const recoverableSet = new Set(recoverableToolNames)
+  const uniqueRecoverableNames = uniqueToolNames.filter(toolName => {
+    const normalizedToolName = toolName.toLowerCase()
+    return (
+      recoverableSet.has(toolName) &&
+      !normalizedToolName.startsWith('mcp__')
+    )
+  })
+
+  const caseInsensitiveExactMatches = uniqueRecoverableNames.filter(
     toolName => toolName.toLowerCase() === name.toLowerCase(),
   )
   if (caseInsensitiveExactMatches.length === 1) {
@@ -396,12 +413,9 @@ export function resolveToolNameByUniquePrefix(
   const normalizedName = name.toLowerCase()
   if (name.length < 3) return undefined
 
-  const prefixMatches = uniqueToolNames.filter(toolName => {
+  const prefixMatches = uniqueRecoverableNames.filter(toolName => {
     const normalizedToolName = toolName.toLowerCase()
-    return (
-      !normalizedToolName.startsWith('mcp__') &&
-      normalizedToolName.startsWith(normalizedName)
-    )
+    return normalizedToolName.startsWith(normalizedName)
   })
   const oneCharacterCompletions = prefixMatches.filter(
     toolName => toolName.length === name.length + 1,
@@ -409,8 +423,7 @@ export function resolveToolNameByUniquePrefix(
   if (oneCharacterCompletions.length === 1) {
     return oneCharacterCompletions[0]
   }
-
-  return prefixMatches.length === 1 ? prefixMatches[0] : undefined
+  return undefined
 }
 
 /**
@@ -427,12 +440,20 @@ export function findToolByNameOrUniquePrefix(
   const exactMatch = findToolByName(tools, name)
   if (exactMatch) return exactMatch
 
+  const recoverableTools = tools.filter(
+    tool =>
+      tool.isMcp !== true &&
+      tool.mcpInfo == null &&
+      !tool.name.toLowerCase().startsWith('mcp__'),
+  )
+
   const resolvedName = resolveToolNameByUniquePrefix(
     tools.map(tool => tool.name),
     name,
+    recoverableTools.map(tool => tool.name),
   )
   return resolvedName
-    ? tools.find(tool => tool.name === resolvedName)
+    ? recoverableTools.find(tool => tool.name === resolvedName)
     : undefined
 }
 

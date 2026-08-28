@@ -1,6 +1,11 @@
 import { expect, test } from 'bun:test'
 import { z } from 'zod/v4'
-import { getEmptyToolPermissionContext, type Tool, type Tools } from '../Tool.js'
+import {
+  getEmptyToolPermissionContext,
+  TOOL_NAME_PREFIX_RECOVERY_ALLOWED,
+  type Tool,
+  type Tools,
+} from '../Tool.js'
 import { SkillTool } from '../tools/SkillTool/SkillTool.js'
 import { toolToAPISchema } from './api.js'
 
@@ -77,6 +82,53 @@ test('toolToAPISchema keeps skill required for SkillTool', async () => {
     type: 'object',
     required: ['skill'],
   })
+})
+
+test('toolToAPISchema permits prefix recovery only for internal tools', async () => {
+  const options = {
+    getToolPermissionContext: async () => getEmptyToolPermissionContext(),
+    tools: [] as unknown as Tools,
+    agents: [],
+  }
+  const makeTool = (name: string, extras: Partial<Tool> = {}) =>
+    ({
+      name,
+      inputSchema: z.strictObject({}),
+      prompt: async () => name,
+      ...extras,
+    }) as unknown as Tool
+
+  const internalSchema = await toolToAPISchema(makeTool('Read'), options)
+  const prefixedMcpSchema = await toolToAPISchema(
+    makeTool('mcp__files__read'),
+    options,
+  )
+  const unprefixedMcpSchema = await toolToAPISchema(
+    makeTool('send', {
+      isMcp: true,
+      mcpInfo: { serverName: 'mail', toolName: 'send' },
+    } as Partial<Tool>),
+    options,
+  )
+
+  expect(
+    (internalSchema as unknown as Record<PropertyKey, unknown>)[
+      TOOL_NAME_PREFIX_RECOVERY_ALLOWED
+    ],
+  ).toBe(true)
+  expect(
+    (prefixedMcpSchema as unknown as Record<PropertyKey, unknown>)[
+      TOOL_NAME_PREFIX_RECOVERY_ALLOWED
+    ],
+  ).toBe(false)
+  expect(
+    (unprefixedMcpSchema as unknown as Record<PropertyKey, unknown>)[
+      TOOL_NAME_PREFIX_RECOVERY_ALLOWED
+    ],
+  ).toBe(false)
+  expect(JSON.stringify(internalSchema)).not.toContain(
+    'verboo.tool-name-prefix-recovery-allowed',
+  )
 })
 
 test('toolToAPISchema removes extra required keys not in properties (MCP schema sanitization)', async () => {

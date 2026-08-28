@@ -29,7 +29,7 @@ async function releaseFixture() {
   await mkdir(join(source, 'node_modules', 'dependency'), { recursive: true })
   await writeFile(
     join(source, 'dist', 'cli.mjs'),
-    "// TodoWrite TodoWrite todoFeatureEnabled todo_reminder todo_reminder\nif (process.argv[2] === 'provider-accounts') console.log(JSON.stringify({ schemaVersion: 1, ok: true, data: { protocols: ['provider_accounts_v1'], secureStorage: { native: true, backend: 'fixture', probe: 'missing' } } })); else console.log('1.2.3 (Verboo Code)')\n",
+    "// TodoWrite TodoWrite todoFeatureEnabled todo_reminder todo_reminder\nif (process.argv[2] === 'provider-accounts') console.log(JSON.stringify({ schemaVersion: 1, ok: true, data: { protocols: ['provider_accounts_v1'], secureStorage: { native: true, backend: 'fixture', probe: 'missing' } } })); else if (process.argv[2] === '--internal-protocol-self-test') console.log(JSON.stringify({ schemaVersion: 1, ok: true, marker: 'Verboo: ação, ç, 你好, 👩🏽‍💻, é', checks: ['split_tool_name', 'terminal_tool_prefix', 'unprefixed_mcp_exact_only', 'visible_unicode', 'post_terminal', 'strict_utf8', 'invalid_unicode_scalar'] })); else console.log('1.2.3 (Verboo Code)')\n",
   )
   await writeFile(join(source, 'node_modules', 'dependency', 'index.js'), 'export default 1\n')
   await writeFile(join(source, 'LICENSE'), 'MIT\n')

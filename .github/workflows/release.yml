@@ -81,7 +81,9 @@ jobs:
             src/__tests__/bugfixes-behavioral.test.ts \
             src/commands/effort/effort.verboo.test.ts \
             src/commands/logout/logoutState.test.ts \
+            src/services/api/boundedResponseBody.test.ts \
             src/services/api/codexShim.test.ts \
+            src/services/api/openaiProtocolReliability.test.ts \
             src/services/api/openaiShim.test.ts \
             src/services/api/verbooCheckout.test.ts \
             src/services/api/verbooModels.test.ts \
@@ -99,7 +101,9 @@ jobs:
         run: bun run build
 
       - name: Verify npm package contents
-        run: npm pack --dry-run
+        run: |
+          node dist/cli.mjs --internal-protocol-self-test
+          npm pack --dry-run
 
   publish-npm:
     name: Publish npm package
@@ -135,6 +139,7 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run build
+          node dist/cli.mjs --internal-protocol-self-test
           npm pack --dry-run
 
       - name: Clear token auth for trusted publishing
@@ -200,7 +205,9 @@ jobs:
           tags: verboo:smoke
 
       - name: Smoke test
-        run: docker run --rm verboo:smoke --version
+        run: |
+          docker run --rm verboo:smoke --version
+          docker run --rm verboo:smoke --internal-protocol-self-test
 
       - name: Build and push
         uses: useblacksmith/build-push-action@v2

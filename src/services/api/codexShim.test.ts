@@ -729,6 +729,7 @@ describe('Codex request translation', () => {
       },
       'gpt-5.3-codex-spark',
       ['ping'],
+      ['ping'],
     )
 
     expect(message.stop_reason).toBe('tool_use')
@@ -740,6 +741,40 @@ describe('Codex request translation', () => {
         input: { value: 'ping' },
       },
     ])
+  })
+
+  test.each([
+    ['sen', false],
+    ['SEND', false],
+    ['send', true],
+  ])('Codex completed unprefixed MCP name %s requires an exact case-sensitive match', (returnedName, accepted) => {
+    const convert = () =>
+      convertCodexResponseToAnthropicMessage(
+        {
+          id: 'resp_mcp_exact',
+          status: 'completed',
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_send',
+              call_id: 'call_send',
+              name: returnedName,
+              arguments: '{}',
+            },
+          ],
+        },
+        'gpt-5.4',
+        ['send'],
+        [],
+      )
+
+    if (accepted) {
+      expect(convert()).toMatchObject({
+        content: [{ type: 'tool_use', id: 'call_send', name: 'send' }],
+      })
+    } else {
+      expect(convert).toThrow('unadvertised tool')
+    }
   })
 
   test('strips <think> tag block from completed Codex text responses', () => {
@@ -1032,6 +1067,7 @@ describe('Codex request translation', () => {
       'gpt-5.4',
       undefined,
       ['Read', 'Bash'],
+      ['Read', 'Bash'],
     )) {
       const contentBlock = event.content_block as
         | { type?: string; id?: string; name?: string }
@@ -1083,6 +1119,7 @@ describe('Codex request translation', () => {
       'gpt-5.4',
       undefined,
       ['Read'],
+      ['Read'],
     )) {
       events.push(event)
     }
@@ -1103,6 +1140,60 @@ describe('Codex request translation', () => {
       .map(event => event.delta?.partial_json)
       .join('')
     expect(input).toBe('{"file_path":"README.md"}')
+  })
+
+  test.each([
+    ['sen', false],
+    ['SEND', false],
+    ['send', true],
+  ])('Codex streamed unprefixed MCP name %s requires an exact case-sensitive match', async (returnedName, accepted) => {
+    const responseText = [
+      'event: response.output_item.added',
+      `data: ${JSON.stringify({ type: 'response.output_item.added', item: { id: 'fc_send', call_id: 'call_send', type: 'function_call', name: returnedName, arguments: '' }, output_index: 0 })}`,
+      '',
+      'event: response.output_item.done',
+      `data: ${JSON.stringify({ type: 'response.output_item.done', item: { id: 'fc_send', call_id: 'call_send', type: 'function_call', name: returnedName, arguments: '{}' }, output_index: 0 })}`,
+      '',
+      'event: response.completed',
+      `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'resp_send', status: 'completed', output: [{ id: 'fc_send', call_id: 'call_send', type: 'function_call', name: returnedName, arguments: '{}' }] } })}`,
+      '',
+    ].join('\n')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+    const events: AnthropicStreamEvent[] = []
+    let thrown: unknown
+    try {
+      for await (const event of codexStreamToAnthropic(
+        new Response(stream),
+        'gpt-5.4',
+        undefined,
+        ['send'],
+        [],
+      )) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    const toolStarts = events.filter(
+      event =>
+        event.type === 'content_block_start' &&
+        event.content_block?.type === 'tool_use',
+    )
+    if (accepted) {
+      expect(thrown).toBeUndefined()
+      expect(toolStarts).toHaveLength(1)
+      expect(toolStarts[0]?.content_block).toMatchObject({ name: 'send' })
+    } else {
+      expect(thrown).toBeInstanceOf(Error)
+      expect((thrown as Error).message).toContain('unadvertised tool')
+      expect(toolStarts).toHaveLength(0)
+    }
   })
 
   test('does not commit a tool when Responses SSE ends before response.completed', async () => {
@@ -1202,6 +1293,7 @@ describe('Codex request translation', () => {
       new Response(stream),
       'gpt-5.4',
       undefined,
+      ['Read', 'Bash'],
       ['Read', 'Bash'],
     )) {
       events.push(event)
@@ -1410,6 +1502,28 @@ describe('Codex request translation', () => {
     ).toThrow('invalid tool arguments')
   })
 
+  test('completed-response conversion rejects invalid Unicode inside tool arguments', () => {
+    const invalidScalar = String.fromCharCode(0xd800)
+    expect(() =>
+      convertCodexResponseToAnthropicMessage(
+        {
+          status: 'completed',
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_read',
+              call_id: 'call_read',
+              name: 'Read',
+              arguments: JSON.stringify({ path: invalidScalar }),
+            },
+          ],
+        },
+        'gpt-5.4',
+        ['Read'],
+      ),
+    ).toThrow('invalid Unicode scalar')
+  })
+
   test('strips <think> tag block from Codex SSE text stream', async () => {
     const responseText = [
       'event: response.output_item.added',
@@ -1572,6 +1686,67 @@ describe('Codex request translation', () => {
     )
     expect(collected.status).toBe('completed')
     expect(collectCancelCount).toBe(1)
+  })
+
+  test('rejects a non-data frame after the Codex terminal event', async () => {
+    const responseText = [
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_terminal","status":"completed","output":[]}}',
+      '',
+      ': heartbeat',
+      '',
+      '',
+    ].join('\n')
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(responseText))
+          controller.close()
+        },
+      }),
+    )
+
+    let thrown: unknown
+    try {
+      await collectCodexCompletedResponse(response)
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).message).toContain('after its terminal event')
+  })
+
+  test('rejects invalid Unicode anywhere in a Codex SSE event', async () => {
+    const invalidScalar = String.fromCharCode(0xd800)
+    const responseText = [
+      'event: response.completed',
+      'data: ' +
+        JSON.stringify({
+          type: 'response.completed',
+          response: {
+            id: 'resp_terminal',
+            status: 'completed',
+            output: [{ type: 'message', metadata: { bad: invalidScalar } }],
+          },
+        }),
+      '',
+      '',
+    ].join('\n')
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(responseText))
+          controller.close()
+        },
+      }),
+    )
+
+    let thrown: unknown
+    try {
+      await collectCodexCompletedResponse(response)
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).message).toContain('invalid Unicode scalar')
   })
 
   test('balances text blocks when Codex SSE contains invalid JSON', async () => {

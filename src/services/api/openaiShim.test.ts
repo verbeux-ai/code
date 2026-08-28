@@ -6,6 +6,7 @@ import {
 import { getAllBaseTools } from '../../tools.ts'
 import { registerGateway } from '../../integrations/index.ts'
 import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
+import { TOOL_NAME_PREFIX_RECOVERY_ALLOWED } from '../../Tool.js'
 import { createOpenAIShimClient } from './openaiShim.ts'
 import {
   getRouterRateLimitSnapshot,
@@ -74,7 +75,10 @@ type OpenAIShimClient = {
   }
 }
 
-function makeSseResponse(lines: string[]): Response {
+function makeSseResponse(
+  lines: string[],
+  headers: Record<string, string> = {},
+): Response {
   const encoder = new TextEncoder()
   return new Response(
     new ReadableStream({
@@ -88,6 +92,7 @@ function makeSseResponse(lines: string[]): Response {
     {
       headers: {
         'Content-Type': 'text/event-stream',
+        ...headers,
       },
     },
   )
@@ -668,6 +673,7 @@ test('uses OpenAI-compatible responses endpoint when OPENAI_API_FORMAT=responses
       {
         name: 'Read',
         description: 'Read a file.',
+        [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
         input_schema: {
           type: 'object',
           properties: { file_path: { type: 'string' } },
@@ -2700,6 +2706,271 @@ test('reassembles tool names split across OpenAI streaming chunks', async () => 
   ).toHaveLength(1)
 })
 
+test('does not report exact rea+d tool-name reconstruction', async () => {
+  process.env.OPENAI_BASE_URL = VERBOO_ROUTER_URL
+  const diagnosticBodies: unknown[] = []
+  globalThis.fetch = (async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.endsWith('/client-diagnostics/protocol')) {
+      diagnosticBodies.push(JSON.parse(String(init?.body)))
+      return new Response(null, { status: 202 })
+    }
+    return makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-read-exact',
+                    type: 'function',
+                    function: {
+                      name: 'rea',
+                      arguments: '{"file_path":"README.md"}',
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { name: 'd' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+      { 'X-Verboo-Request-ID': '11111111-1111-4111-8111-111111111111' },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.8-27b',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  for await (const _event of result.data) {
+    // Drain the stream so terminal validation runs.
+  }
+  await Promise.resolve()
+  expect(diagnosticBodies).toEqual([])
+})
+
+test('reports only the bounded envelope for a terminal tool-name prefix', async () => {
+  process.env.OPENAI_BASE_URL = VERBOO_ROUTER_URL
+  let resolveDiagnostic!: (value: {
+    url: string
+    body: unknown
+    headers: Headers
+  }) => void
+  const diagnostic = new Promise<{
+    url: string
+    body: unknown
+    headers: Headers
+  }>(resolve => {
+    resolveDiagnostic = resolve
+  })
+  globalThis.fetch = (async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.endsWith('/client-diagnostics/protocol')) {
+      resolveDiagnostic({
+        url,
+        body: JSON.parse(String(init?.body)),
+        headers: new Headers(init?.headers),
+      })
+      return new Response(null, { status: 202 })
+    }
+    return makeSseResponse(
+      makeStreamChunks([
+        {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-read-prefix',
+                    type: 'function',
+                    function: {
+                      name: 'rea',
+                      arguments: '{"file_path":"README.md"}',
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: {}, finish_reason: 'tool_calls' },
+          ],
+        },
+      ]),
+      { 'X-Verboo-Request-ID': '22222222-2222-4222-8222-222222222222' },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.8-27b',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  for await (const _event of result.data) {
+    // Drain the stream so terminal validation runs.
+  }
+
+  const report = await diagnostic
+  expect(report.url).toBe(`${VERBOO_ROUTER_URL}/client-diagnostics/protocol`)
+  expect(report.body).toEqual({
+    requestId: '22222222-2222-4222-8222-222222222222',
+    stage: 'client_semantic',
+    reason: 'tool_name_unique_prefix',
+  })
+  expect(report.headers.get('authorization')).toBe('Bearer test-key')
+})
+
+test('rejects invalid UTF-8 and reports no streamed content', async () => {
+  process.env.OPENAI_BASE_URL = VERBOO_ROUTER_URL
+  let resolveDiagnostic!: (value: unknown) => void
+  const diagnostic = new Promise<unknown>(resolve => {
+    resolveDiagnostic = resolve
+  })
+  globalThis.fetch = (async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.endsWith('/client-diagnostics/protocol')) {
+      resolveDiagnostic(JSON.parse(String(init?.body)))
+      return new Response(null, { status: 202 })
+    }
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode('data: {"choices":[{"delta":{"content":"'),
+          )
+          controller.enqueue(new Uint8Array([0xc3, 0x28]))
+          controller.close()
+        },
+      }),
+      {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'X-Verboo-Request-ID': '33333333-3333-4333-8333-333333333333',
+        },
+      },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.8-27b',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  await expect(
+    (async () => {
+      for await (const _event of result.data) {
+        // Drain until strict UTF-8 decoding fails.
+      }
+    })(),
+  ).rejects.toThrow('invalid UTF-8')
+  expect(await diagnostic).toEqual({
+    requestId: '33333333-3333-4333-8333-333333333333',
+    stage: 'client_decode',
+    reason: 'invalid_utf8',
+  })
+})
+
+test('attributes malformed SSE JSON to the client parse stage', async () => {
+  process.env.OPENAI_BASE_URL = VERBOO_ROUTER_URL
+  let resolveDiagnostic!: (value: unknown) => void
+  const diagnostic = new Promise<unknown>(resolve => {
+    resolveDiagnostic = resolve
+  })
+  globalThis.fetch = (async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.endsWith('/client-diagnostics/protocol')) {
+      resolveDiagnostic(JSON.parse(String(init?.body)))
+      return new Response(null, { status: 202 })
+    }
+    return makeSseResponse(
+      ['data: {BROKEN JSON}\n\n'],
+      { 'X-Verboo-Request-ID': '44444444-4444-4444-8444-444444444444' },
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'qwen3.8-27b',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .withResponse()
+  await expect(
+    (async () => {
+      for await (const _event of result.data) {
+        // Drain until strict JSON parsing fails.
+      }
+    })(),
+  ).rejects.toThrow('invalid SSE JSON')
+  expect(await diagnostic).toEqual({
+    requestId: '44444444-4444-4444-8444-444444444444',
+    stage: 'client_parse',
+    reason: 'invalid_sse_json',
+  })
+})
+
 test.each([
   ['delta', ['Read', 'File']],
   ['cumulative', ['Read', 'ReadFile']],
@@ -2841,6 +3112,7 @@ test('supports legacy streamed function_call with terminal-only commit', async (
         {
           name: 'Read',
           description: 'Read a file.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
           input_schema: { type: 'object', properties: {} },
         },
       ],
@@ -2906,6 +3178,7 @@ test('supports legacy non-streaming function_call', async () => {
       {
         name: 'Read',
         description: 'Read a file.',
+        [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
         input_schema: { type: 'object', properties: {} },
       },
     ],
@@ -3472,11 +3745,13 @@ test('keeps fragmented parallel tool calls correlated and ordered', async () => 
         {
           name: 'Read',
           description: 'Read a file.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
           input_schema: { type: 'object', properties: {} },
         },
         {
           name: 'Bash',
           description: 'Run a command.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
           input_schema: { type: 'object', properties: {} },
         },
       ],
@@ -3662,6 +3937,7 @@ test('recovers a missing final character for every advertised built-in tool', as
         name,
         description: `Exercise ${name}.`,
         input_schema: { type: 'object', properties: {} },
+        [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
       })),
       max_tokens: 64,
       stream: true,
@@ -3736,6 +4012,7 @@ test('recovers a terminally truncated mapped tool name before non-streaming argu
       {
         name: 'Bash',
         description: 'Run a shell command.',
+        [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
         input_schema: {
           type: 'object',
           properties: { command: { type: 'string' } },
@@ -3759,6 +4036,67 @@ test('recovers a terminally truncated mapped tool name before non-streaming argu
       input: { command: 'pwd' },
     },
   ])
+})
+
+test.each([
+  ['sen', false],
+  ['SEND', false],
+  ['send', true],
+])('unprefixed MCP name %s requires an exact case-sensitive non-stream match', async (returnedName, accepted) => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        id: 'chatcmpl-mcp-exact',
+        model: 'qwen3.8-27b',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  id: 'call_send',
+                  type: 'function',
+                  function: { name: returnedName, arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  let message: unknown
+  let thrown: unknown
+  try {
+    message = await client.beta.messages.create({
+      model: 'qwen3.8-27b',
+      messages: [{ role: 'user', content: 'send' }],
+      tools: [
+        {
+          name: 'send',
+          description: 'External MCP send tool.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+      max_tokens: 32,
+      stream: false,
+    })
+  } catch (error) {
+    thrown = error
+  }
+
+  if (accepted) {
+    expect(thrown).toBeUndefined()
+    expect(message).toMatchObject({
+      content: [{ type: 'tool_use', id: 'call_send', name: 'send' }],
+    })
+  } else {
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain('no tool was committed')
+  }
 })
 
 test('normalizes Bash tool arguments that are valid JSON strings', async () => {
@@ -4004,6 +4342,7 @@ test('normalizes mapped tool arguments when the stream ends with a truncated nam
         {
           name: 'Bash',
           description: 'Run a shell command.',
+          [TOOL_NAME_PREFIX_RECOVERY_ALLOWED]: true,
           input_schema: {
             type: 'object',
             properties: { command: { type: 'string' } },
@@ -7869,6 +8208,102 @@ test.each([
   expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
 })
 
+test('rejects data arriving in a separate chunk after DONE', async () => {
+  const encoder = new TextEncoder()
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'first' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+            ),
+          )
+          setTimeout(() => {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'late' }, finish_reason: null }] })}\n\n`,
+              ),
+            )
+            controller.close()
+          }, 5)
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'terminal-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  const events: Array<Record<string, unknown>> = []
+  let thrown: unknown
+  try {
+    for await (const event of result.data) events.push(event)
+  } catch (error) {
+    thrown = error
+  }
+  expect((thrown as Error).message).toContain('after [DONE]')
+  expect(events.filter(event => event.type === 'message_stop')).toHaveLength(0)
+})
+
+test.each([
+  ['comment', ': heartbeat\n\n'],
+  ['blank frame', '\n\n'],
+  ['partial whitespace', ' '],
+])('rejects a post-DONE %s frame', async (_case, lateFrame) => {
+  const encoder = new TextEncoder()
+  const terminal =
+    'data: ' +
+    JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          delta: { content: 'first' },
+          finish_reason: 'stop',
+        },
+      ],
+    }) +
+    '\n\ndata: [DONE]\n\n'
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(terminal))
+          controller.enqueue(encoder.encode(lateFrame))
+          controller.close()
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const result = await client.beta.messages
+    .create({
+      model: 'terminal-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 16,
+      stream: true,
+    })
+    .withResponse()
+
+  let thrown: unknown
+  try {
+    for await (const _event of result.data) {
+      // Drain until the protocol violation is observed.
+    }
+  } catch (error) {
+    thrown = error
+  }
+  expect((thrown as Error).message).toContain('after [DONE]')
+})
+
 test('rejects DONE without finish_reason immediately and balances the open block', async () => {
   const encoder = new TextEncoder()
   globalThis.fetch = (async () =>
@@ -8226,6 +8661,8 @@ test('balances visible blocks after stream idle timeout', async () => {
 test.each([
   ['Custom', '{ dangerous; }', 'Custom'],
   ['mcp__files__read', 'pwd', 'mcp__files__read'],
+  ['sen', '{}', 'send'],
+  ['SEND', '{}', 'send'],
   ['Bash', '{}', 'Read'],
 ])('rejects invalid or unadvertised streaming call for %s', async (
   toolName,

@@ -10,9 +10,17 @@ import type {
 } from './providerConfig.js'
 import { sanitizeSchemaForOpenAICompat } from './openaiSchemaSanitizer.js'
 import {
+  hasInvalidUnicodeScalar,
+  hasInvalidUnicodeScalarDeep,
+} from './openaiProtocolReliability.js'
+import {
   createThinkTagFilter,
   stripThinkTags,
 } from './thinkTagSanitizer.js'
+import {
+  BoundedResponseBodyError,
+  readBoundedResponseText,
+} from './boundedResponseBody.js'
 
 export interface AnthropicUsage {
   input_tokens: number
@@ -76,13 +84,20 @@ type ResponsesTool = {
   strict?: boolean
 }
 
-const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 64 * 1024 * 1024
+const DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 8 * 1024 * 1024
+const HARD_MAX_BUFFERED_TOOL_ARGUMENT_CHARS = 8 * 1024 * 1024
+const MAX_CODEX_ACTIVE_TOOL_CALLS = 128
+const MAX_CODEX_TOOL_ID_OR_NAME_CHARS = 512
+const MAX_CODEX_SSE_LINE_BUFFER_CHARS = 4 * 1024 * 1024
+const MAX_CODEX_SSE_READ_CHUNK_BYTES = 8 * 1024 * 1024
+const MAX_CODEX_VISIBLE_TEXT_CHARS = 8 * 1024 * 1024
+const MAX_CODEX_ERROR_BODY_BYTES = 1024 * 1024
 
 function maxBufferedToolArgumentChars(): number {
   const raw = process.env.VERBOO_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
   return Number.isSafeInteger(parsed) && parsed > 0
-    ? parsed
+    ? Math.min(parsed, HARD_MAX_BUFFERED_TOOL_ARGUMENT_CHARS)
     : DEFAULT_MAX_BUFFERED_TOOL_ARGUMENT_CHARS
 }
 
@@ -96,8 +111,10 @@ function parseCompletedCodexTool(item: Record<string, any>): {
   toolUseId: string
 } {
   if (
-    typeof item.name !== 'string' ||
-    !item.name ||
+	  typeof item.name !== 'string' ||
+	  !item.name ||
+	  hasInvalidUnicodeScalar(item.name) ||
+	  item.name.length > MAX_CODEX_TOOL_ID_OR_NAME_CHARS ||
     typeof item.arguments !== 'string' ||
     item.arguments.length > maxBufferedToolArgumentChars()
   ) {
@@ -107,7 +124,13 @@ function parseCompletedCodexTool(item: Record<string, any>): {
   }
   for (const key of ['id', 'call_id'] as const) {
     const value = item[key]
-    if (value != null && (typeof value !== 'string' || !value.trim())) {
+	if (
+	  value != null &&
+	  (typeof value !== 'string' ||
+		!value.trim() ||
+		hasInvalidUnicodeScalar(value) ||
+		value.length > MAX_CODEX_TOOL_ID_OR_NAME_CHARS)
+	) {
       throw new Error(
         'Codex completed response contained a malformed tool call ID; no tool was committed',
       )
@@ -125,6 +148,11 @@ function parseCompletedCodexTool(item: Record<string, any>): {
   } catch {
     throw new Error(
       'Codex completed response contained invalid tool arguments; no tool was committed',
+    )
+  }
+  if (hasInvalidUnicodeScalarDeep(input)) {
+    throw new Error(
+      'Codex completed response contained tool arguments with an invalid Unicode scalar; no tool was committed',
     )
   }
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
@@ -165,6 +193,11 @@ function parseCodexSseEventChunk(chunk: string): CodexSseEvent | undefined {
     throw new Error(
       'Codex SSE emitted invalid JSON; the response was not committed',
       { cause: error },
+    )
+  }
+  if (hasInvalidUnicodeScalarDeep(data)) {
+    throw new Error(
+      'Codex SSE contained an invalid Unicode scalar; the response was not committed',
     )
   }
 
@@ -777,7 +810,14 @@ export async function performCodexRequest(options: {
   )
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'unknown error')
+    const errorBody = await readBoundedResponseText(
+      response,
+      MAX_CODEX_ERROR_BODY_BYTES,
+    ).catch(error =>
+      error instanceof BoundedResponseBodyError
+        ? `[provider error body ${error.failure}]`
+        : '[provider error body unreadable]',
+    )
     let errorResponse: object | undefined
     try { errorResponse = JSON.parse(errorBody) } catch { /* raw text */ }
     throw APIError.generate(
@@ -796,7 +836,7 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
   const reader = responseBody.getReader()
   type ReaderResult = Awaited<ReturnType<typeof reader.read>>
 
-  const decoder = new TextDecoder()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   let buffer = ''
   const STREAM_IDLE_TIMEOUT_MS = (() => {
     const raw = process.env.VERBOO_STREAM_IDLE_TIMEOUT_MS
@@ -806,6 +846,13 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
   let lastDataTime = Date.now()
   let pendingReaderCancellation: Promise<void> | undefined
   let reachedEOF = false
+  let sawTerminalEvent = false
+  let terminalGraceDeadline: number | undefined
+
+  const isTerminalEvent = (event: string): boolean =>
+    event === 'response.completed' ||
+    event === 'response.incomplete' ||
+    event === 'response.failed'
 
   const cancelReader = (reason: unknown): void => {
     if (pendingReaderCancellation) return
@@ -820,7 +867,10 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
    * AbortSignal — clears the idle timer on abort so the AbortError
    * surfaces cleanly instead of a spurious idle timeout.
    */
-  async function readWithTimeout(): Promise<ReaderResult> {
+  async function readWithTimeout(
+    timeoutMs = STREAM_IDLE_TIMEOUT_MS,
+    timeoutCompletesStream = false,
+  ): Promise<ReaderResult> {
     return new Promise((resolve, reject) => {
       let settled = false
       let abortCleanup: (() => void) | undefined
@@ -844,11 +894,15 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
       const timeoutId = setTimeout(() => {
         const elapsed = Math.round((Date.now() - lastDataTime) / 1000)
         const timeoutError = new Error(
-          `Codex SSE stream idle for ${elapsed}s (limit: ${STREAM_IDLE_TIMEOUT_MS / 1000}s). Connection likely dropped.`,
+          `Codex SSE stream idle for ${elapsed}s (limit: ${timeoutMs / 1000}s). Connection likely dropped.`,
         )
         cancelReader(timeoutError)
-        rejectOnce(timeoutError)
-      }, STREAM_IDLE_TIMEOUT_MS)
+        if (timeoutCompletesStream) {
+          resolveOnce({ done: true, value: undefined })
+        } else {
+          rejectOnce(timeoutError)
+        }
+      }, timeoutMs)
 
       if (signal) {
         abortCleanup = () => {
@@ -874,22 +928,88 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
 
   try {
     while (true) {
-      const { done, value } = await readWithTimeout()
+      let readResult: ReaderResult
+      if (sawTerminalEvent) {
+        const remaining = (terminalGraceDeadline ?? Date.now()) - Date.now()
+        if (remaining <= 0) {
+          cancelReader('Codex SSE terminal grace elapsed')
+          readResult = { done: true, value: undefined }
+        } else {
+          readResult = await readWithTimeout(remaining, true)
+        }
+      } else {
+        readResult = await readWithTimeout()
+      }
+      const { done, value } = readResult
       if (done) {
-        reachedEOF = true
-        buffer += decoder.decode()
-        const finalEvent = parseCodexSseEventChunk(buffer)
-        if (finalEvent) yield finalEvent
+		reachedEOF = !sawTerminalEvent
+		try {
+		  buffer += decoder.decode()
+		} catch (error) {
+		  throw new Error(
+		    'Codex SSE contained invalid UTF-8; the response was not committed',
+		    { cause: error },
+		  )
+		}
+		if (buffer.length > MAX_CODEX_SSE_LINE_BUFFER_CHARS) {
+		  throw new Error(
+		    'Codex SSE line exceeded the client safety limit; the response was not committed',
+		  )
+		}
+		if (sawTerminalEvent && buffer.length > 0) {
+		  throw new Error(
+			'Codex SSE emitted bytes after its terminal event; the late output was not committed',
+		  )
+		}
+		const finalEvent = parseCodexSseEventChunk(buffer)
+		if (finalEvent) {
+		  yield finalEvent
+		  if (isTerminalEvent(finalEvent.event)) {
+			sawTerminalEvent = true
+			terminalGraceDeadline ??= Date.now() + 250
+		  }
+		}
         break
       }
 
-      buffer += decoder.decode(value, { stream: true })
+	  if (value.byteLength > MAX_CODEX_SSE_READ_CHUNK_BYTES) {
+		throw new Error(
+		  'Codex SSE transport chunk exceeded the client safety limit; the response was not committed',
+		)
+	  }
+	  try {
+		buffer += decoder.decode(value, { stream: true })
+	  } catch (error) {
+		throw new Error(
+		  'Codex SSE contained invalid UTF-8; the response was not committed',
+		  { cause: error },
+		)
+	  }
       const chunks = buffer.split(/\r?\n\r?\n/)
       buffer = chunks.pop() ?? ''
+	  if (
+		buffer.length > MAX_CODEX_SSE_LINE_BUFFER_CHARS ||
+		chunks.some(chunk => chunk.length > MAX_CODEX_SSE_LINE_BUFFER_CHARS)
+	  ) {
+		throw new Error(
+		  'Codex SSE event exceeded the client safety limit; the response was not committed',
+		)
+	  }
 
       for (const chunk of chunks) {
+		if (sawTerminalEvent) {
+		  throw new Error(
+			'Codex SSE emitted bytes after its terminal event; the late output was not committed',
+		  )
+		}
         const event = parseCodexSseEventChunk(chunk)
-        if (event) yield event
+		if (event) {
+		  yield event
+		  if (isTerminalEvent(event.event)) {
+			sawTerminalEvent = true
+			terminalGraceDeadline ??= Date.now() + 250
+		  }
+		}
       }
     }
   } finally {
@@ -935,12 +1055,18 @@ export async function collectCodexCompletedResponse(
   signal?: AbortSignal,
 ): Promise<Record<string, any>> {
   let completedResponse: Record<string, any> | undefined
+  let terminalErrorMessage: string | undefined
 
   for await (const event of readSseEvents(response, signal)) {
+	if (completedResponse || terminalErrorMessage) {
+	  throw new Error(
+		'Codex SSE emitted an event after its terminal event; the late output was not committed',
+	  )
+	}
     if (event.event === 'response.failed') {
-      const msg = event.data?.response?.error?.message ??
+      terminalErrorMessage = event.data?.response?.error?.message ??
         event.data?.error?.message ?? 'Codex response failed'
-      throw APIError.generate(500, undefined, msg, new Headers())
+	  continue
     }
 
     if (event.event === 'response.completed') {
@@ -948,7 +1074,7 @@ export async function collectCodexCompletedResponse(
         event.data,
         'completed',
       )
-      break
+	  continue
     }
 
     if (event.event === 'response.incomplete') {
@@ -956,8 +1082,17 @@ export async function collectCodexCompletedResponse(
         event.data,
         'incomplete',
       )
-      break
+	  continue
     }
+  }
+
+  if (terminalErrorMessage) {
+	throw APIError.generate(
+	  500,
+	  undefined,
+	  terminalErrorMessage,
+	  new Headers(),
+	)
   }
 
   if (!completedResponse) {
@@ -975,6 +1110,7 @@ export async function* codexStreamToAnthropic(
   model: string,
   signal?: AbortSignal,
   advertisedToolNames: readonly string[] = [],
+  recoverableToolNames: readonly string[] = [],
 ): AsyncGenerator<AnthropicStreamEvent> {
   const messageId = makeMessageId()
   const toolBlocksByItemId = new Map<
@@ -992,7 +1128,17 @@ export async function* codexStreamToAnthropic(
     }
   >()
   let activeTextBlockIndex: number | null = null
-  let emittedVisibleText = ''
+  const emittedVisibleTextChunks: string[] = []
+	let emittedVisibleTextChars = 0
+	const appendVisibleText = (text: string): void => {
+	  if (emittedVisibleTextChars + text.length > MAX_CODEX_VISIBLE_TEXT_CHARS) {
+		throw new Error(
+		  'Codex visible text exceeded the client safety limit; the response was not committed',
+		)
+	  }
+	  emittedVisibleTextChunks.push(text)
+	  emittedVisibleTextChars += text.length
+	}
   const thinkFilter = createThinkTagFilter()
   let nextContentBlockIndex = 0
   let sawToolUse = false
@@ -1008,7 +1154,7 @@ export async function* codexStreamToAnthropic(
     activeTextBlockIndex = null
     const tail = thinkFilter.flush()
     if (tail) {
-      emittedVisibleText += tail
+	  appendVisibleText(tail)
       yield {
         type: 'content_block_delta',
         index: textBlockIndex,
@@ -1095,6 +1241,7 @@ export async function* codexStreamToAnthropic(
     const resolvedName = resolveToolNameByUniquePrefix(
       advertisedToolNames,
       toolBlock.name,
+      recoverableToolNames,
     )
     if (advertisedToolNames.length > 0 && !resolvedName) {
       throw new Error(
@@ -1229,11 +1376,31 @@ export async function* codexStreamToAnthropic(
 
   try {
     for await (const event of readSseEvents(response, signal)) {
+	if (terminalEvent) {
+	  throw new Error(
+		'Codex SSE emitted an event after its terminal event; the late output was not committed',
+	  )
+	}
     const payload = event.data
 
     if (event.event === 'response.output_item.added') {
       const item = payload.item
       if (item?.type === 'function_call') {
+		if (
+		  toolBlocksByItemId.size >= MAX_CODEX_ACTIVE_TOOL_CALLS ||
+		  typeof item.name !== 'string' ||
+		  item.name.length > MAX_CODEX_TOOL_ID_OR_NAME_CHARS ||
+		  (item.id != null &&
+			(typeof item.id !== 'string' ||
+			  item.id.length > MAX_CODEX_TOOL_ID_OR_NAME_CHARS)) ||
+		  (item.call_id != null &&
+			(typeof item.call_id !== 'string' ||
+			  item.call_id.length > MAX_CODEX_TOOL_ID_OR_NAME_CHARS))
+		) {
+		  throw new Error(
+			'Codex tool identity exceeded the client safety limit; no tool was committed',
+		  )
+		}
         yield* closeActiveTextBlock()
         const blockIndex = nextContentBlockIndex++
         const toolUseId = item.call_id ?? item.id ?? `call_${blockIndex}`
@@ -1281,9 +1448,15 @@ export async function* codexStreamToAnthropic(
       }
       yield* startTextBlockIfNeeded()
       if (activeTextBlockIndex !== null) {
-        const visible = thinkFilter.feed(payload.delta ?? '')
+		const rawDelta = payload.delta ?? ''
+		if (typeof rawDelta !== 'string' || hasInvalidUnicodeScalar(rawDelta)) {
+		  throw new Error(
+			'Codex emitted text with an invalid Unicode scalar; the corrupted text was not rendered',
+		  )
+		}
+		const visible = thinkFilter.feed(rawDelta)
         if (visible) {
-          emittedVisibleText += visible
+		  appendVisibleText(visible)
           yield {
             type: 'content_block_delta',
             index: activeTextBlockIndex,
@@ -1325,20 +1498,20 @@ export async function* codexStreamToAnthropic(
     if (event.event === 'response.completed') {
       terminalEvent = 'completed'
       finalResponse = requireCodexTerminalResponse(payload, 'completed')
-      break
+	  continue
     }
 
     if (event.event === 'response.incomplete') {
       terminalEvent = 'incomplete'
       finalResponse = requireCodexTerminalResponse(payload, 'incomplete')
-      break
+	  continue
     }
 
     if (event.event === 'response.failed') {
       terminalEvent = 'failed'
       terminalErrorMessage = payload?.response?.error?.message ??
         payload?.error?.message ?? 'Codex response failed'
-      break
+	  continue
     }
   }
 
@@ -1364,7 +1537,16 @@ export async function* codexStreamToAnthropic(
   }
 
   const finalVisibleText = completedCodexVisibleText(finalResponse)
-  let missingSuffix = ''
+	if (hasInvalidUnicodeScalar(finalVisibleText)) {
+	  throw APIError.generate(
+		500,
+		undefined,
+		'Codex completed text contained an invalid Unicode scalar; the corrupted text was not rendered',
+		new Headers(),
+	  )
+	}
+	const emittedVisibleText = emittedVisibleTextChunks.join('')
+	let missingSuffix = ''
   if (!emittedVisibleText) {
     missingSuffix = finalVisibleText
   } else if (finalVisibleText.startsWith(emittedVisibleText)) {
@@ -1389,7 +1571,7 @@ export async function* codexStreamToAnthropic(
   if (missingSuffix) {
     yield* startTextBlockIfNeeded()
     if (activeTextBlockIndex !== null) {
-      emittedVisibleText += missingSuffix
+	  appendVisibleText(missingSuffix)
       yield {
         type: 'content_block_delta',
         index: activeTextBlockIndex,
@@ -1426,8 +1608,17 @@ export async function* codexStreamToAnthropic(
     : nextContentBlockIndex
   const completedToolBlocks = new Set<ActiveCodexToolBlock>()
   const completedToolCallIds = new Set<string>()
-  for (const item of finalOutput) {
-    if (item?.type !== 'function_call') continue
+	for (const item of finalOutput) {
+	  if (item?.type !== 'function_call') continue
+	  if (completedToolBlocks.size >= MAX_CODEX_ACTIVE_TOOL_CALLS) {
+		toolBlocksByItemId.clear()
+		throw APIError.generate(
+		  500,
+		  undefined,
+		  'Codex completed response contained too many tool calls; no tool was committed',
+		  new Headers(),
+		)
+	  }
     try {
       parseCompletedCodexTool(item)
     } catch (error) {
@@ -1439,9 +1630,18 @@ export async function* codexStreamToAnthropic(
         new Headers(),
       )
     }
-    let toolBlockEntry = findToolBlockEntry(item)
-    if (!toolBlockEntry) {
-      const blockIndex = nextContentBlockIndex++
+	  let toolBlockEntry = findToolBlockEntry(item)
+	  if (!toolBlockEntry) {
+		if (toolBlocksByItemId.size >= MAX_CODEX_ACTIVE_TOOL_CALLS) {
+		  toolBlocksByItemId.clear()
+		  throw APIError.generate(
+			500,
+			undefined,
+			'Codex completed response exceeded the tool state limit; no tool was committed',
+			new Headers(),
+		  )
+		}
+		const blockIndex = nextContentBlockIndex++
       const { toolUseId } = parseCompletedCodexTool(item)
       const toolBlock: ActiveCodexToolBlock = {
         index: blockIndex,
@@ -1525,7 +1725,13 @@ export function convertCodexResponseToAnthropicMessage(
   data: Record<string, any>,
   model: string,
   advertisedToolNames: readonly string[] = [],
+  recoverableToolNames: readonly string[] = [],
 ): Record<string, unknown> {
+	if (hasInvalidUnicodeScalarDeep(data)) {
+	  throw new Error(
+		'Codex completed response contained an invalid Unicode scalar; the corrupted response was not committed',
+	  )
+	}
   const content: Array<Record<string, unknown>> = []
   const output = Array.isArray(data.output) ? data.output : []
   if (data.status == null) {
@@ -1578,12 +1784,20 @@ export function convertCodexResponseToAnthropicMessage(
       }
       completedToolCallIds.add(toolUseId)
       const toolName =
-        resolveToolNameByUniquePrefix(advertisedToolNames, item.name ?? '') ??
+        resolveToolNameByUniquePrefix(
+          advertisedToolNames,
+          item.name ?? '',
+          recoverableToolNames,
+        ) ??
         item.name ??
         'tool'
       if (
         advertisedToolNames.length > 0 &&
-        !resolveToolNameByUniquePrefix(advertisedToolNames, item.name ?? '')
+        !resolveToolNameByUniquePrefix(
+          advertisedToolNames,
+          item.name ?? '',
+          recoverableToolNames,
+        )
       ) {
         throw new Error(
           'Codex completed response selected an unadvertised tool; no tool was committed',

@@ -81,6 +81,21 @@ if (feature('ABLATION_BASELINE') && process.env.CLAUDE_CODE_ABLATION_BASELINE) {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
+  // Release-only artifact contract. This exercises the bundled streaming
+  // parser with byte-split UTF-8, rea+d, and post-terminal fixtures before an
+  // npm, container, or signed desktop payload is published.
+  if (args.length === 1 && args[0] === '--internal-protocol-self-test') {
+    const { enableConfigs } = await import('../utils/config.js')
+    enableConfigs()
+    const { runOpenAIArtifactProtocolSelfTest } = await import(
+      '../services/api/openaiArtifactSelfTest.js'
+    )
+    process.stdout.write(
+      `${JSON.stringify(await runOpenAIArtifactProtocolSelfTest())}\n`,
+    )
+    return
+  }
+
   // Fast-path for --version/-v: zero module loading needed
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v' || args[0] === '-V')) {
     // MACRO.VERSION is inlined at build time

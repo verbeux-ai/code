@@ -159,6 +159,54 @@ test('parallel tools produce one terminal result each when one tool fails', asyn
   )
 })
 
+test('unprefixed MCP prefixes are never executed in streaming or collected paths', async () => {
+  let executed = 0
+  const mcpTool = Object.assign(
+    createTool('send', 'success', () => executed++),
+    {
+      isMcp: true,
+      mcpInfo: { serverName: 'mail', toolName: 'send' },
+    },
+  )
+  const context = createContext([mcpTool])
+  const canUseTool = (async () => ({
+    behavior: 'allow',
+  })) as CanUseToolFn
+  const truncatedBlock = {
+    type: 'tool_use',
+    id: 'call_mcp_prefix',
+    name: 'sen',
+    input: {},
+  } as ToolUseBlock
+  const assistant = createAssistantMessage({
+    content: [truncatedBlock] as never,
+  }) as AssistantMessage
+
+  const executor = new StreamingToolExecutor([mcpTool], canUseTool, context)
+  executor.addTool(truncatedBlock, assistant)
+  const streamingMessages: Message[] = []
+  for await (const update of executor.getRemainingResults()) {
+    if (update.message) streamingMessages.push(update.message)
+  }
+  expect(collectToolResults(streamingMessages)).toEqual([
+    { id: 'call_mcp_prefix', isError: true },
+  ])
+
+  const collectedMessages: Message[] = []
+  for await (const update of runTools(
+    [truncatedBlock],
+    [assistant],
+    canUseTool,
+    context,
+  )) {
+    if (update.message) collectedMessages.push(update.message)
+  }
+  expect(collectToolResults(collectedMessages)).toEqual([
+    { id: 'call_mcp_prefix', isError: true },
+  ])
+  expect(executed).toBe(0)
+})
+
 function createBudgetedPermission(maxToolCalls: number) {
   const state = createAgentExecutionBudgetState({
     maxToolCalls,

@@ -29,7 +29,12 @@ import type { AgentId } from 'src/types/ids.js'
 import type { z } from 'zod/v4'
 import { CLI_SYSPROMPT_PREFIXES } from '../constants/system.js'
 import { roughTokenCountEstimation } from '../services/tokenEstimation.js'
-import type { Tool, ToolPermissionContext, Tools } from '../Tool.js'
+import {
+  TOOL_NAME_PREFIX_RECOVERY_ALLOWED,
+  type Tool,
+  type ToolPermissionContext,
+  type Tools,
+} from '../Tool.js'
 import { AGENT_TOOL_NAME } from '../tools/AgentTool/constants.js'
 import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
@@ -76,6 +81,22 @@ type BetaToolWithExtras = BetaTool & {
     ttl?: '5m' | '1h'
   }
   eager_input_streaming?: boolean
+}
+
+function markToolNameRecoveryPolicy<T extends object>(
+  schema: T,
+  tool: Tool,
+): T {
+  Object.defineProperty(schema, TOOL_NAME_PREFIX_RECOVERY_ALLOWED, {
+    value:
+      tool.isMcp !== true &&
+      tool.mcpInfo == null &&
+      !tool.name.toLowerCase().startsWith('mcp__'),
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  })
+  return schema
 }
 
 export type CacheScope = 'global' | 'org'
@@ -300,19 +321,19 @@ export async function toolToAPISchema(
     const stripped = Object.keys(schema).filter(k => !allowed.has(k))
     if (stripped.length > 0) {
       logStripOnce(stripped)
-      return {
+      return markToolNameRecoveryPolicy({
         name: schema.name,
         description: schema.description,
         input_schema: schema.input_schema,
         ...(schema.cache_control && { cache_control: schema.cache_control }),
-      }
+      }, tool)
     }
   }
 
   // Note: We cast to BetaTool but the extra fields are still present at runtime
   // and will be serialized in the API request, even though they're not in the SDK's
   // BetaTool type definition. This is intentional for beta features.
-  return schema as BetaTool
+  return markToolNameRecoveryPolicy(schema as BetaTool, tool)
 }
 
 let loggedStrip = false

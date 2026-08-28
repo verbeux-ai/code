@@ -13,6 +13,7 @@ import {
 } from '../src/utils/providerDiscovery.js'
 import { DEFAULT_GEMINI_MODEL } from '../src/utils/providerProfile.js'
 import { redactUrlForDisplay } from '../src/utils/urlRedaction.js'
+import { runOpenAIProtocolReliabilitySelfTest } from '../src/services/api/openaiProtocolReliability.js'
 
 type CheckResult = {
   ok: boolean
@@ -109,6 +110,13 @@ function checkBunRuntime(): CheckResult {
     return pass('Bun runtime', 'Not running inside Bun (this is acceptable for Node startup).')
   }
   return pass('Bun runtime', bunVersion)
+}
+
+function checkOpenAIProtocolReliability(): CheckResult {
+  const result = runOpenAIProtocolReliabilitySelfTest()
+  return result.ok
+    ? pass('OpenAI stream protocol', result.detail)
+    : fail('OpenAI stream protocol', result.detail)
 }
 
 function checkBuildArtifacts(): CheckResult {
@@ -663,6 +671,7 @@ async function main(): Promise<void> {
 
   results.push(checkNodeVersion())
   results.push(checkBunRuntime())
+  results.push(checkOpenAIProtocolReliability())
   results.push(checkBuildArtifacts())
   results.push(...checkOpenAIEnv())
   results.push(await checkBaseUrlReachability())

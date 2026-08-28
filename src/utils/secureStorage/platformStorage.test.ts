@@ -102,6 +102,45 @@ describe("Secure Storage Platform Implementations", () => {
     });
   });
 
+  /**
+   * Issue #77 — DPAPI file must be UTF-8 without BOM.
+   *
+   * LIMIT: form-only. These tests assert the generated PowerShell script.
+   * Real Windows PowerShell 5.1 / .NET Framework / DPAPI is not exercisable
+   * on this host (macOS).
+   */
+  describe("Windows DPAPI write encoding (issue #77)", () => {
+    function updateScript(): string {
+      windowsCredentialStorage.update(testData);
+      return execaCalls()[0][1][1];
+    }
+
+    function writePath(script: string): string {
+      const idx = script.indexOf("[System.IO.File]::WriteAllText");
+      expect(idx).toBeGreaterThan(-1);
+      return script.slice(idx);
+    }
+
+    test("WriteAllText uses UTF8Encoding($false) and not Encoding::UTF8", () => {
+      const write = writePath(updateScript());
+
+      expect(write).toContain("New-Object System.Text.UTF8Encoding($false)");
+      expect(write).not.toContain("[System.Text.Encoding]::UTF8");
+      expect(write).not.toMatch(/\bOut-File\b/);
+      expect(write).not.toMatch(/\bSet-Content\b/);
+    });
+
+    test("post-write validation re-reads bytes and FromBase64String-decodes without BOM strip", () => {
+      const write = writePath(updateScript());
+
+      expect(write).toContain("[System.IO.File]::ReadAllBytes");
+      expect(write).toContain("[Convert]::FromBase64String");
+      expect(write).toContain("-cne $protectedBase64");
+      expect(write).toMatch(/Write-Error/);
+      expect(write).toMatch(/exit\s+1/);
+    });
+  });
+
   describe("Windows PowerShell Escaping", () => {
     test("escapes single quotes and prevents $ expansion", () => {
       const dataWithDollar = {

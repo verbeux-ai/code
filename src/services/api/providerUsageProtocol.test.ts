@@ -23,13 +23,25 @@ test('Codex Plus keeps only its provider-reported base weekly window', () => {
   })
 
   expect(snapshot.plan).toEqual({ id: 'plus', displayName: 'Plus' })
+  // Spec update (issue #107): the protocol now surfaces BOTH primary and
+  // secondary windows from the provider payload, with their reported
+  // durations attached as windowMinutes. Legacy 300/10080 hardcoding is
+  // gone — durations are provider-driven.
   expect(snapshot.windows).toEqual([
     {
-      id: 'codex:secondary',
+      id: 'codex:codex:primary',
+      kind: 'session',
+      displayLabel: 'Codex Session',
+      usedPercent: 38,
+      windowMinutes: 300,
+    },
+    {
+      id: 'codex:codex:secondary',
       kind: 'weekly',
-      displayLabel: 'Weekly',
+      displayLabel: 'Codex Weekly',
       usedPercent: 32,
       resetsAt: '2026-04-08T21:50:41.000Z',
+      windowMinutes: 10080,
     },
   ])
 })

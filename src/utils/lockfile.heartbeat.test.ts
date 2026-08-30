@@ -36,6 +36,24 @@ interface HeartbeatFixture {
   release: () => Promise<void>
   releaseHeartbeat: (code: 'EACCES' | 'EPERM') => void
   statCalls: number
+  triggerHeartbeatStat: () => Promise<{ code: string | undefined }>
+}
+
+/**
+ * Capture the next fakeFs.stat invocation. Resolves with the error code
+ * (or undefined for a successful stat) the wrapped callback ultimately
+ * receives. Lets the tests drive the heartbeat directly instead of
+ * waiting on proper-lockfile's unref'd setTimeout, which never reaches
+ * the event loop under full-suite CPU pressure.
+ */
+function captureNextStatError(
+  fakeFs: { stat: (p: string, cb: (e: NodeJS.ErrnoException | null, stat?: unknown) => void) => void },
+): Promise<{ code: string | undefined }> {
+  return new Promise((resolve) => {
+    fakeFs.stat('ignored', (err) => {
+      resolve({ code: err?.code })
+    })
+  })
 }
 
 async function setupHeartbeat(): Promise<HeartbeatFixture> {
@@ -64,7 +82,14 @@ async function setupHeartbeat(): Promise<HeartbeatFixture> {
     realpath: ((p: string, cb: (err: NodeJS.ErrnoException | null, resolved?: string) => void) => cb(null, p)) as unknown as typeof import('fs')['realpath'],
   } as unknown as typeof import('fs')
 
-  const wrapper = await import('./lockfile.js')
+  // Cache-busting require bypasses any inherited `mock.module('./lockfile.js', ...)`
+  // set by other test files (auth.refresh.test.ts installs one in beforeAll;
+  // Bun's `mock.restore()` does NOT restore to a pristine import). Without
+  // this, installReleaseGuard never runs, fakeFs.stat is left unwrapped, and
+  // the parked callback fires with raw EACCES/EPERM instead of the ENOENT
+  // rewrite the production wrapper performs.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const wrapper = require('./lockfile.js?bust=' + Date.now()) as typeof import('./lockfile.js')
 
   const file = join(TMP_ROOT, `r3-${Math.random().toString(36).slice(2)}.lock`)
   const release = await wrapper.lock(file, {
@@ -86,46 +111,46 @@ async function setupHeartbeat(): Promise<HeartbeatFixture> {
     get statCalls() {
       return statCalls
     },
+    triggerHeartbeatStat: () => captureNextStatError(fakeFs as never),
   } as HeartbeatFixture
 }
 
 test('R3: heartbeat EACCES after release must not crash the process', async () => {
   const fixture = await setupHeartbeat()
 
-  // Release the lock BEFORE the parked stat returns. With the unfixed
-  // wrapper (or a direct proper-lockfile caller), proper-lockfile's
-  // updateLock would be invoked with `locks[file]` undefined and throw
-  // TypeError on `lock.updateTimeout`.
+  // Drive the heartbeat's stat directly (same mechanism as the EPERM test
+  // below). The original EACCES test relied on the heartbeat timer to park
+  // a callback — when the timer never fires, parked stays empty and the
+  // getLocks assertion passed by vacuity. With triggerHeartbeatStat, we
+  // park a real callback that the wrapper must rewrite.
+  const statResult = fixture.triggerHeartbeatStat()
   await fixture.release()
 
-  // Now release the parked stat with EACCES (Windows sharing-violation).
+  // Release the parked stat with EACCES (Windows sharing-violation).
   fixture.releaseHeartbeat('EACCES')
 
-  // Give the event loop a chance to surface any uncaught throw.
-  await new Promise((r) => setImmediate(r))
-  await new Promise((r) => setTimeout(r, 50))
-
-  // After release + drain, the internal locks table must be empty.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const properLockfile = require('proper-lockfile') as { getLocks?: () => Record<string, unknown> }
-  if (typeof properLockfile.getLocks === 'function') {
-    expect(Object.keys(properLockfile.getLocks()).length).toBe(0)
-  }
+  // The wrapper's release-guard rewrites EACCES → ENOENT before proper-lockfile's
+  // updateLock sees it, so the heartbeat exits via ECOMPROMISED instead of
+  // recursing on the removed lock. Without the guard, the cb receives raw
+  // EACCES and proper-lockfile crashes on `locks[file]` undefined.
+  const { code } = await statResult
+  expect(code).toBe('ENOENT')
 })
 
 test('R3: heartbeat EPERM after release must not crash the process', async () => {
   const fixture = await setupHeartbeat()
-  // Wait long enough for the heartbeat to schedule a stat that we can park.
-  // proper-lockfile clamps heartbeat to >=1000ms; we use update:1000 and
-  // add a margin so the heartbeat has fired by the time we release.
-  await new Promise((r) => setTimeout(r, 1300))
-  expect(fixture.statCalls).toBeGreaterThanOrEqual(2)
+  // Drive the heartbeat's stat directly. Replaces the original 1300ms
+  // wall-clock sleep that was starved under full-suite CPU pressure and
+  // never fired — leaving the test asserting against statCalls that never
+  // arrived, and breaking the gate without exercising anything.
+  const statResult = fixture.triggerHeartbeatStat()
   await fixture.release()
   fixture.releaseHeartbeat('EPERM')
-  await new Promise((r) => setImmediate(r))
-  await new Promise((r) => setTimeout(r, 50))
-  // The fix rewrites the post-release EPERM to ENOENT, so the dependency
-  // exits the heartbeat via ECOMPROMISED without recursing into updateLock.
+  const { code } = await statResult
+  expect(code).toBe('ENOENT')
+  // The probe is statCalls === 1; the heartbeat stat we just triggered is
+  // statCalls === 2. With the rewrite active, the wrapper short-circuits
+  // the post-release stat to ENOENT before proper-lockfile's updateLock.
   expect(fixture.statCalls).toBeGreaterThanOrEqual(2)
 })
 
@@ -134,7 +159,5 @@ test('R3: double release must be idempotent (ERELEASED swallowed)', async () => 
   await fixture.release()
   // Second release should not throw — the wrapper swallows ERELEASED.
   await fixture.release()
-  // Drain any parked heartbeat stats so they don't fire later.
-  fixture.releaseHeartbeat('ENOENT')
   expect(true).toBe(true)
 })

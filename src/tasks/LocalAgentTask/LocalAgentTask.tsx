@@ -60,6 +60,43 @@ export function getTokenCountFromTracker(tracker: ProgressTracker): number {
 }
 
 /**
+ * Recompute token counters from accumulated assistant messages.
+ *
+ * Streaming providers (Verboo/OpenAI shim) emit message_start with zeroed
+ * usage; the real usage arrives in message_delta, which mutates the LAST
+ * yielded message in place (see claude.ts message_delta handler). Reading
+ * usage at yield time therefore undercounts tokens — tool calls count but
+ * tokens stay 0. Because lifecycle loops keep references to every yielded
+ * message, this recompute converges to the real usage once each request's
+ * message_delta lands on the accumulated references.
+ *
+ * Input tokens are cumulative per request (latest wins); output tokens are
+ * per-request and summed.
+ */
+export function syncProgressUsageFromMessages(
+  tracker: ProgressTracker,
+  messages: Message[],
+): void {
+  let latestInputTokens = 0;
+  let cumulativeOutputTokens = 0;
+  for (const message of messages) {
+    if (message.type !== 'assistant') continue;
+    const usage = message.message.usage;
+    if (!usage) continue;
+    const inputTokens =
+      usage.input_tokens +
+      (usage.cache_creation_input_tokens ?? 0) +
+      (usage.cache_read_input_tokens ?? 0);
+    if (inputTokens > latestInputTokens) {
+      latestInputTokens = inputTokens;
+    }
+    cumulativeOutputTokens += usage.output_tokens;
+  }
+  tracker.latestInputTokens = latestInputTokens;
+  tracker.cumulativeOutputTokens = cumulativeOutputTokens;
+}
+
+/**
  * Resolver function that returns a human-readable activity description
  * for a given tool name and input. Used to pre-compute descriptions
  * from Tool.getActivityDescription() at recording time.
@@ -245,7 +282,10 @@ export function enqueueAgentNotification({
   // results may reference stale task output. The prompt suggestion text is
   // preserved; only the pre-computed response is discarded.
   abortSpeculation(setAppState);
-  const summary = status === 'completed' ? `Agent "${description}" completed` : status === 'failed' ? `Agent "${description}" failed: ${error || 'Unknown error'}` : `Agent "${description}" was stopped`;
+  // Strip angle brackets from user/model-supplied description so the summary
+  // never breaks the <summary> envelope (BUG-4: parser regex truncation / malformed XML).
+  const safeDescription = description.replace(/[<>]/g, '');
+  const summary = status === 'completed' ? `Agent "${safeDescription}" completed` : status === 'failed' ? `Agent "${safeDescription}" failed: ${error || 'Unknown error'}` : `Agent "${safeDescription}" was stopped`;
   const outputPath = getTaskOutputPath(taskId);
   const toolUseIdLine = toolUseId ? `\n<${TOOL_USE_ID_TAG}>${toolUseId}</${TOOL_USE_ID_TAG}>` : '';
   const resultSection = finalMessage ? `\n<result>${finalMessage}</result>` : '';

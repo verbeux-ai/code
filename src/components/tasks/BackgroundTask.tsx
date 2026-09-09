@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Text } from 'src/ink.js';
 import type { BackgroundTaskState } from 'src/tasks/types.js';
 import type { DeepImmutable } from 'src/types/utils.js';
-import { truncate } from 'src/utils/format.js';
+import { truncate, formatNumber } from 'src/utils/format.js';
 import { toInkColor } from 'src/utils/ink.js';
 import { plural } from 'src/utils/stringUtils.js';
 import { DIAMOND_FILLED, DIAMOND_OPEN } from '../../constants/figures.js';
@@ -123,26 +123,46 @@ export function BackgroundTask(t0) {
         } else {
           t1 = $[24];
         }
+        const tokenCount = "result" in task ? task.result?.totalTokens : task.progress?.tokenCount;
+        const toolUseCount = "result" in task ? task.result?.totalToolUseCount : task.progress?.toolUseCount;
+        let tToken;
+        if ($[25] !== tokenCount) {
+          tToken = tokenCount !== undefined && tokenCount > 0 && <Text dimColor={true}> · {formatNumber(tokenCount)} tokens</Text>;
+          $[25] = tokenCount;
+          $[26] = tToken;
+        } else {
+          tToken = $[26];
+        }
+        let tTool;
+        if ($[27] !== toolUseCount) {
+          tTool = toolUseCount !== undefined && toolUseCount > 0 && <Text dimColor={true}> · {toolUseCount} {toolUseCount === 1 ? "tool" : "tools"}</Text>;
+          $[27] = toolUseCount;
+          $[28] = tTool;
+        } else {
+          tTool = $[28];
+        }
         const t2 = task.status === "completed" ? "done" : undefined;
         const t3 = task.status === "completed" && !task.notified ? ", unread" : undefined;
         let t4;
-        if ($[25] !== t2 || $[26] !== t3 || $[27] !== task.status) {
+        if ($[29] !== t2 || $[30] !== t3 || $[31] !== task.status) {
           t4 = <TaskStatusText status={task.status} label={t2} suffix={t3} />;
-          $[25] = t2;
-          $[26] = t3;
-          $[27] = task.status;
-          $[28] = t4;
+          $[29] = t2;
+          $[30] = t3;
+          $[31] = task.status;
+          $[32] = t4;
         } else {
-          t4 = $[28];
+          t4 = $[32];
         }
         let t5;
-        if ($[29] !== t1 || $[30] !== t4) {
-          t5 = <Text>{t1}{" "}{t4}</Text>;
-          $[29] = t1;
-          $[30] = t4;
-          $[31] = t5;
+        if ($[33] !== t1 || $[34] !== t4 || $[35] !== tToken || $[36] !== tTool) {
+          t5 = <Text>{t1}{" "}{tToken}{tTool}{" "}{t4}</Text>;
+          $[33] = t1;
+          $[34] = t4;
+          $[35] = tToken;
+          $[36] = tTool;
+          $[37] = t5;
         } else {
-          t5 = $[31];
+          t5 = $[37];
         }
         return t5;
       }

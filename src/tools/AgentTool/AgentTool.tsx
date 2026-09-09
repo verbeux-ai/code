@@ -11,7 +11,7 @@ import { startAgentSummarization } from '../../services/AgentSummary/agentSummar
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { clearDumpState } from '../../services/api/dumpPrompts.js';
-import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
+import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, syncProgressUsageFromMessages, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { checkRemoteAgentEligibility, formatPreconditionError, getRemoteTaskSessionUrl, registerRemoteAgentTask } from '../../tasks/RemoteAgentTask/RemoteAgentTask.js';
 import { assembleToolPool } from '../../tools.js';
 import { asAgentId } from '../../types/ids.js';
@@ -252,6 +252,13 @@ export const AgentTool = buildTool({
     cwd
   }: AgentToolInput, toolUseContext, canUseTool, assistantMessage, onProgress?) {
     const startTime = Date.now();
+    // Coordinator workers must use the default model — the coordinator system
+    // prompt instructs this and model routing assumes it. Silently swallowing
+    // the param hides mistakes (the model may believe it selected a model).
+    // Log so the mismatch is visible instead of silent.
+    if (isCoordinatorMode() && modelParam !== undefined) {
+      logForDebugging(`[Coordinator] Agent model override ignored (coordinator mode): "${modelParam}"`);
+    }
     const model = isCoordinatorMode() ? undefined : modelParam;
 
     // Get app state for permission mode and agent filtering
@@ -1003,6 +1010,7 @@ export const AgentTool = buildTool({
 
                       // Track progress for backgrounded agents
                       updateProgressFromMessage(tracker, msg, resolveActivity2, toolUseContext.options.tools);
+                      syncProgressUsageFromMessages(tracker, agentMessages);
                       updateAsyncAgentProgress(backgroundedTaskId, getProgressUpdate(tracker), rootSetAppState);
                       const lastToolName = getLastToolUseName(msg);
                       if (lastToolName) {
@@ -1011,6 +1019,7 @@ export const AgentTool = buildTool({
                     }
                     if (!isCurrentBackground()) return;
                     if (backgroundController.signal.aborted) throw new AbortError();
+                    syncProgressUsageFromMessages(tracker, agentMessages);
                     const agentResult = finalizeAgentTool(agentMessages, backgroundedTaskId, metadata);
 
                     // Mark task completed FIRST so TaskOutput(block=true)
@@ -1068,7 +1077,7 @@ export const AgentTool = buildTool({
                         reason: 'user_cancel_background' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
                       });
                       const worktreeResult = await cleanupWorktreeIfNeeded();
-                    if (!isCurrentBackground()) return;
+                      if (!isCurrentBackground()) return;
                       const partialResult = extractPartialResult(agentMessages);
                       enqueueAgentNotification({
                         taskId: backgroundedTaskId,
@@ -1138,6 +1147,7 @@ export const AgentTool = buildTool({
 
             // Emit task_progress for the VS Code subagent panel
             updateProgressFromMessage(syncTracker, message, syncResolveActivity, toolUseContext.options.tools);
+            syncProgressUsageFromMessages(syncTracker, agentMessages);
             if (foregroundTaskId) {
               const lastToolName = getLastToolUseName(message);
               if (lastToolName) {
@@ -1231,6 +1241,10 @@ export const AgentTool = buildTool({
           // the backgrounding transition, this is a no-op. The backgrounded
           // closure owns a separate stop function (stopBackgroundedSummarization).
           stopForegroundSummarization?.();
+
+          // BUG-1 fix: last request's message_delta lands after the final yield;
+          // recompute so progress/SDK totals carry real token counts.
+          syncProgressUsageFromMessages(syncTracker, agentMessages);
 
           // Unregister foreground task if agent completed without being backgrounded
           if (foregroundTaskId && !wasReplaced) {

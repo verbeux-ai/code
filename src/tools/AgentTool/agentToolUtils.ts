@@ -31,6 +31,7 @@ import {
   getTokenCountFromTracker,
   isLocalAgentTask,
   killAsyncAgent,
+  syncProgressUsageFromMessages,
   type ProgressTracker,
   updateAgentProgress as updateAsyncAgentProgress,
   updateProgressFromMessage,
@@ -625,6 +626,10 @@ export async function runAsyncAgentLifecycle({
         resolveActivity,
         toolUseContext.options.tools,
       )
+      // BUG-1 fix: message_delta mutates usage in-place after the message is
+      // yielded; recompute from the accumulated references so tokens converge
+      // to the real values once each request's usage lands.
+      syncProgressUsageFromMessages(tracker, agentMessages)
       updateAsyncAgentProgress(
         taskId,
         getProgressUpdate(tracker),
@@ -647,6 +652,10 @@ export async function runAsyncAgentLifecycle({
 
     if (!isCurrentExecution()) return
     if (abortController.signal.aborted) throw new AbortError()
+
+    // BUG-1 fix: last request's message_delta lands after the final yield —
+    // recompute so the completion notification carries real token counts.
+    syncProgressUsageFromMessages(tracker, agentMessages)
 
     const agentResult = finalizeAgentTool(agentMessages, taskId, metadata)
 

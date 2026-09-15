@@ -36,6 +36,12 @@ export type ProviderUsageWindowV1 = {
   modelScope?: string
   usedPercent: number
   resetsAt?: string
+  /**
+   * Optional window duration copied from the provider response (minutes).
+   * Additive and backwards-compatible — older CLI builds will omit it
+   * and the app falls back to its kind-based presentation.
+   */
+  windowMinutes?: number
 }
 
 export type ProviderUsageSnapshotV1 = {

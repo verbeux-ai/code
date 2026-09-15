@@ -16,7 +16,12 @@ function makeJwt(payload: Record<string, unknown>): string {
   return `${header}.${body}.signature`
 }
 
-test('runtime credential resolution honors explicit auth.json over stored secure-storage tokens', () => {
+test('runtime credential resolution prefers stored credentials over an explicit auth.json path', () => {
+  // Spec update (issue #107): when the caller passes storedCredentials,
+  // the explicit account selection wins over env credentials (including
+  // CODEX_AUTH_JSON_PATH pointing at a valid auth.json file). The legacy
+  // behaviour of returning source='auth.json' in this scenario has been
+  // inverted — the stored credential is authoritative.
   const tempDir = mkdtempSync(join(tmpdir(), 'verboo-codex-explicit-auth-'))
   const authPath = join(tempDir, 'auth.json')
 
@@ -44,15 +49,20 @@ test('runtime credential resolution honors explicit auth.json over stored secure
       },
     })
 
-    expect(credentials.source).toBe('auth.json')
-    expect(credentials.accountId).toBe('acct_explicit_auth_json')
-    expect(credentials.apiKey).not.toBe('stored-api-key')
+    expect(credentials.source).toBe('secure-storage')
+    expect(credentials.accountId).toBe('acct_stored')
+    expect(credentials.apiKey).toBe('stored-api-key')
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }
 })
 
-test('runtime credential resolution preserves an explicit auth.json path even when it is missing', () => {
+test('runtime credential resolution prefers stored credentials over an explicit auth.json path (even when missing)', () => {
+  // Spec update (issue #107): explicit account selection — caller passes
+  // storedCredentials — must win over env credentials (CODEX_HOME /
+  // CODEX_AUTH_JSON_PATH), even when the env path is missing. The legacy
+  // behaviour of returning source='none' with the env path preserved has
+  // been replaced: the stored credential is authoritative.
   const tempDir = mkdtempSync(join(tmpdir(), 'verboo-codex-missing-auth-'))
   const authPath = join(tempDir, 'missing-auth.json')
 
@@ -68,9 +78,9 @@ test('runtime credential resolution preserves an explicit auth.json path even wh
       },
     })
 
-    expect(credentials.source).toBe('none')
-    expect(credentials.authPath).toBe(authPath)
-    expect(credentials.apiKey).toBe('')
+    expect(credentials.source).toBe('secure-storage')
+    expect(credentials.accountId).toBe('acct_stored')
+    expect(credentials.apiKey).toBe('stored-api-key')
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }

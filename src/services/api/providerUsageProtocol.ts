@@ -52,10 +52,10 @@ function percent(value: unknown): number | undefined {
 function weeklyWindow(
   snapshot: CodexUsageSnapshot,
 ): { source: 'primary' | 'secondary'; window: CodexUsageWindow } | undefined {
-  if (snapshot.secondary?.windowMinutes === 10_080) {
+  if (snapshot.secondary) {
     return { source: 'secondary', window: snapshot.secondary }
   }
-  if (snapshot.primary?.windowMinutes === 10_080) {
+  if (snapshot.primary) {
     return { source: 'primary', window: snapshot.primary }
   }
   return undefined
@@ -85,42 +85,43 @@ export function normalizeCodexProviderUsage(
   payload: unknown,
 ): ProviderUsageSnapshotV1 {
   const usage = codexUsageData(payload)
-  const base = usage.snapshots.find(snapshot => {
-    const name = snapshot.limitName.trim().toLowerCase()
-    return name === 'codex' || name === 'base'
-  })
   const windows: ProviderUsageWindowV1[] = []
-  const baseWeekly = base ? weeklyWindow(base) : undefined
-  if (baseWeekly) {
-    const usedPercent = percent(baseWeekly.window.usedPercent)
-    if (usedPercent !== undefined) {
-      windows.push({
-        id: `codex:${baseWeekly.source}`,
-        kind: 'weekly',
-        displayLabel: 'Weekly',
-        usedPercent,
-        resetsAt: baseWeekly.window.resetsAt,
-      })
-    }
-  }
-
+  // Surface BOTH primary and secondary windows from every snapshot the
+  // provider reports, with the actual windowMinutes they carry. Plan
+  // hardcodes (300/10080) are gone — durations come from the provider.
   for (const snapshot of usage.snapshots) {
     const name = snapshot.limitName.trim().toLowerCase()
-    if (!name || name === 'codex' || name === 'base' || name === 'code review') {
-      continue
+    const sourceKey = name.replace(/[^a-z0-9_-]+/gi, '-') || 'codex'
+    const primary = snapshot.primary
+    if (primary) {
+      const usedPercent = percent(primary.usedPercent)
+      if (usedPercent !== undefined) {
+        windows.push({
+          id: `codex:${sourceKey}:primary`,
+          kind: 'session',
+          displayLabel: `${scopeLabel(snapshot.limitName)} Session`,
+          usedPercent,
+          resetsAt: primary.resetsAt,
+          windowMinutes: primary.windowMinutes,
+        })
+      }
     }
-    const scoped = weeklyWindow(snapshot)
-    if (!scoped) continue
-    const usedPercent = percent(scoped.window.usedPercent)
-    if (usedPercent === undefined) continue
-    windows.push({
-      id: `codex:${name.replace(/[^a-z0-9_-]+/gi, '-')}`,
-      kind: 'model-scoped-weekly',
-      displayLabel: `${scopeLabel(snapshot.limitName)} Weekly`,
-      modelScope: name,
-      usedPercent,
-      resetsAt: scoped.window.resetsAt,
-    })
+    const secondary = snapshot.secondary
+    if (secondary) {
+      const usedPercent = percent(secondary.usedPercent)
+      if (usedPercent !== undefined) {
+        windows.push({
+          id: `codex:${sourceKey}:secondary`,
+          kind: 'weekly',
+          displayLabel: `${scopeLabel(snapshot.limitName)} Weekly`,
+          usedPercent,
+          resetsAt: secondary.resetsAt,
+          windowMinutes: secondary.windowMinutes,
+        })
+      }
+    }
+    // If the snapshot has neither primary nor secondary, skip silently
+    // — the protocol never invents values.
   }
 
   return {
@@ -168,7 +169,6 @@ function scopedClaudeWindows(
 ): ProviderUsageWindowV1[] {
   if (!values) return []
   return values.flatMap(value => {
-    if (value.windowMinutes !== 10_080) return []
     const usedPercent = percent(value.utilization)
     if (usedPercent === undefined) return []
     const scope = value.modelScope.trim()
@@ -181,6 +181,7 @@ function scopedClaudeWindows(
         modelScope: scope,
         usedPercent,
         resetsAt: value.resetsAt,
+        windowMinutes: value.windowMinutes,
       },
     ]
   })

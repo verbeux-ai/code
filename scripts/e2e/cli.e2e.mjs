@@ -22,6 +22,16 @@ async function metadata(cli) {
 const estimated = cli => cli.frames.some(frame => /~[1-9][\d.,k]* tokens/.test(frame.text))
 const completed = cli => cli.frames.some(frame => frame.text.includes('E2E_COMPLETE'))
 
+for (const fullscreen of [false, true]) test(`routing header appears once with thinking and text, fullscreen=${fullscreen}`, { timeout: 60_000 }, async () => {
+  const cli = await startCli({ columns: 120, rows: 40, fullscreen, model: 'jev-router', routerOptions: { routedCompletion: true }, args: ['oi'] })
+  try {
+    await cli.waitFor(() => cli.screen().includes('E2E_ROUTED_COMPLETE'))
+    assert.equal(cli.screen().match(/jev-router → glm-5\.3-flash/g)?.length, 1)
+    assert.ok(!cli.screen().includes('Synthetic hidden reasoning.'))
+    assert.deepEqual(cli.router.unexpected, [])
+  } finally { await cli.stop() }
+})
+
 for (const fullscreen of [false, true]) for (const [columns, rows] of [[40, 12], [80, 24], [120, 40]]) for (const agents of [1, 2, 8, 20]) {
   test(`installed CLI: ${agents} agents, ${columns}x${rows}, fullscreen=${fullscreen}`, { timeout: 60_000 }, async () => {
     const cli = await startCli({ columns, rows, fullscreen, routerOptions: { agents }, args: ['E2E_PARENT: delegate to the fixture agents.'] })

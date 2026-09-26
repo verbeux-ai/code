@@ -80,7 +80,10 @@ approval flow.
 
 ## Agent Model Routing
 
-Ao usar `jev-router`, a CLI mostra o modelo físico escolhido em cada resposta
+Ao usar `jev-router`, a CLI mostra uma única vez o modelo físico escolhido por completion,
+no primeiro bloco visível de texto ou tool. Blocos de thinking ocultos não criam cabeçalhos,
+e uma nova completion pode mostrar outra escolha. A apresentação funciona também no
+histórico retomado e no transcript. O modelo aparece
 como `jev-router → glm-5.3-flash` (exemplo). O alias solicitado permanece no
 protocolo; a escolha vem do metadado da resposta do roteador.
 

@@ -322,6 +322,7 @@ test.each([false, true])('jev-router exposes the selected model in message metad
     const headers = { 'X-Verboo-Selected-Model': 'glm-5.3-flash' }
     if (stream) {
       return makeSseResponse(makeStreamChunks([
+        { choices: [{ delta: { reasoning_content: 'internal reasoning' }, finish_reason: null }] },
         { choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
         { choices: [{ delta: {}, finish_reason: 'stop' }] },
       ]), headers)
@@ -329,7 +330,7 @@ test.each([false, true])('jev-router exposes the selected model in message metad
     return new Response(JSON.stringify({
       id: 'chatcmpl-selected',
       model: 'jev-router',
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      choices: [{ message: { role: 'assistant', reasoning_content: 'internal reasoning', content: 'ok' }, finish_reason: 'stop' }],
     }), { headers: { ...headers, 'Content-Type': 'application/json' } })
   }) as unknown as FetchType
 

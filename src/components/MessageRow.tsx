@@ -12,6 +12,7 @@ import { MessageModel } from './MessageModel.js';
 import { shouldRenderStatically } from './Messages.js';
 import { MessageTimestamp } from './MessageTimestamp.js';
 import { OffscreenFreeze } from './OffscreenFreeze.js';
+import { hasVisibleModelContent } from '../utils/routingModelHeaders.js';
 export type Props = {
   message: RenderableMessage;
   /** Whether the previous message in renderableMessages is also a user message. */
@@ -22,6 +23,7 @@ export type Props = {
    * if the collapsed group spinner should stay active. Pass `false` otherwise.
    */
   hasContentAfter: boolean;
+  showRoutingModel?: boolean;
   tools: Tools;
   commands: Command[];
   verbose: boolean;
@@ -96,6 +98,7 @@ function MessageRowImpl(t0) {
     message: msg,
     isUserContinuation,
     hasContentAfter,
+    showRoutingModel = true,
     tools,
     commands,
     verbose,
@@ -216,16 +219,10 @@ function MessageRowImpl(t0) {
       }
     }
   }
-  let t5;
-  if ($[34] !== displayMsg || $[35] !== isTranscriptMode) {
-    t5 = displayMsg.type === "assistant" && (isTranscriptMode && displayMsg.message.content.some(_temp) && (displayMsg.timestamp || displayMsg.message.model) || displayMsg.message.content.length > 0 && typeof displayMsg.message.metadata?.selected_model === "string");
-    $[34] = displayMsg;
-    $[35] = isTranscriptMode;
-    $[36] = t5;
-  } else {
-    t5 = $[36];
-  }
-  const hasMetadata = t5;
+  const hasMetadata = hasVisibleModelContent(displayMsg) && (
+    isTranscriptMode && displayMsg.message.content.some(_temp) && (displayMsg.timestamp || displayMsg.message.model) ||
+    showRoutingModel && typeof displayMsg.message.metadata?.selected_model === 'string'
+  );
   const t6 = !hasMetadata;
   const t7 = hasMetadata ? undefined : columns;
   let t8;
@@ -265,8 +262,9 @@ function MessageRowImpl(t0) {
     return t9;
   }
   let t9;
-  if ($[57] !== displayMsg || $[58] !== isTranscriptMode) {
-    t9 = <Box flexDirection="row" justifyContent="flex-end" gap={1} marginTop={1}><MessageTimestamp message={displayMsg} isTranscriptMode={isTranscriptMode} /><MessageModel message={displayMsg} isTranscriptMode={isTranscriptMode} /></Box>;
+  if ($[57] !== displayMsg || $[58] !== isTranscriptMode || $[34] !== showRoutingModel) {
+    t9 = <Box flexDirection="row" justifyContent="flex-end" gap={1} marginTop={1}><MessageTimestamp message={displayMsg} isTranscriptMode={isTranscriptMode} /><MessageModel message={displayMsg} isTranscriptMode={isTranscriptMode} showRoutingModel={showRoutingModel} /></Box>;
+    $[34] = showRoutingModel;
     $[57] = displayMsg;
     $[58] = isTranscriptMode;
     $[59] = t9;
@@ -348,6 +346,7 @@ export function areMessageRowPropsEqual(prev: Props, next: Props): boolean {
 
   // Verbose toggle changes thinking block visibility
   if (prev.verbose !== next.verbose) return false;
+  if (prev.showRoutingModel !== next.showRoutingModel) return false;
 
   // collapsed_read_search is never static in prompt mode (matches shouldRenderStatically)
   if (prev.message.type === 'collapsed_read_search' && next.screen !== 'transcript') {

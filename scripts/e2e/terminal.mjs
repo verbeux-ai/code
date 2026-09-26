@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import { createFakeRouter } from './fake-router.mjs'
 
-export async function startCli({ columns = 80, rows = 24, fullscreen = false, usePty = true, args = [], routerOptions } = {}) {
+export async function startCli({ columns = 80, rows = 24, fullscreen = false, usePty = true, model = 'fixture-model', args = [], routerOptions } = {}) {
   const consumer = (await readFile(resolve('.artifacts/package/consumer-path.txt'), 'utf8')).trim()
   const root = resolve('.artifacts/pty')
   await mkdir(root, { recursive: true })
@@ -49,7 +49,7 @@ export async function startCli({ columns = 80, rows = 24, fullscreen = false, us
   terminal.unicode.activeVersion = '11'
   let child
   let stderr = ''
-  const cliArgs = ['--import', pathToFileURL(resolve('scripts/e2e/transport-preload.mjs')).href, join(consumer, 'node_modules/@verboo/code/bin/verboo'), '--model', 'fixture-model', '--dangerously-skip-permissions', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--debug-file', join(dir, 'debug.log'), ...args]
+  const cliArgs = ['--import', pathToFileURL(resolve('scripts/e2e/transport-preload.mjs')).href, join(consumer, 'node_modules/@verboo/code/bin/verboo'), '--model', model, '--dangerously-skip-permissions', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--debug-file', join(dir, 'debug.log'), ...args]
   try {
     if (usePty) {
       child = pty.spawn(process.execPath, cliArgs, { cwd: project, env, cols: columns, rows, name: 'xterm-256color' })

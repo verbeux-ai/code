@@ -1,19 +1,20 @@
 import { createServer } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 
-export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsage = false, partialUsage = false, stall = false, background = false, childFailure = false, childToolLoop = false } = {}) {
+export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsage = false, partialUsage = false, stall = false, background = false, childFailure = false, childToolLoop = false, routedCompletion = false } = {}) {
   const requests = []
   const unexpected = []
   let sequence = 0
   const activeAgents = new Set()
   const activeRequests = new Set()
+  const model = routedCompletion ? 'jev-router' : 'fixture-model'
   async function handleRequest(req, res) {
     const path = new URL(req.url, 'http://fixture').pathname
     const json = value => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)) }
     if (path === '/') return json({ ok: true })
     if (path === '/api/claude_code/settings') return json({ settings: {} })
     if (path === '/api/plugins/marketplace.json') return json({ name: 'fixture', owner: { name: 'Fixture' }, plugins: [] })
-    if (path.endsWith('/models')) return json({ data: [{ id: 'fixture-model', object: 'model' }], agent_model_roles: { explore: 'fixture-model', balanced: 'fixture-model', powerful: 'fixture-model' } })
+    if (path.endsWith('/models')) return json({ data: [{ id: model, object: 'model' }], agent_model_roles: { explore: model, balanced: model, powerful: model } })
     if (path === '/api/me') return json({ data: { id: '11111111-1111-4111-8111-111111111111', email: 'fixture@example.test', name: 'Fixture', confirmed: true } })
     if (path === '/api/me/subscriptions') return json({ data: [{ id: '11111111-1111-4111-8111-111111111111', groupId: '22222222-2222-4222-8222-222222222222', status: 'active', currentPeriodEnd: '2099-01-01T00:00:00Z' }] })
     if (path === '/api/me/terms/status') return json({ data: { configured: false, mustAccept: false, pendingReacceptance: false } })
@@ -31,10 +32,14 @@ export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsag
     }
     if (isChild) { activeAgents.add(id); res.once('close', () => activeAgents.delete(id)) }
     const hasResult = body.messages.some(message => message.role === 'tool')
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
-    const emit = (delta, finish_reason = null, usage) => res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', model: 'fixture-model', choices: [{ index: 0, delta, finish_reason }], ...(usage && { usage }) })}\n\n`)
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...(routedCompletion && { 'X-Verboo-Selected-Model': 'glm-5.3-flash' }) })
+    const emit = (delta, finish_reason = null, usage) => res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', model, choices: [{ index: 0, delta, finish_reason }], ...(usage && { usage }) })}\n\n`)
     emit({ role: 'assistant' })
-    if (isChild && childToolLoop) {
+    if (routedCompletion && body.tools?.length) {
+      emit({ reasoning_content: 'Synthetic hidden reasoning.' })
+      emit({ content: 'Oi! E2E_ROUTED_COMPLETE' })
+      emit({}, 'stop', { prompt_tokens: 10, completion_tokens: 4 })
+    } else if (isChild && childToolLoop) {
       emit({ tool_calls: [{ index: 0, id: `read-${sequence}`, type: 'function', function: { name: 'Read', arguments: JSON.stringify({ file_path: 'README.md' }) } }] })
       emit({}, 'tool_calls', { prompt_tokens: 120, completion_tokens: 24 })
     } else if (!isChild && !hasResult && body.tools?.length) {

@@ -875,17 +875,30 @@ export function resolveStoredCodexCredentials(options: {
     CodexCredentialBlob,
     'apiKey' | 'accessToken' | 'idToken' | 'accountId'
   >
+  /**
+   * Optional override for the secure-storage accountId, kept for callers
+   * that want to apply an env-side account-id on top of a stored token
+   * (e.g. legacy callers without an explicit per-account selection).
+   * When the caller passes an explicit account selection (stored
+   * credentials with their own accountId), the stored accountId MUST
+   * win — env hints are not authoritative for explicit selection.
+   */
   envAccountId?: string
+  /** When true, envAccountId is ignored and only the stored accountId is used. */
+  preferStoredAccountId?: boolean
 }): ResolvedCodexCredentials {
-  const { storedCredentials, envAccountId } = options
+  const { storedCredentials, envAccountId, preferStoredAccountId } = options
 
+  const storedAccountId =
+    storedCredentials.accountId ??
+    parseChatgptAccountId(storedCredentials.idToken) ??
+    parseChatgptAccountId(storedCredentials.accessToken)
   return {
     apiKey: storedCredentials.apiKey ?? storedCredentials.accessToken,
     accountId:
-      envAccountId ??
-      storedCredentials.accountId ??
-      parseChatgptAccountId(storedCredentials.idToken) ??
-      parseChatgptAccountId(storedCredentials.accessToken),
+      preferStoredAccountId
+        ? (storedAccountId ?? envAccountId ?? '')
+        : (envAccountId ?? storedAccountId ?? ''),
     source: 'secure-storage',
   }
 }
@@ -939,21 +952,39 @@ export function resolveRuntimeCodexCredentials(options?: {
   >
 }): ResolvedCodexCredentials {
   const env = options?.env ?? process.env
+  // Explicit account selection (caller-passed storedCredentials or a
+  // localAccountId that maps to a secure-storage record) ALWAYS wins
+  // over env credentials. The protocol-level `provider-accounts usage
+  // --account <id>` path passes localAccountId or storedCredentials and
+  // must not silently fall back to CODEX_HOME / CODEX_AUTH_JSON_PATH /
+  // CODEX_API_KEY / CODEX_ACCOUNT_ID / CHATGPT_ACCOUNT_ID — those envs
+  // remain authoritative only when no explicit selection was provided.
   const selectedStoredCredentials =
     options?.storedCredentials ??
     (options?.localAccountId
       ? readCodexCredentials(options.localAccountId)
       : undefined)
+  const hasExplicitSelection = Boolean(
+    options &&
+      (Object.prototype.hasOwnProperty.call(options, 'storedCredentials') ||
+        options.localAccountId),
+  )
+
+  if (hasExplicitSelection && selectedStoredCredentials?.accessToken) {
+    return resolveStoredCodexCredentials({
+      storedCredentials: selectedStoredCredentials,
+      envAccountId:
+        asTrimmedString(env.CODEX_ACCOUNT_ID) ??
+        asTrimmedString(env.CHATGPT_ACCOUNT_ID),
+      preferStoredAccountId: true,
+    })
+  }
+
   const explicitCredentials = resolveEnvOrAuthJsonCodexCredentials(env, {
     explicitAuthPathOnly: true,
   })
   const explicitAuthPathConfigured = Boolean(
     asTrimmedString(env.CODEX_AUTH_JSON_PATH) ?? asTrimmedString(env.CODEX_HOME),
-  )
-  const hasStoredCredentialsOption = Boolean(
-    options &&
-      (Object.prototype.hasOwnProperty.call(options, 'storedCredentials') ||
-        options.localAccountId),
   )
 
   if (
@@ -962,19 +993,6 @@ export function resolveRuntimeCodexCredentials(options?: {
     explicitCredentials.source === 'auth.json'
   ) {
     return explicitCredentials
-  }
-
-  if (selectedStoredCredentials?.accessToken) {
-    return resolveStoredCodexCredentials({
-      storedCredentials: selectedStoredCredentials,
-      envAccountId:
-        asTrimmedString(env.CODEX_ACCOUNT_ID) ??
-        asTrimmedString(env.CHATGPT_ACCOUNT_ID),
-    })
-  }
-
-  if (hasStoredCredentialsOption) {
-    return resolveEnvOrAuthJsonCodexCredentials(env)
   }
 
   return resolveCodexApiCredentials(env)

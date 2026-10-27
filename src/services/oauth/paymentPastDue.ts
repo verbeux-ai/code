@@ -12,7 +12,11 @@ export function getPaymentPastDueBillingUrl(serverMessage?: string): string {
   for (const match of serverMessage?.matchAll(/https:\/\/[^\s"'<>]+/g) ?? []) {
     try {
       const url = new URL(match[0].replace(/[.,;:!?)\]]+$/, ''))
-      if (url.origin === allowedOrigin) return url.href
+      if (url.origin === allowedOrigin) {
+        // The CLI copy is Portuguese, so the billing page opens in Portuguese.
+        url.pathname = url.pathname.replace(/^\/en(?=\/)/, '/pt')
+        return url.href
+      }
     } catch {
       // Not a URL; keep looking.
     }

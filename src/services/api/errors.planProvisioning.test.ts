@@ -138,7 +138,7 @@ test('router past-due error explains the failed renewal with the server billing 
   expect(message.isApiErrorMessage).toBe(true)
   expect(message.error).toBe('billing_error')
   expect(text).toBe(
-    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/pt/settings/billing para liberar o acesso.',
   )
   expect(text).not.toContain('/login')
   expect(classifyAPIError(new PaymentPastDueError())).toBe('payment_past_due')
@@ -170,7 +170,7 @@ test('a 402 past-due JSON body is mapped even though the SDK drops the category 
 
   expect(message.error).toBe('billing_error')
   expect(text).toContain('Pagamento pendente')
-  expect(text).toContain('https://code.verboo.ai/en/settings/billing')
+  expect(text).toContain('https://code.verboo.ai/pt/settings/billing')
   expect(text).not.toContain('{"error"')
   expect(text).not.toContain('/login')
 })
@@ -187,7 +187,7 @@ test('a past-due category marker maps to the same billing message', () => {
 
   expect(message.error).toBe('billing_error')
   expect(getFirstText(message)).toContain(
-    'Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing',
+    'Pague a fatura em aberto em https://code.verboo.ai/pt/settings/billing',
   )
 })
 

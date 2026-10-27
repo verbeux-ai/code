@@ -41,13 +41,13 @@ test('recognizes only the router 402 payment_past_due envelope', () => {
   expect(parsePaymentPastDue(402, { error: 'payment_past_due' })).toBeUndefined()
 })
 
-test('reuses a Verboo billing link from the server and falls back to the fixed one', () => {
+test('reuses a Verboo billing link from the server in Portuguese and falls back to the fixed one', () => {
   expect(getPaymentPastDueBillingUrl(SERVER_MESSAGE)).toBe(
-    'https://code.verboo.ai/en/settings/billing',
+    'https://code.verboo.ai/pt/settings/billing',
   )
   expect(
-    getPaymentPastDueBillingUrl('Pay at https://code.verboo.ai/en/settings/billing.'),
-  ).toBe('https://code.verboo.ai/en/settings/billing')
+    getPaymentPastDueBillingUrl('Pay at https://code.verboo.ai/en/settings/billing?x=1.'),
+  ).toBe('https://code.verboo.ai/pt/settings/billing?x=1')
   expect(getPaymentPastDueBillingUrl(undefined)).toBe(
     'https://code.verboo.ai/pt/settings/billing',
   )
@@ -68,10 +68,10 @@ test('the error is a terminal 402 billing error with the billing link', () => {
     name: 'PaymentPastDueError',
     status: 402,
     code: 'payment_past_due',
-    billingUrl: 'https://code.verboo.ai/en/settings/billing',
+    billingUrl: 'https://code.verboo.ai/pt/settings/billing',
   })
   expect(error.message).toBe(
-    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/pt/settings/billing para liberar o acesso.',
   )
 })
 
@@ -89,5 +89,5 @@ test('a router past-due rejection drops the cached CLI entitlement', async () =>
 
   expect(clears).toBe(1)
   expect(error).toBeInstanceOf(PaymentPastDueError)
-  expect(error.billingUrl).toBe('https://code.verboo.ai/en/settings/billing')
+  expect(error.billingUrl).toBe('https://code.verboo.ai/pt/settings/billing')
 })

@@ -93,7 +93,7 @@ test('a past-due vbk_ key gets the billing message, not invalid key or validatio
   expect(result).toEqual({
     kind: 'payment-past-due',
     message:
-      'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+      'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/pt/settings/billing para liberar o acesso.',
   })
   expect(JSON.stringify(result)).not.toContain(VERBOO_API_KEY_INVALID_MESSAGE)
 })

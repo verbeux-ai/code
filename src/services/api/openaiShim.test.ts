@@ -627,7 +627,7 @@ test('Verboo router past-due 402 shows the billing link and is not retried', asy
 
   expect(error).toBeInstanceOf(PaymentPastDueError)
   expect((error as PaymentPastDueError).message).toBe(
-    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/pt/settings/billing para liberar o acesso.',
   )
   expect(calls).toBe(1)
   expect(refreshCalls).toBe(0)

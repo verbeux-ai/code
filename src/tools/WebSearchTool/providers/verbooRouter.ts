@@ -2,6 +2,18 @@ import type { SearchInput, SearchProvider, ProviderOutput } from './types.js'
 import { applyDomainFilters, safeHostname } from './types.js'
 import { VERBOO_ROUTER_URL } from '../../../constants/oauth.js'
 import { getClaudeAIOAuthTokens } from '../../../utils/auth.js'
+import {
+  parsePaymentPastDue,
+  paymentPastDueError,
+} from '../../../services/oauth/paymentPastDue.js'
+
+/** A past-due subscription gets the billing link instead of the raw body. */
+export async function verbooRouterSearchError(res: Response): Promise<Error> {
+  const body = await res.text().catch(() => '')
+  const pastDue = parsePaymentPastDue(res.status, body)
+  if (pastDue) return paymentPastDueError(pastDue.serverMessage)
+  return new Error(`verboo-router search error ${res.status}: ${body}`)
+}
 
 export const verbooRouterProvider: SearchProvider = {
   name: 'verboo-router',
@@ -29,9 +41,7 @@ export const verbooRouterProvider: SearchProvider = {
       signal,
     })
 
-    if (!res.ok) {
-      throw new Error(`verboo-router search error ${res.status}: ${await res.text().catch(() => '')}`)
-    }
+    if (!res.ok) throw await verbooRouterSearchError(res)
 
     const data = (await res.json()) as { results?: unknown[] }
     const hits = (data.results ?? []).map((r: any) => ({

@@ -1,5 +1,10 @@
 import { FreeTokensRequiredError } from '../oauth/freeTokenActivation.js'
 import {
+  getPaymentPastDueMessage,
+  PAYMENT_PAST_DUE_CODE,
+  PaymentPastDueError,
+} from '../oauth/paymentPastDue.js'
+import {
   APIConnectionError,
   APIConnectionTimeoutError,
   APIError,
@@ -135,6 +140,8 @@ function mapOpenAICompatibilityFailureToAssistantMessage(options: {
       return createAssistantAPIErrorMessage({ content: 'O uso está pausado até a confirmação das solicitações anteriores. Consulte /usage e tente novamente mais tarde.', error: 'invalid_request' })
     case 'free_tokens_accounting_pending':
       return createAssistantAPIErrorMessage({ content: 'O limite de solicitações aguardando contabilização foi atingido. O uso gratuito está pausado até a confirmação do consumo; você pode ativar um plano pago.', error: 'invalid_request' })
+    case 'payment_past_due':
+      return createAssistantAPIErrorMessage({ content: getPaymentPastDueMessage(options.rawMessage), error: 'billing_error' })
     case 'terms_required':
       return createAssistantAPIErrorMessage({
         content: getIsNonInteractiveSession()
@@ -626,6 +633,7 @@ export function getAssistantMessageFromError(
   },
 ): AssistantMessage {
   if (error instanceof FreeTokensRequiredError) return createAssistantAPIErrorMessage({ content: error.message, error: 'invalid_request' })
+  if (error instanceof PaymentPastDueError) return createAssistantAPIErrorMessage({ content: error.message, error: 'billing_error' })
   // Check for SDK timeout errors
   if (
     error instanceof APIConnectionTimeoutError ||
@@ -1115,6 +1123,20 @@ export function getAssistantMessageFromError(
     }
   }
 
+  // The router shim throws PaymentPastDueError; this covers the same 402 body
+  // arriving as a plain APIError, whose message is only the stringified JSON.
+  if (
+    error instanceof APIError &&
+    error.status === 402 &&
+    isVerbooRouterError() &&
+    getAPIErrorCode(error) === PAYMENT_PAST_DUE_CODE
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: getPaymentPastDueMessage(getAPIErrorBodyField(error, 'message')),
+      error: 'billing_error',
+    })
+  }
+
   // Generic handler for other 401/403 authentication errors
   if (
     error instanceof APIError &&
@@ -1242,6 +1264,7 @@ function get3PModelFallbackSuggestion(model: string): string | undefined {
  */
 export function classifyAPIError(error: unknown): string {
   if (error instanceof FreeTokensRequiredError) return error.code
+  if (error instanceof PaymentPastDueError) return error.code
   // Aborted requests
   if (error instanceof Error && error.message === 'Request was aborted.') {
     return 'aborted'

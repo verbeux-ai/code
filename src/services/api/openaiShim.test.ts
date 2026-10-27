@@ -8,6 +8,7 @@ import { registerGateway } from '../../integrations/index.ts'
 import { VERBOO_ROUTER_URL } from '../../constants/oauth.js'
 import { TOOL_NAME_PREFIX_RECOVERY_ALLOWED } from '../../Tool.js'
 import { createOpenAIShimClient } from './openaiShim.ts'
+import { PaymentPastDueError } from '../oauth/paymentPastDue.js'
 import {
   getRouterRateLimitSnapshot,
   resetRouterRateLimitForTesting,
@@ -577,6 +578,84 @@ test('Verboo router refreshes a rejected access token and retries once', async (
 
   expect(refreshCalls).toBe(1)
   expect(authorizations).toEqual(['Bearer expired-token', 'Bearer fresh-token'])
+})
+
+const PAST_DUE_ROUTER_BODY = JSON.stringify({
+  error: {
+    message:
+      'Payment past due: the renewal of your Verboo Code subscription failed, so access is paused. Pay the open invoice at https://code.verboo.ai/en/settings/billing to restore access.',
+    type: 'billing_error',
+    code: 'payment_past_due',
+  },
+})
+
+test('Verboo router past-due 402 shows the billing link and is not retried', async () => {
+  let calls = 0
+  let refreshCalls = 0
+  globalThis.fetch = (async (_input, _init) => {
+    calls++
+    return new Response(PAST_DUE_ROUTER_BODY, {
+      status: 402,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }) as FetchType
+
+  const client = createOpenAIShimClient({
+    providerOverride: {
+      model: 'verboo-default',
+      baseURL: VERBOO_ROUTER_URL,
+      apiKey: 'verboo-oauth-token',
+      getApiKey: () => 'verboo-oauth-token',
+      refreshApiKey: async () => {
+        refreshCalls++
+        return null
+      },
+    },
+  }) as OpenAIShimClient
+
+  const error = await client.beta.messages
+    .create({
+      model: 'ignored-by-provider-override',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: true,
+    })
+    .then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+
+  expect(error).toBeInstanceOf(PaymentPastDueError)
+  expect((error as PaymentPastDueError).message).toBe(
+    'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+  )
+  expect(calls).toBe(1)
+  expect(refreshCalls).toBe(0)
+})
+
+test('a past-due 402 from a non-Verboo endpoint stays a provider APIError', async () => {
+  globalThis.fetch = (async (_input, _init) =>
+    new Response(PAST_DUE_ROUTER_BODY, {
+      status: 402,
+      headers: { 'Content-Type': 'application/json' },
+    })) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+
+  const error = await client.beta.messages
+    .create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: false,
+    })
+    .then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+
+  expect(error).not.toBeInstanceOf(PaymentPastDueError)
+  expect((error as { status?: number }).status).toBe(402)
 })
 
 test('Verboo router ignores inherited OpenAI custom authentication settings', async () => {

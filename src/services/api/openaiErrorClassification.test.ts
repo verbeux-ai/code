@@ -195,3 +195,14 @@ test('free token billing errors remain terminal and do not suggest credential ch
   expect(classifyOpenAIHttpFailure({ status: 402, body: '{"error":{"code":"free_tokens_exhausted"}}', url: 'https://router.verboo.ai/v1/chat/completions' })).toMatchObject({ category: 'free_tokens_required', retryable: false })
   expect(classifyOpenAIHttpFailure({ status: 503, body: '{"error":{"code":"free_tokens_accounting_pending"}}', url: 'https://router.verboo.ai/v1/chat/completions' })).toMatchObject({ category: 'free_tokens_accounting_pending', retryable: false })
 })
+
+const PAST_DUE_BODY = '{"error":{"message":"Payment past due: the renewal of your Verboo Code subscription failed, so access is paused. Pay the open invoice at https://code.verboo.ai/en/settings/billing to restore access.","type":"billing_error","code":"payment_past_due"}}'
+
+test('a past-due 402 is a terminal billing failure, not an authentication failure', () => {
+  const failure = classifyOpenAIHttpFailure({ status: 402, body: PAST_DUE_BODY, url: 'https://code.verboo.ai/router/v1/chat/completions' })
+  expect(failure).toMatchObject({ category: 'payment_past_due', retryable: false, status: 402, code: 'payment_past_due' })
+  expect(failure.hint).not.toContain('API key')
+  expect(classifyOpenAIHttpFailure({ status: 402, body: '{"error":{"code":"something_else"}}' }).category).toBe('unknown')
+  expect(classifyOpenAIHttpFailure({ status: 402, body: 'Payment Required' }).category).toBe('unknown')
+  expect(classifyOpenAIHttpFailure({ status: 403, body: PAST_DUE_BODY }).category).toBe('auth_invalid')
+})

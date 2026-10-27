@@ -6,6 +6,7 @@ import {
   fetchSubscriptions,
   type SubscriptionResponse,
 } from '../api/verbooSubscriptions.js'
+import { PAYMENT_PAST_DUE_BILLING_URL } from './paymentPastDue.js'
 import { hasCurrentSubscriptionAccess } from './subscriptionAccess.js'
 
 const RECHECK_AFTER_SECONDS = 300
@@ -149,7 +150,7 @@ export function getCLIEntitlementDeniedMessage(
     case 'free_tokens_accounting_pending':
       return 'O limite de solicitações aguardando contabilização foi atingido. Novas inferências gratuitas estão pausadas até a confirmação do consumo; a ativação paga continua disponível.'
     case 'past_due':
-      return 'Sua assinatura Verboo Code está com pagamento pendente. Regularize-a para continuar usando a CLI.'
+      return `Sua assinatura Verboo Code está com pagamento pendente. Regularize-a em ${PAYMENT_PAST_DUE_BILLING_URL} para continuar usando a CLI.`
     case 'expired':
       return 'Sua assinatura Verboo Code expirou. Assine novamente para continuar usando a CLI.'
     case 'subscription_required':

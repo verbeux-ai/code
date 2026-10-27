@@ -13,6 +13,9 @@ test('explains each denied CLI entitlement without referring to router models', 
   expect(getCLIEntitlementDeniedMessage('past_due')).toContain(
     'pagamento pendente',
   )
+  expect(getCLIEntitlementDeniedMessage('past_due')).toContain(
+    'https://code.verboo.ai/pt/settings/billing',
+  )
   expect(getCLIEntitlementDeniedMessage('expired')).toContain('expirou')
   expect(getCLIEntitlementDeniedMessage('subscription_required')).toContain(
     'assinatura Verboo Code ativa',
@@ -70,6 +73,40 @@ test('a 401 from the router marks the vbk_ key unauthorized', async () => {
     async () => ({ status: 401, data: { error: 'invalid or expired token' } }),
   )
   expect(result).toBe('unauthorized')
+})
+
+test('a past-due vbk_ key gets the billing message, not invalid key or validation failure', async () => {
+  const result = await validateVerbooApiKey(
+    'vbk_past_due_key_long_enough',
+    async () => ({
+      status: 402,
+      data: {
+        error: {
+          message:
+            'Payment past due: the renewal of your Verboo Code subscription failed, so access is paused. Pay the open invoice at https://code.verboo.ai/en/settings/billing to restore access.',
+          type: 'billing_error',
+          code: 'payment_past_due',
+        },
+      },
+    }),
+  )
+  expect(result).toEqual({
+    kind: 'payment-past-due',
+    message:
+      'Pagamento pendente: a renovação da sua assinatura Verboo Code falhou e o acesso está pausado. Pague a fatura em aberto em https://code.verboo.ai/en/settings/billing para liberar o acesso.',
+  })
+  expect(JSON.stringify(result)).not.toContain(VERBOO_API_KEY_INVALID_MESSAGE)
+})
+
+test('other 402 responses for a vbk_ key keep the generic validation failure', async () => {
+  const result = await validateVerbooApiKey(
+    'vbk_free_tokens_key_long_enough',
+    async () => ({
+      status: 402,
+      data: { error: { code: 'free_tokens_exhausted' } },
+    }),
+  )
+  expect(result).toBe('error')
 })
 
 test('headless failure with an invalid vbk_ is specific, not the OAuth login prompt', () => {

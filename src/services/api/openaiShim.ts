@@ -1,4 +1,5 @@
 import { requestFreeTokenActivation, FreeTokensRequiredError } from '../oauth/freeTokenActivation.js'
+import { parsePaymentPastDue, paymentPastDueError } from '../oauth/paymentPastDue.js'
 /**
  * OpenAI-compatible API shim for Claude Code.
  *
@@ -3775,6 +3776,21 @@ class OpenAIShimMessages {
         status: response.status,
         body: errorBody,
       })
+
+      // A failed renewal pauses access until the invoice is paid: show the
+      // billing link instead of the raw body, and never retry.
+      if (
+        failure.category === 'payment_past_due' &&
+        isVerbooRouterUrl(request.baseUrl)
+      ) {
+        logForDebugging(
+          `[OpenAIShim] request failed category=payment_past_due retryable=false status=${failure.status} method=POST url=${redactUrlForDiagnostics(requestUrl)} model=${request.resolvedModel}`,
+          { level: 'warn' },
+        )
+        throw await paymentPastDueError(
+          parsePaymentPastDue(failure.status, errorBody)?.serverMessage,
+        )
+      }
 
       if (
         isLocal &&

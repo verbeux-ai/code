@@ -26,6 +26,7 @@ import type { OAuthTokens } from './types.js'
 import { showNoModelsFlow } from './purchaseFlow.js'
 import { requestFreeTokenActivation, FreeTokensRequiredError } from './freeTokenActivation.js'
 import { showPastDueNotice } from './pastDueFlow.js'
+import { getPaymentPastDueMessage, parsePaymentPastDue } from './paymentPastDue.js'
 import { showVerbooTermsAcceptance } from '../../components/VerbooTermsAcceptance.js'
 import {
   clearCLIEntitlementCache,
@@ -60,6 +61,7 @@ export type VerbooSessionResult =
   | { kind: 'ok'; tokens: OAuthTokens; refreshed: boolean }
   | { kind: 'unauthenticated' }
   | { kind: 'invalid-api-key' }
+  | { kind: 'payment-past-due'; message: string }
   | { kind: 'degraded'; reason: string }
 
 export const VERBOO_API_KEY_PREFIX = 'vbk_'
@@ -91,15 +93,22 @@ export function readHeadlessVerbooApiKey(
   return undefined
 }
 
+export type VerbooApiKeyValidation =
+  | 'ok'
+  | 'unauthorized'
+  | 'error'
+  | { kind: 'payment-past-due'; message: string }
+
 /**
  * Router `/models` is the endpoint the desktop already uses with Bearer vbk_
  * (model_service.rs). `/api/me` is the OAuth account API — fake vbk_ and fake
  * JWT both return the same 401, so we do not claim it accepts API keys.
+ * A valid key whose subscription renewal failed gets 402 `payment_past_due`.
  */
 export async function validateVerbooApiKey(
   key: string,
   get: RouterGet = axios.get,
-): Promise<'ok' | 'unauthorized' | 'error'> {
+): Promise<VerbooApiKeyValidation> {
   const endpoint = `${VERBOO_ROUTER_URL}/models`
   try {
     const response = await get(endpoint, {
@@ -112,6 +121,13 @@ export async function validateVerbooApiKey(
     })
     if (response.status === 200) return 'ok'
     if (response.status === 401 || response.status === 403) return 'unauthorized'
+    const pastDue = parsePaymentPastDue(response.status, response.data)
+    if (pastDue) {
+      return {
+        kind: 'payment-past-due',
+        message: getPaymentPastDueMessage(pastDue.serverMessage),
+      }
+    }
     return 'error'
   } catch {
     return 'error'
@@ -137,6 +153,7 @@ async function sessionFromVerbooApiKey(): Promise<VerbooSessionResult> {
     return { kind: 'ok', tokens: apiKeySessionTokens(key), refreshed: false }
   }
   if (check === 'unauthorized') return { kind: 'invalid-api-key' }
+  if (typeof check === 'object') return check
   return { kind: 'degraded', reason: 'API key validation failed' }
 }
 
@@ -457,6 +474,9 @@ export async function preflightVerbooLogin(): Promise<VerbooLoginPreflightResult
   if (session.kind === 'invalid-api-key') {
     return { kind: 'degraded', reason: VERBOO_API_KEY_INVALID_MESSAGE }
   }
+  if (session.kind === 'payment-past-due') {
+    return { kind: 'degraded', reason: session.message }
+  }
   if (session.kind === 'degraded') {
     return { kind: 'degraded', reason: session.reason }
   }
@@ -546,6 +566,11 @@ export async function ensureVerbooAuthenticated(
 
   if (session.kind === 'invalid-api-key') {
     throw headlessSessionFailureError(session)
+  }
+
+  // A vbk_ key cannot open the OAuth-only payment flow; show the billing link.
+  if (session.kind === 'payment-past-due') {
+    throw new Error(session.message)
   }
 
   // unauthenticated → precisa abrir login. Só faz sentido em TTY.

@@ -17,6 +17,11 @@
  *   "ddg"       — use DuckDuckGo only (fail loudly)
  *   "native"    — use Anthropic native / Codex only (fail loudly)
  *
+ * In Verboo mode the auto chain is the Verboo router plus any backend whose
+ * API key the user set explicitly; the DuckDuckGo scraper is only used when
+ * WEB_SEARCH_PROVIDER=ddg, and "native" maps to "auto" (the router cannot run
+ * Anthropic's server-side web_search tool).
+ *
  * "auto" mode is the only mode that silently falls through to the next provider.
  * All other modes throw on failure — no silent backend switching.
  *
@@ -24,6 +29,7 @@
  *       It is only used when WEB_SEARCH_PROVIDER=custom is explicitly selected.
  */
 
+import { isVerbooMode } from '../../../constants/oauth.js'
 import type { SearchInput, SearchProvider } from './types.js'
 import type { ProviderOutput } from './types.js'
 
@@ -42,6 +48,11 @@ import { verbooRouterProvider } from './verbooRouter.js'
 
 export { type SearchInput, type SearchProvider, type ProviderOutput, type SearchHit } from './types.js'
 export { applyDomainFilters, safeHostname, hostMatchesDomain } from './types.js'
+export {
+  SearchUnavailableError,
+  findSearchUnavailableError,
+  type SearchUnavailableReason,
+} from './types.js'
 export { extractHits } from './custom.js'
 
 // ---------------------------------------------------------------------------
@@ -71,7 +82,23 @@ const ALL_PROVIDERS: SearchProvider[] = [
   duckduckgoProvider,
 ]
 
+/**
+ * Providers eligible for the auto chain, in priority order.
+ *
+ * Verboo mode: the router proxies a paid search backend server-side, so it is
+ * always first (it reports a missing session itself) and the free DuckDuckGo
+ * scraper is not a silent fallback — when Verboo search is unavailable the
+ * tool says so instead of returning scraped, often rate-limited results.
+ * Backends whose API key the user set explicitly still join the chain.
+ */
 export function getAvailableProviders(): SearchProvider[] {
+  if (isVerbooMode()) {
+    return ALL_PROVIDERS.filter(
+      p =>
+        p === verbooRouterProvider ||
+        (p !== duckduckgoProvider && p.isConfigured()),
+    )
+  }
   return ALL_PROVIDERS.filter(p => p.isConfigured())
 }
 
@@ -114,8 +141,11 @@ const VALID_MODES = new Set<string>(Object.keys(PROVIDER_BY_NAME).concat(['auto'
 
 export function getProviderMode(): ProviderMode {
   const raw = process.env.WEB_SEARCH_PROVIDER ?? 'auto'
-  if (VALID_MODES.has(raw)) return raw as ProviderMode
-  return 'auto'
+  if (!VALID_MODES.has(raw)) return 'auto'
+  // The Verboo router cannot execute Anthropic's server-side web_search tool,
+  // so "native" would silently report zero searches. Use the router instead.
+  if (raw === 'native' && isVerbooMode()) return 'auto'
+  return raw as ProviderMode
 }
 
 /**
@@ -125,7 +155,7 @@ export function getProviderMode(): ProviderMode {
  */
 export function getProviderChain(mode: ProviderMode): SearchProvider[] {
   if (mode === 'auto') {
-    return ALL_PROVIDERS.filter(p => p.isConfigured())
+    return getAvailableProviders()
   }
   if (mode === 'native') {
     return []
@@ -198,8 +228,12 @@ export async function runSearch(
   const lastErr = errors[errors.length - 1]
   if (!lastErr) throw new Error('All search providers failed with no error details.')
   if (errors.length === 1) throw lastErr
-  throw new Error(
+  const combined = new Error(
     `All ${errors.length} search providers failed:\n` +
     errors.map((e, i) => `  ${i + 1}. ${e.message}`).join('\n'),
   )
+  // Keep the originals so callers can still recognize typed failures
+  // (e.g. SearchUnavailableError from the Verboo router).
+  ;(combined as Error & { causes?: Error[] }).causes = errors
+  throw combined
 }

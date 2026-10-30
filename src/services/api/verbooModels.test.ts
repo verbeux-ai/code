@@ -5,6 +5,7 @@ import {
   clearVerbooModelsCache,
   fetchVerbooModels,
   getCachedVerbooAgentModelRoles,
+  getCachedVerbooWebSearchCapability,
   getVerbooAgentModelForRole,
   getVerbooModelReasoning,
   getVerbooReasoningEffort,
@@ -144,4 +145,33 @@ test('surfaces a model lookup failure instead of treating it as no models', asyn
   await expect(
     fetchVerbooModels('access-token', { force: true }),
   ).rejects.toThrow('Não foi possível consultar os modelos.')
+})
+
+test('reads the router web_search capability and only trusts a fresh cache', async () => {
+  axios.get = mock(async () => ({
+    data: {
+      data: [{ id: 'ultra/glm-5.3-flash-cheap' }],
+      agent_model_roles: { fast: 'ultra/glm-5.3-flash-cheap' },
+      capabilities: { web_search: false },
+    },
+  })) as typeof axios.get
+
+  await fetchVerbooModels('access-token', { force: true })
+
+  expect(getVerbooAgentModelForRole('fast')).toBe('ultra/glm-5.3-flash-cheap')
+  expect(getCachedVerbooWebSearchCapability()).toBe(false)
+  // Past the cache TTL the flag may have flipped server-side: unknown.
+  expect(
+    getCachedVerbooWebSearchCapability(Date.now() + 6 * 60 * 1000),
+  ).toBeUndefined()
+})
+
+test('treats a missing or malformed capabilities object as unknown', async () => {
+  for (const capabilities of [undefined, null, 'yes', { web_search: 'false' }]) {
+    axios.get = mock(async () => ({
+      data: { data: [{ id: 'ultra/glm' }], capabilities },
+    })) as typeof axios.get
+    await fetchVerbooModels('access-token', { force: true })
+    expect(getCachedVerbooWebSearchCapability()).toBeUndefined()
+  }
 })

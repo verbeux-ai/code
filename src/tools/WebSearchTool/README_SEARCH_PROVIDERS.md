@@ -57,7 +57,16 @@ export WEB_SEARCH_API=https://search.example.com/search
 | `ddg` | DuckDuckGo only — throws on failure |
 | `native` | Anthropic native / Codex only |
 
-**Auto mode priority:** firecrawl → tavily → exa → you → jina → brave → bing → mojeek → linkup → ddg
+**Auto mode priority:** verboo-router → firecrawl → tavily → exa → you → jina → brave → bing → mojeek → linkup → ddg
+
+### Verboo mode
+
+When signed in to Verboo, searches go through the router (`POST /router/v1/search`) first:
+
+- The auto chain is the Verboo router plus any backend whose API key you set explicitly. DuckDuckGo is only used with `WEB_SEARCH_PROVIDER=ddg`, and `native` behaves like `auto` (the router cannot run Anthropic's server-side `web_search` tool).
+- When Verboo search is disabled or its upstream provider fails (503 `search_disabled` / `search_provider_*`, timeouts, network errors), or the account has no plan with search (403 `search_access_required`), the tool returns a normal result telling the model that web search was unavailable, so it answers without it and says so. The transcript shows "Web search unavailable".
+- If `/models` advertises `capabilities.web_search: false`, the tool reports it as unavailable without calling `/search`.
+- The access token is refreshed before the request, a 401 is retried once after a forced refresh, and each search is capped at 30 seconds.
 
 > **Note:** The `custom` provider is excluded from the `auto` chain. It is only used when `WEB_SEARCH_PROVIDER=custom` is explicitly set. This prevents the generic outbound provider from silently becoming the default backend.
 

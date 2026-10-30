@@ -76,7 +76,22 @@ export function renderToolUseProgressMessage(progressMessages: ProgressMessage<W
       return null;
   }
 }
+const UNAVAILABLE_LABELS: Record<NonNullable<Output['unavailable']>['reason'], string> = {
+  temporarily_unavailable: 'Web search unavailable right now',
+  // VERBOO-BRAND
+  plan_required: 'Web search requires an active Verboo plan',
+  auth_required: 'Web search unavailable: run /login to sign in again'
+};
 export function renderToolResultMessage(output: Output): React.ReactNode {
+  if (output.unavailable) {
+    return <Box justifyContent="space-between" width="100%">
+        <MessageResponse height={1}>
+          <Text color="warning">
+            {UNAVAILABLE_LABELS[output.unavailable.reason] ?? 'Web search unavailable'}
+          </Text>
+        </MessageResponse>
+      </Box>;
+  }
   const {
     searchCount
   } = getSearchSummary(output.results ?? []);

@@ -1,6 +1,23 @@
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
-import { getProviderMode, getProviderChain, getAvailableProviders } from './index.js'
-import type { ProviderMode } from './index.js'
+import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+
+// Verboo Code always runs in Verboo mode; the generic suites below pin the
+// non-Verboo provider behavior, and the Verboo suite at the end flips it.
+const actualOauth = { ...(await import('../../../constants/oauth.js')) }
+let verbooMode = false
+mock.module('../../../constants/oauth.js', () => ({
+  ...actualOauth,
+  isVerbooMode: () => verbooMode,
+}))
+beforeEach(() => {
+  verbooMode = false
+})
+
+const { getProviderMode, getProviderChain, getAvailableProviders, runSearch } =
+  await import('./index.js')
+const { findSearchUnavailableError, SearchUnavailableError } = await import(
+  './types.js'
+)
+type ProviderMode = import('./index.js').ProviderMode
 
 // ---------------------------------------------------------------------------
 // getProviderMode
@@ -156,5 +173,95 @@ describe('getAvailableProviders', () => {
     const providers = getAvailableProviders()
     expect(providers.some(p => p.name === 'tavily')).toBe(false)
     if (saved !== undefined) process.env.TAVILY_API_KEY = saved
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Verboo mode
+// ---------------------------------------------------------------------------
+
+describe('Verboo mode provider selection', () => {
+  const savedEnv = {
+    WEB_SEARCH_PROVIDER: process.env.WEB_SEARCH_PROVIDER,
+    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+  }
+
+  beforeEach(() => {
+    verbooMode = true
+    delete process.env.WEB_SEARCH_PROVIDER
+    delete process.env.TAVILY_API_KEY
+  })
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  test('auto chain is only the Verboo router (no DuckDuckGo fallback)', () => {
+    expect(getProviderChain('auto').map(p => p.name)).toEqual(['verboo-router'])
+    expect(getAvailableProviders().map(p => p.name)).toEqual(['verboo-router'])
+  })
+
+  test('explicitly configured keys still join the auto chain after the router', () => {
+    process.env.TAVILY_API_KEY = 'test-key'
+    expect(getProviderChain('auto').map(p => p.name)).toEqual([
+      'verboo-router',
+      'tavily',
+    ])
+  })
+
+  test('explicit WEB_SEARCH_PROVIDER=ddg keeps working', () => {
+    process.env.WEB_SEARCH_PROVIDER = 'ddg'
+    expect(getProviderMode()).toBe('ddg')
+    expect(getProviderChain('ddg').map(p => p.name)).toEqual(['duckduckgo'])
+  })
+
+  test('"native" maps to the router (it cannot run Anthropic web_search)', () => {
+    process.env.WEB_SEARCH_PROVIDER = 'native'
+    expect(getProviderMode()).toBe('auto')
+  })
+})
+
+describe('runSearch error aggregation', () => {
+  test('keeps typed causes when several providers fail', async () => {
+    const savedProvider = process.env.WEB_SEARCH_PROVIDER
+    const savedTavily = process.env.TAVILY_API_KEY
+    const originalFetch = globalThis.fetch
+    verbooMode = true
+    delete process.env.WEB_SEARCH_PROVIDER
+    process.env.TAVILY_API_KEY = 'test-key'
+    const { verbooRouterProvider } = await import('./verbooRouter.js')
+    const { tavilyProvider } = await import('./tavily.js')
+    const routerSearch = verbooRouterProvider.search
+    const tavilySearch = tavilyProvider.search
+    const unavailable = new SearchUnavailableError(
+      'temporarily_unavailable',
+      'Verboo web search is temporarily unavailable.',
+      { code: 'search_disabled' },
+    )
+    ;(verbooRouterProvider as { search: typeof routerSearch }).search = async () => {
+      throw unavailable
+    }
+    ;(tavilyProvider as { search: typeof tavilySearch }).search = async () => {
+      throw new Error('tavily returned 500')
+    }
+    const consoleError = console.error
+    console.error = () => {}
+    try {
+      const error = await runSearch({ query: 'test' }).catch(e => e)
+      expect((error as Error).message).toContain('All 2 search providers failed')
+      expect(findSearchUnavailableError(error)).toBe(unavailable)
+    } finally {
+      console.error = consoleError
+      ;(verbooRouterProvider as { search: typeof routerSearch }).search = routerSearch
+      ;(tavilyProvider as { search: typeof tavilySearch }).search = tavilySearch
+      globalThis.fetch = originalFetch
+      if (savedProvider === undefined) delete process.env.WEB_SEARCH_PROVIDER
+      else process.env.WEB_SEARCH_PROVIDER = savedProvider
+      if (savedTavily === undefined) delete process.env.TAVILY_API_KEY
+      else process.env.TAVILY_API_KEY = savedTavily
+    }
   })
 })

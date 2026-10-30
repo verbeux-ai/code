@@ -154,7 +154,7 @@ import {
 } from 'src/utils/permissions/PermissionPromptToolResultSchema.js'
 import { createAbortController } from 'src/utils/abortController.js'
 import { createCombinedAbortSignal } from 'src/utils/combinedAbortSignal.js'
-import { generateSessionTitle } from 'src/utils/sessionTitle.js'
+import { generateSessionTitleWithSource } from 'src/utils/sessionTitle.js'
 import { buildSideQuestionFallbackParams } from 'src/utils/queryContext.js'
 import { runSideQuestion } from 'src/utils/sideQuestion.js'
 import {
@@ -3813,8 +3813,14 @@ function runHeadlessStreaming(
           ).signal
           void (async () => {
             try {
-              const title = await generateSessionTitle(description, titleSignal)
-              if (title && persist) {
+              const generated = await generateSessionTitleWithSource(
+                description,
+                titleSignal,
+              )
+              const title = generated?.title ?? null
+              // A fallback title is just the cleaned description; only
+              // persist titles the model actually produced.
+              if (title && persist && generated?.source === 'model') {
                 try {
                   saveAiGeneratedTitle(getSessionId() as UUID, title)
                 } catch (e) {

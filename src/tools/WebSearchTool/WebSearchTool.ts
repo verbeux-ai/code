@@ -35,7 +35,9 @@ import {
   runSearch,
   getProviderMode,
   getAvailableProviders,
+  findSearchUnavailableError,
   type ProviderOutput,
+  type SearchUnavailableError,
 } from './providers/index.js'
 
 const inputSchema = lazySchema(() =>
@@ -78,6 +80,17 @@ const outputSchema = lazySchema(() =>
     durationSeconds: z
       .number()
       .describe('Time taken to complete the search operation'),
+    unavailable: z
+      .object({
+        reason: z.enum([
+          'temporarily_unavailable',
+          'plan_required',
+          'auth_required',
+        ]),
+        message: z.string(),
+      })
+      .optional()
+      .describe('Set when no search could run (search backend unavailable)'),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>
@@ -92,6 +105,8 @@ import type { WebSearchProgress } from '../../types/tools.js'
 // ---------------------------------------------------------------------------
 // Shared formatting: ProviderOutput → Output
 // ---------------------------------------------------------------------------
+
+const NO_RESULTS_PLACEHOLDER = 'No results found.'
 
 function formatProviderOutput(po: ProviderOutput, query: string): Output {
   const results: (SearchResult | string)[] = []
@@ -109,7 +124,7 @@ function formatProviderOutput(po: ProviderOutput, query: string): Output {
     })
   }
 
-  if (results.length === 0) results.push('No results found.')
+  if (results.length === 0) results.push(NO_RESULTS_PLACEHOLDER)
 
   return {
     query,
@@ -141,6 +156,98 @@ function formatProviderOutputWithEmptyHint(
   return {
     ...base,
     results: [buildEmptyAdapterResultHint(provider, po.providerName)],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search unavailable (Verboo router disabled / failing / no plan)
+// ---------------------------------------------------------------------------
+
+function makeUnavailableOutput(
+  query: string,
+  error: SearchUnavailableError,
+  durationSeconds: number,
+): Output {
+  return {
+    query,
+    results: [],
+    durationSeconds,
+    unavailable: { reason: error.reason, message: error.message },
+  }
+}
+
+/**
+ * Model-facing text for a search that could not run. It is a normal (non-
+ * error) result on purpose: the model should answer from what it knows, say
+ * that web search was unavailable, and never cite sources it did not get.
+ */
+function formatUnavailableResult(
+  query: string,
+  unavailable: NonNullable<Output['unavailable']>,
+): string {
+  const lines = [`Web search for query "${query}" did not run.`, '']
+  if (unavailable.reason === 'plan_required') {
+    // VERBOO-BRAND
+    lines.push(
+      'Web search requires an active Verboo plan, and this account does not have one.',
+    )
+  } else if (unavailable.reason === 'auth_required') {
+    // VERBOO-BRAND
+    lines.push(
+      'The Verboo session was not accepted for web search. The user can run /login to sign in again.',
+    )
+  } else {
+    lines.push('Web search is temporarily unavailable.')
+  }
+  lines.push(
+    '',
+    'No search results were retrieved, so there are no sources to cite. Do not invent sources or URLs.',
+    'Answer from your existing knowledge if you can, and tell the user that web search was unavailable, so the answer may not reflect the latest information. Do not retry the search in this turn.',
+  )
+  return lines.join('\n')
+}
+
+function hasNoSearchContent(results: Output['results']): boolean {
+  return (results ?? []).every(
+    result =>
+      result == null ||
+      result === NO_RESULTS_PLACEHOLDER ||
+      (typeof result !== 'string' && !(result.content?.length > 0)),
+  )
+}
+
+/**
+ * Verboo mode: the router's /search is the only backend unless the user
+ * explicitly configured another one. There is no native fallback — the router
+ * cannot run Anthropic's server-side web_search tool, so falling back would
+ * report zero searches while the prompt still demands cited sources.
+ */
+async function runVerbooModeSearch(
+  input: Input,
+  signal: AbortSignal,
+): Promise<Output> {
+  const startTime = performance.now()
+  try {
+    const providerOutput = await runSearch(
+      {
+        query: input.query,
+        allowed_domains: input.allowed_domains,
+        blocked_domains: input.blocked_domains,
+      },
+      signal,
+    )
+    return formatProviderOutput(providerOutput, input.query)
+  } catch (err) {
+    if (signal.aborted) throw err
+    const unavailable = findSearchUnavailableError(err)
+    if (unavailable) {
+      return makeUnavailableOutput(
+        input.query,
+        unavailable,
+        (performance.now() - startTime) / 1000,
+      )
+    }
+    throw err
   }
 }
 
@@ -356,6 +463,8 @@ export const __test = {
   makeOutputFromCodexWebSearchResponse,
   buildEmptyAdapterResultHint,
   formatProviderOutputWithEmptyHint,
+  formatUnavailableResult,
+  runVerbooModeSearch,
 }
 
 async function runCodexWebSearch(
@@ -530,8 +639,8 @@ function shouldUseAdapterProvider(): boolean {
   const provider = getAPIProvider()
   if (provider === 'firstParty' || provider === 'vertex' || provider === 'foundry') {
     // Em modo Verboo, firstParty roteia para vLLM via router — sem suporte a web_search nativo.
-    // Usa adapter providers (verbooRouterProvider) se disponíveis.
-    if (isVerbooMode()) return getAvailableProviders().length > 0
+    // A busca sempre passa pelos adapters (verbooRouterProvider primeiro).
+    if (isVerbooMode()) return true
     return false
   }
   // No native path available — fall back to adapter
@@ -546,6 +655,9 @@ function shouldUseAdapterProvider(): boolean {
  * path silently produces "Did 0 searches".
  */
 function hasNativeSearchFallback(): boolean {
+  // The Verboo router speaks the Anthropic wire format but cannot execute
+  // the server-side web_search tool.
+  if (isVerbooMode()) return false
   if (isCodexResponsesWebSearchEnabled()) return true
   const provider = getAPIProvider()
   return provider === 'firstParty' || provider === 'vertex' || provider === 'foundry'
@@ -572,6 +684,10 @@ export const WebSearchTool = buildTool({
     return summary ? `Searching for ${summary}` : 'Searching the web'
   },
   isEnabled() {
+    // Verboo mode always offers the tool: when search is unavailable the
+    // call reports that instead of the tool silently disappearing.
+    if (isVerbooMode()) return true
+
     const mode = getProviderMode()
 
     // Specific provider mode: enabled if any adapter is configured
@@ -676,6 +792,12 @@ export const WebSearchTool = buildTool({
     return { result: true }
   },
   async call(input, context, _canUseTool, _parentMessage, onProgress) {
+    if (isVerbooMode()) {
+      return {
+        data: await runVerbooModeSearch(input, context.abortController.signal),
+      }
+    }
+
     // --- Adapter-based providers (custom, firecrawl, ddg) ---
     // runSearch handles fallback semantics based on WEB_SEARCH_PROVIDER mode:
     //   - "auto": tries each provider, falls through on failure
@@ -889,6 +1011,24 @@ export const WebSearchTool = buildTool({
   },
   mapToolResultToToolResultBlockParam(output, toolUseID) {
     const { query, results } = output
+
+    if (output.unavailable) {
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content: formatUnavailableResult(query, output.unavailable),
+      }
+    }
+
+    if (hasNoSearchContent(results)) {
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content:
+          `Web search results for query: "${query}"\n\n${NO_RESULTS_PLACEHOLDER}\n\n` +
+          'There are no sources to cite for this query. Do not invent sources or URLs.',
+      }
+    }
 
     let formattedOutput = `Web search results for query: "${query}"\n\n`
 

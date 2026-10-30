@@ -37,10 +37,19 @@ export type VerbooAgentModelRoles = Partial<
   Record<VerbooAgentModelRole, string>
 >
 
+/**
+ * Account-level router capabilities advertised next to the model catalog.
+ * Missing keys mean "unknown" — callers must keep their default behavior.
+ */
+export type VerbooRouterCapabilities = {
+  webSearch?: boolean
+}
+
 const modelsResponseSchema = z
   .object({
     data: z.array(z.record(z.unknown())),
     agent_model_roles: z.record(z.unknown()).optional(),
+    capabilities: z.unknown().optional(),
   })
   .passthrough()
 
@@ -50,6 +59,7 @@ let cache: {
   fetchedAt: number
   models: VerbooModel[]
   agentModelRoles: VerbooAgentModelRoles
+  capabilities: VerbooRouterCapabilities
 } | null = null
 let inflight: Promise<VerbooModel[]> | null = null
 
@@ -161,6 +171,16 @@ function normalizeAgentModelRoles(
   return roles
 }
 
+function normalizeCapabilities(raw: unknown): VerbooRouterCapabilities {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const source = raw as Record<string, unknown>
+  const capabilities: VerbooRouterCapabilities = {}
+  if (typeof source.web_search === 'boolean') {
+    capabilities.webSearch = source.web_search
+  }
+  return capabilities
+}
+
 export function clearVerbooModelsCache(): void {
   cache = null
   inflight = null
@@ -203,7 +223,8 @@ export async function fetchVerbooModels(
         parsed.data.agent_model_roles,
         models,
       )
-      cache = { fetchedAt: Date.now(), models, agentModelRoles }
+      const capabilities = normalizeCapabilities(parsed.data.capabilities)
+      cache = { fetchedAt: Date.now(), models, agentModelRoles, capabilities }
       logForDebugging(
         `[VerbooModels] Fetched ${models.length} models from ${endpoint}`,
       )
@@ -244,6 +265,20 @@ export function getVerbooAgentModelForRole(
   role: VerbooAgentModelRole,
 ): string | undefined {
   return cache?.agentModelRoles[role]
+}
+
+/**
+ * Returns the router's advertised web-search capability from the cached
+ * `/models` response, or undefined when unknown. Only a fresh cache entry
+ * counts: the capability can flip server-side mid-session, and a stale
+ * `false` must not keep search disabled after the router re-enables it.
+ * Never triggers a network call.
+ */
+export function getCachedVerbooWebSearchCapability(
+  now: number = Date.now(),
+): boolean | undefined {
+  if (!cache || now - cache.fetchedAt >= CACHE_TTL_MS) return undefined
+  return cache.capabilities.webSearch
 }
 
 export function getVerbooModelMeta(modelId: string): VerbooModel | undefined {

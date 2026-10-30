@@ -40,6 +40,56 @@ export interface SearchProvider {
   search(input: SearchInput, signal?: AbortSignal): Promise<ProviderOutput>
 }
 
+/**
+ * Why a search backend could not run. These are expected operational states
+ * (not bugs), so the tool reports them to the model as a normal result instead
+ * of an error:
+ *   - temporarily_unavailable: search is disabled or the upstream provider is
+ *     failing (quota, rate limit, timeout, outage).
+ *   - plan_required: the account has no plan that includes web search.
+ *   - auth_required: the session token was rejected even after a refresh.
+ */
+export type SearchUnavailableReason =
+  | 'temporarily_unavailable'
+  | 'plan_required'
+  | 'auth_required'
+
+export class SearchUnavailableError extends Error {
+  readonly reason: SearchUnavailableReason
+  /** Machine-readable code from the backend, when it sent one. */
+  readonly code?: string
+  readonly status?: number
+
+  constructor(
+    reason: SearchUnavailableReason,
+    message: string,
+    opts: { code?: string; status?: number } = {},
+  ) {
+    super(message)
+    this.name = 'SearchUnavailableError'
+    this.reason = reason
+    this.code = opts.code
+    this.status = opts.status
+  }
+}
+
+/**
+ * Finds a SearchUnavailableError in an error thrown by runSearch(). Auto mode
+ * wraps multiple provider failures in one Error whose `causes` keeps the
+ * originals.
+ */
+export function findSearchUnavailableError(
+  err: unknown,
+): SearchUnavailableError | undefined {
+  if (err instanceof SearchUnavailableError) return err
+  const causes = (err as { causes?: unknown })?.causes
+  if (!Array.isArray(causes)) return undefined
+  return causes.find(
+    (cause): cause is SearchUnavailableError =>
+      cause instanceof SearchUnavailableError,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Flexible response parsing helpers
 // ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import { isVerbooMode } from '../../../constants/oauth.js'
 import type { SearchInput, SearchProvider } from './types.js'
 import { applyDomainFilters, type ProviderOutput } from './types.js'
 
@@ -12,6 +13,18 @@ const DDG_ANOMALY_HINT =
   'JINA_API_KEY, BING_API_KEY, MOJEEK_API_KEY, LINKUP_API_KEY — ' +
   // VERBOO-BRAND
   'or use a Verboo / Vertex / Foundry provider for native web search.'
+
+// In Verboo mode DuckDuckGo only runs when the user forced
+// WEB_SEARCH_PROVIDER=ddg; their plan already includes web search through the
+// router, so point them back to it instead of asking for third-party keys.
+// VERBOO-BRAND
+const DDG_ANOMALY_HINT_VERBOO =
+  'DuckDuckGo scraping is rate-limited from this network. ' +
+  'Unset WEB_SEARCH_PROVIDER (or set it to "auto") to use Verboo web search instead.'
+
+export function getDdgAnomalyHint(): string {
+  return isVerbooMode() ? DDG_ANOMALY_HINT_VERBOO : DDG_ANOMALY_HINT
+}
 
 const MAX_RETRIES = 3
 const INITIAL_BACKOFF_MS = 1000
@@ -84,7 +97,7 @@ export const duckduckgoProvider: SearchProvider = {
         lastErr = err
         const msg = err instanceof Error ? err.message : String(err)
         if (isAnomalyError(msg)) {
-          throw new Error(DDG_ANOMALY_HINT)
+          throw new Error(getDdgAnomalyHint())
         }
         if (!isRetryableDDGError(err) || attempt === MAX_RETRIES - 1) {
           throw err

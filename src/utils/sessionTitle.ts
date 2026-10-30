@@ -57,7 +57,7 @@ export function extractConversationText(messages: Message[]): string {
     : text
 }
 
-const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
+const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns. Write the title in the same language as the user's message.
 
 Return JSON with a single "title" field.
 
@@ -74,7 +74,7 @@ Bad (wrong case): {"title": "Fix Login Button On Mobile"}`
 // For the Verboo router: it rejects `output_format` (structured output) for
 // most plans with 403 structured_output_not_enabled, so ask for the bare title
 // and parse whatever comes back.
-const SESSION_TITLE_PROMPT_TEXT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
+const SESSION_TITLE_PROMPT_TEXT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns. Write the title in the same language as the user's message.
 
 Reply with the title text only: no quotes, no label, no trailing punctuation, no explanation.
 

@@ -4,10 +4,11 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../../services/analytics/index.js'
-import { queryHaiku } from '../../services/api/claude.js'
+import { queryFastModel } from '../../services/api/verbooFastModel.js'
 import { AbortError } from '../../utils/errors.js'
 import { getWebFetchUserAgent } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
+import { extractTextContent } from '../../utils/messages.js'
 import { getAPIProvider } from '../../utils/model/providers.js'
 import {
   isBinaryContentType,
@@ -598,12 +599,23 @@ function raceWithTimeout<T>(
   })
 }
 
-function buildFallbackMarkdownSummary(truncatedContent: string): string {
+// The raw fallback lands in the main conversation's context. Keep it well
+// below MAX_MARKDOWN_LENGTH: one failed summary must not eat ~100k chars of
+// context (and the user's tokens) on every fetch.
+export const MAX_FALLBACK_CONTENT_LENGTH = 20_000
+
+function buildFallbackMarkdownSummary(markdownContent: string): string {
+  const truncated = markdownContent.length > MAX_FALLBACK_CONTENT_LENGTH
+  const header = truncated
+    ? `[Secondary-model summarization unavailable — returning the first ${MAX_FALLBACK_CONTENT_LENGTH.toLocaleString('en-US')} of ${markdownContent.length.toLocaleString('en-US')} characters of raw fetched content; the rest of the page was omitted.`
+    : '[Secondary-model summarization unavailable — returning raw fetched content.'
   return [
-    '[Secondary-model summarization unavailable — returning raw fetched content.',
-    'This typically means the configured small-fast model took too long or errored.]',
+    header,
+    'This typically means the configured small-fast model took too long or errored. The prompt was not applied; extract what you need from the content below.]',
     '',
-    truncatedContent,
+    truncated
+      ? markdownContent.slice(0, MAX_FALLBACK_CONTENT_LENGTH)
+      : markdownContent,
   ].join('\n')
 }
 
@@ -629,7 +641,7 @@ export async function applyPromptToMarkdown(
   let assistantMessage
   try {
     assistantMessage = await raceWithTimeout(
-      queryHaiku({
+      queryFastModel({
         systemPrompt: asSystemPrompt([]),
         userPrompt: modelPrompt,
         signal,
@@ -653,7 +665,7 @@ export async function applyPromptToMarkdown(
       throw err
     }
     logError(err)
-    return buildFallbackMarkdownSummary(truncatedContent)
+    return buildFallbackMarkdownSummary(markdownContent)
   }
 
   // We need to bubble this up, so that the tool call throws, causing us to return
@@ -662,12 +674,14 @@ export async function applyPromptToMarkdown(
     throw new AbortError()
   }
 
-  const { content } = assistantMessage.message
-  if (content.length > 0) {
-    const contentBlock = content[0]
-    if ('text' in contentBlock!) {
-      return contentBlock.text
-    }
+  // Read every text block: reasoning models answer with a thinking block
+  // first, so the summary is not necessarily content[0].
+  const summary = extractTextContent(
+    assistantMessage.message.content,
+    '\n',
+  ).trim()
+  if (summary) {
+    return summary
   }
-  return buildFallbackMarkdownSummary(truncatedContent)
+  return buildFallbackMarkdownSummary(markdownContent)
 }

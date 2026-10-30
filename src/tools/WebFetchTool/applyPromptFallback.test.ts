@@ -85,3 +85,41 @@ test('propagates AbortError from the caller signal', async () => {
 
   await expect(runApply('content', ctrl.signal)).rejects.toThrow()
 })
+
+test('reads the summary after a leading thinking block (reasoning models)', async () => {
+  haikuMock.mockImplementation(async () => ({
+    message: {
+      content: [
+        { type: 'thinking', thinking: 'Let me read the page first.' },
+        { type: 'text', text: 'The page documents the v2 API.' },
+      ],
+    },
+  }))
+
+  const output = await runApply('x'.repeat(50_000))
+  expect(output).toBe('The page documents the v2 API.')
+})
+
+test('caps the raw fallback well below the 100k fetch limit and says so', async () => {
+  haikuMock.mockImplementation(async () => {
+    throw new Error('router unavailable')
+  })
+  const { MAX_FALLBACK_CONTENT_LENGTH } = await import('./utils.js')
+  const page = 'a'.repeat(90_000)
+
+  const output = await runApply(page)
+  expect(MAX_FALLBACK_CONTENT_LENGTH).toBeLessThanOrEqual(20_000)
+  expect(output.length).toBeLessThan(MAX_FALLBACK_CONTENT_LENGTH + 1_000)
+  expect(output).toContain('the rest of the page was omitted')
+  expect(output).toContain('90,000')
+})
+
+test('falls back when the model only returned thinking', async () => {
+  haikuMock.mockImplementation(async () => ({
+    message: { content: [{ type: 'thinking', thinking: 'Hmm.' }] },
+  }))
+
+  const output = await runApply('short page')
+  expect(output).toContain('[Secondary-model summarization unavailable')
+  expect(output).toContain('short page')
+})

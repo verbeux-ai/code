@@ -10,6 +10,7 @@ import { shouldOfferTerminalSetup } from '../../commands/terminalSetup/terminalS
 import { getDesktopUpsellConfig } from '../../components/DesktopUpsell/DesktopUpsellStartup.js'
 import { color } from '../../components/design-system/color.js'
 import { shouldShowOverageCreditUpsell } from '../../components/LogoV2/OverageCreditUpsell.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import { getShortcutDisplay } from '../../keybindings/shortcutFormat.js'
 import { isKairosCronEnabled } from '../../tools/ScheduleCronTool/prompt.js'
 import { is1PApiCustomer } from '../../utils/auth.js'
@@ -326,7 +327,9 @@ const externalTips: Tip[] = [
     content: async () =>
       'Run /install-github-app to enable GitHub issue and PR tagging from Verboo Code',
     cooldownSessions: 10,
-    isRelevant: async () => !getGlobalConfig().githubActionSetupCount,
+    // The command is hidden in Verboo mode (it installs Anthropic's app).
+    isRelevant: async () =>
+      !isVerbooMode() && !getGlobalConfig().githubActionSetupCount,
   },
   {
     id: 'install-slack-app',

@@ -1,8 +1,11 @@
 import { feature } from 'bun:bundle'
 import { isReplBridgeActive } from '../../bootstrap/state.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
+import { isVerbooMode } from '../../constants/oauth.js'
 import type { Tool } from '../../Tool.js'
 import { AGENT_TOOL_NAME } from '../AgentTool/constants.js'
+import { WEB_FETCH_TOOL_NAME } from '../WebFetchTool/prompt.js'
+import { WEB_SEARCH_TOOL_NAME } from '../WebSearchTool/prompt.js'
 
 // Dead code elimination: Brief tool name only needed when KAIROS or KAIROS_BRIEF is on
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -69,6 +72,17 @@ export function isDeferredTool(tool: Tool): boolean {
 
   // Never defer ToolSearch itself — the model needs it to load everything else
   if (tool.name === TOOL_SEARCH_TOOL_NAME) return false
+
+  // Verboo mode: models answer through the OpenAI-compatible shim, which
+  // drops ToolSearch's tool_reference blocks — loading WebSearch/WebFetch
+  // that way hands the model an empty result. Keep both in the initial
+  // prompt with full schemas.
+  if (
+    isVerbooMode() &&
+    (tool.name === WEB_SEARCH_TOOL_NAME || tool.name === WEB_FETCH_TOOL_NAME)
+  ) {
+    return false
+  }
 
   // Fork-first experiment: Agent must be available turn 1, not behind ToolSearch.
   // Lazy require: static import of forkSubagent → coordinatorMode creates a cycle

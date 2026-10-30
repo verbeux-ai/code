@@ -3023,6 +3023,21 @@ export function saveAiGeneratedTitle(sessionId: UUID, aiTitle: string): void {
 }
 
 /**
+ * Persist an AI-generated title for a session of this process (the
+ * interactive REPL). Same `ai-title` entry as saveAiGeneratedTitle, but
+ * written through the project writer, so it honors --no-session-persistence /
+ * cleanupPeriodDays=0 and is buffered until the session file materializes.
+ * A user title (`customTitle`) still wins on read.
+ */
+export async function recordAiGeneratedTitle(
+  aiTitle: string,
+  sessionId: UUID = getSessionId() as UUID,
+): Promise<void> {
+  if (!sessionId || !aiTitle.trim()) return
+  await getProject().appendEntry({ type: 'ai-title', aiTitle, sessionId }, sessionId)
+}
+
+/**
  * Append a periodic task summary for `claude ps`. Unlike ai-title this is
  * not re-appended by reAppendSessionMetadata — it's a rolling snapshot of
  * what the agent is doing *now*, so staleness is fine; ps reads the most

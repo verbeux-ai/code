@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto'
 import type { HookEvent } from 'src/entrypoints/agentSdkTypes.js'
 import { queryModelWithoutStreaming } from '../../services/api/claude.js'
+import {
+  getSideQueryModel,
+  sideQuerySupportsStructuredOutput,
+} from '../../services/api/verbooFastModel.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from '../../types/message.js'
 import { createAttachmentMessage } from '../attachments.js'
@@ -8,11 +12,10 @@ import { createCombinedAbortSignal } from '../combinedAbortSignal.js'
 import { logForDebugging } from '../debug.js'
 import { errorMessage } from '../errors.js'
 import type { HookResult } from '../hooks.js'
-import { safeParseJSON } from '../json.js'
 import { createUserMessage, extractTextContent } from '../messages.js'
-import { getSmallFastModel } from '../model/model.js'
 import type { PromptHook } from '../settings/types.js'
 import { asSystemPrompt } from '../systemPromptType.js'
+import { parseModelJsonObject } from '../modelJson.js'
 import { addArgumentsToPrompt, hookResponseSchema } from './hookHelpers.js'
 
 /**
@@ -58,6 +61,12 @@ export async function execPromptHook(
     const { signal: combinedSignal, cleanup: cleanupSignal } =
       createCombinedAbortSignal(signal, { timeoutMs: hookTimeoutMs })
 
+    // In Verboo mode the default model is the router's "fast" role, and
+    // structured output is only requested from models that accept it; the
+    // system prompt already asks for the JSON shape.
+    const model = hook.model ?? getSideQueryModel()
+    const structured = sideQuerySupportsStructuredOutput(model)
+
     try {
       const response = await queryModelWithoutStreaming({
         messages: messagesToQuery,
@@ -76,7 +85,7 @@ Your response must be a JSON object matching one of the following schemas:
             const appState = toolUseContext.getAppState()
             return appState.toolPermissionContext
           },
-          model: hook.model ?? getSmallFastModel(),
+          model,
           toolChoice: undefined,
           isNonInteractiveSession: true,
           hasAppendSystemPrompt: false,
@@ -84,18 +93,22 @@ Your response must be a JSON object matching one of the following schemas:
           querySource: 'hook_prompt',
           mcpTools: [],
           agentId: toolUseContext.agentId,
-          outputFormat: {
-            type: 'json_schema',
-            schema: {
-              type: 'object',
-              properties: {
-                ok: { type: 'boolean' },
-                reason: { type: 'string' },
-              },
-              required: ['ok'],
-              additionalProperties: false,
-            },
-          },
+          ...(structured
+            ? {
+                outputFormat: {
+                  type: 'json_schema' as const,
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean' },
+                      reason: { type: 'string' },
+                    },
+                    required: ['ok'],
+                    additionalProperties: false,
+                  },
+                },
+              }
+            : {}),
         },
       })
 
@@ -110,7 +123,7 @@ Your response must be a JSON object matching one of the following schemas:
       const fullResponse = content.trim()
       logForDebugging(`Hooks: Model response: ${fullResponse}`)
 
-      const json = safeParseJSON(fullResponse)
+      const json = parseModelJsonObject(fullResponse)
       if (!json) {
         logForDebugging(
           `Hooks: error parsing response as JSON: ${fullResponse}`,

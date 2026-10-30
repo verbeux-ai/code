@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.41](https://github.com/verbeux-ai/code/compare/v0.15.40...v0.15.41) (2026-10-30)
+
+### Correções
+
+* **hooks de prompt:** em modo Verboo usam o modelo do papel `fast` do catálogo e só pedem structured output a modelos que o aceitam. A resposta em JSON é lida mesmo com raciocínio, bloco de código ou texto em volta. Antes o router podia recusar a chamada com `structured_output_not_enabled` e o hook terminava em erro.
+* **títulos de sessão remota:** o título e o nome do branch das sessões em segundo plano seguem o mesmo caminho, sem structured output quando o modelo não aceita e lendo o texto de todos os blocos da resposta.
+* **títulos de sessão:** `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` só esconde o título no terminal; a sessão continua recebendo um título gerado, que aparece no `/resume`.
+
 ## [0.15.40](https://github.com/verbeux-ai/code/compare/v0.15.39...v0.15.40) (2026-10-30)
 
 ### Correções

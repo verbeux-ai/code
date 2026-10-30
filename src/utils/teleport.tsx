@@ -12,7 +12,8 @@ import { getOauthConfig } from '../constants/oauth.js';
 import type { SDKMessage } from '../entrypoints/agentSdkTypes.js';
 import type { Root } from '../ink.js';
 import { KeybindingSetup } from '../keybindings/KeybindingProviderSetup.js';
-import { queryHaiku } from '../services/api/claude.js';
+import { queryFastModel, sideQuerySupportsStructuredOutput } from '../services/api/verbooFastModel.js';
+import { parseModelJsonObject } from './modelJson.js';
 import { getSessionLogsViaOAuth, getTeleportEvents } from '../services/api/sessionIngress.js';
 import { getOrganizationUUID } from '../services/oauth/client.js';
 import { AppStateProvider } from '../state/AppState.js';
@@ -29,9 +30,8 @@ import { TeleportOperationError, toError } from './errors.js';
 import { execFileNoThrow } from './execFileNoThrow.js';
 import { truncateToWidth } from './format.js';
 import { findGitRoot, getDefaultBranch, getIsClean, gitExe } from './git.js';
-import { safeParseJSON } from './json.js';
 import { logError } from './log.js';
-import { createSystemMessage, createUserMessage } from './messages.js';
+import { createSystemMessage, createUserMessage, extractTextContent } from './messages.js';
 import { getMainLoopModel } from './model/model.js';
 import { isTranscriptMessage } from './sessionStorage.js';
 import { getSettings_DEPRECATED } from './settings/settings.js';
@@ -104,25 +104,29 @@ async function generateTitleAndBranch(description: string, signal: AbortSignal):
   const fallbackBranch = 'claude/task';
   try {
     const userPrompt = SESSION_TITLE_AND_BRANCH_PROMPT.replace('{description}', description);
-    const response = await queryHaiku({
+    // Structured output only where the model accepts it; the prompt already
+    // asks for the JSON object, which is parsed from plain text otherwise.
+    const response = await queryFastModel({
       systemPrompt: asSystemPrompt([]),
       userPrompt,
-      outputFormat: {
-        type: 'json_schema',
-        schema: {
-          type: 'object',
-          properties: {
-            title: {
-              type: 'string'
+      ...(sideQuerySupportsStructuredOutput() ? {
+        outputFormat: {
+          type: 'json_schema' as const,
+          schema: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string'
+              },
+              branch: {
+                type: 'string'
+              }
             },
-            branch: {
-              type: 'string'
-            }
-          },
-          required: ['title', 'branch'],
-          additionalProperties: false
+            required: ['title', 'branch'],
+            additionalProperties: false
+          }
         }
-      },
+      } : {}),
       signal,
       options: {
         querySource: 'teleport_generate_title',
@@ -133,15 +137,8 @@ async function generateTitleAndBranch(description: string, signal: AbortSignal):
       }
     });
 
-    // Extract text from the response
-    const firstBlock = response.message.content[0];
-    if (firstBlock?.type !== 'text') {
-      return {
-        title: fallbackTitle,
-        branchName: fallbackBranch
-      };
-    }
-    const parsed = safeParseJSON(firstBlock.text.trim());
+    // Text from every block: reasoning models put a thinking block first.
+    const parsed = parseModelJsonObject(extractTextContent(response.message.content));
     const parseResult = z.object({
       title: z.string(),
       branch: z.string()

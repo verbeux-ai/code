@@ -12,7 +12,7 @@ const paymentProviderSchema = z
 
 const marketplaceGroupSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.guid(),
     name: z.string().min(1),
     slug: z.string().min(1),
     description: z.string().optional(),

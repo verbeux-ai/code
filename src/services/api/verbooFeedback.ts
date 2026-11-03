@@ -10,13 +10,13 @@ import { withOAuth401Retry } from '../../utils/http.js'
 import { parseApiEnvelope } from './verbooApiError.js'
 
 const optionSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   position: z.number().int().min(1).max(9),
   label: z.string().min(1).max(300),
 })
 
 const questionSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   position: z.number().int().min(1).max(5),
   type: z.enum(['single_choice', 'multiple_choice']),
   text: z.string().min(1).max(500),
@@ -26,8 +26,8 @@ const questionSchema = z.object({
 })
 
 const offerSchema = z.object({
-  deliveryId: z.string().uuid(),
-  campaignId: z.string().uuid(),
+  deliveryId: z.guid(),
+  campaignId: z.guid(),
   title: z.string().min(1).max(200),
   intro: z.string().max(1000),
   locale: z.enum(['pt', 'en']),

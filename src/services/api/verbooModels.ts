@@ -47,8 +47,8 @@ export type VerbooRouterCapabilities = {
 
 const modelsResponseSchema = z
   .object({
-    data: z.array(z.record(z.unknown())),
-    agent_model_roles: z.record(z.unknown()).optional(),
+    data: z.array(z.record(z.string(), z.unknown())),
+    agent_model_roles: z.record(z.string(), z.unknown()).optional(),
     capabilities: z.unknown().optional(),
   })
   .passthrough()

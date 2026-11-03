@@ -928,15 +928,16 @@ export function hasAllowBypassPermissionsMode(): boolean {
  */
 export function hasAutoModeOptIn(): boolean {
   if (feature('TRANSCRIPT_CLASSIFIER')) {
+    // VERBOO-BRAND: localSettings (.verboo/settings.local.json) lives inside
+    // the project directory, so a cloned repository could ship it; it no
+    // longer counts as accepting the opt-in. The dialog writes userSettings.
     const user = getSettingsForSource('userSettings')?.skipAutoPermissionPrompt
-    const local =
-      getSettingsForSource('localSettings')?.skipAutoPermissionPrompt
     const flag = getSettingsForSource('flagSettings')?.skipAutoPermissionPrompt
     const policy =
       getSettingsForSource('policySettings')?.skipAutoPermissionPrompt
-    const result = !!(user || local || flag || policy)
+    const result = !!(user || flag || policy)
     logForDebugging(
-      `[auto-mode] hasAutoModeOptIn=${result} skipAutoPermissionPrompt: user=${user} local=${local} flag=${flag} policy=${policy}`,
+      `[auto-mode] hasAutoModeOptIn=${result} skipAutoPermissionPrompt: user=${user} flag=${flag} policy=${policy}`,
     )
     return result
   }
@@ -981,9 +982,11 @@ export function getAutoModeConfig():
     const soft_deny: string[] = []
     const environment: string[] = []
 
+    // VERBOO-BRAND: localSettings is excluded for the same reason as
+    // projectSettings — it sits inside the project directory, and classifier
+    // allow rules from a cloned repository would be an injection vector.
     for (const source of [
       'userSettings',
-      'localSettings',
       'flagSettings',
       'policySettings',
     ] as const) {

@@ -647,18 +647,23 @@ export async function buildYoloSystemPrompt(
     ? autoMode.environment.map(e => `- ${e}`).join('\n')
     : undefined
 
+  // VERBOO-BRAND: user rules are added to the defaults instead of replacing
+  // them, so a custom allow or soft_deny list never silently drops the
+  // default protections (e.g. against `curl | bash` or force pushes).
+  const addTo = (defaults: string, extra: string | undefined) =>
+    extra ? `${defaults.trimEnd()}\n${extra}\n` : defaults
   return systemPrompt
     .replace(
       /<user_allow_rules_to_replace>([\s\S]*?)<\/user_allow_rules_to_replace>/,
-      (_m, defaults: string) => userAllow ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userAllow),
     )
     .replace(
       /<user_deny_rules_to_replace>([\s\S]*?)<\/user_deny_rules_to_replace>/,
-      (_m, defaults: string) => userDeny ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userDeny),
     )
     .replace(
       /<user_environment_to_replace>([\s\S]*?)<\/user_environment_to_replace>/,
-      (_m, defaults: string) => userEnvironment ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userEnvironment),
     )
 }
 // ============================================================================
@@ -950,7 +955,9 @@ async function classifyYoloActionXml(
           logAutoModeOutcome('parse_failure', model, { classifierType })
           return {
             shouldBlock: true,
-            reason: 'Classifier stage 1 unparseable - blocking for safety',
+            // VERBOO-BRAND: malfunction, not a verdict — ask the user.
+            unavailable: true,
+            reason: 'Classifier returned an unparsable response',
             model,
             usage: stage1Usage,
             durationMs: stage1DurationMs,
@@ -1020,7 +1027,9 @@ async function classifyYoloActionXml(
       logAutoModeOutcome('parse_failure', model, { classifierType })
       return {
         shouldBlock: true,
-        reason: 'Classifier stage 2 unparseable - blocking for safety',
+        // VERBOO-BRAND: malfunction, not a verdict — ask the user.
+        unavailable: true,
+        reason: 'Classifier returned an unparsable response',
         model,
         usage: totalUsage,
         durationMs: totalDurationMs,

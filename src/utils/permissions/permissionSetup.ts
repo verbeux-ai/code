@@ -1056,7 +1056,7 @@ export function getAutoModeUnavailableNotification(
       base = 'auto mode disabled by settings'
       break
     case 'circuit-breaker':
-      base = 'auto mode is unavailable for your plan'
+      base = 'auto mode is temporarily unavailable'
       break
     case 'model':
       base = 'auto mode unavailable for this model'

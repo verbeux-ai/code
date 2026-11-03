@@ -142,6 +142,8 @@ export function getFeatureValue_CACHED_MAY_BE_STALE<T>(
 export function getFeatureValue_CACHED_WITH_REFRESH<T>(
 	_featureName: string,
 	defaultValue: T,
+	// Upstream callers pass a refresh interval; nothing refreshes in this build.
+	_refreshMs?: number,
 ): T {
 	return _getFlagValue(_featureName, defaultValue)
 }

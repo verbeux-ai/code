@@ -194,6 +194,10 @@ const RULES: Rule[] = [
       'src/services/api/claudeNativeModels.ts',
       'src/services/api/claudeNativeUsage.ts',
       'src/services/api/client.ts',
+      // Rótulos "via sua chave Anthropic" no /model e o aviso de saldo esgotado:
+      'src/commands/model/model.tsx',
+      'src/utils/model/modelOptions.ts',
+      'src/services/api/providerLimitErrors.ts',
       // SDK error logger uses preserved upstream identifier strings:
       'src/services/api/sdk.ts',
       // Auth/account model functions reference "Anthropic" provider type:

@@ -323,7 +323,9 @@ describe('checkAndInstallVerbooMarketplace', () => {
     ).toBe(true)
   })
 
-  test('keeps installing Claude when the Verboo request fails', async () => {
+  // VERBOO-BRAND: the Anthropic marketplace is on demand only; startup never
+  // installs or downloads it, whatever happens to the Verboo request.
+  test('never contacts the Claude marketplace at startup', async () => {
     addMarketplaceSource.mockImplementationOnce(async () => {
       throw new Error('Verboo endpoint unavailable')
     })
@@ -335,7 +337,11 @@ describe('checkAndInstallVerbooMarketplace', () => {
       skipped: true,
       reason: 'unknown',
     })
-    expect(result.claude).toEqual({ installed: true, skipped: false })
-    expect(fetchOfficialMarketplaceFromGcs).toHaveBeenCalled()
+    expect(result.claude).toEqual({
+      installed: false,
+      skipped: true,
+      reason: 'policy_blocked',
+    })
+    expect(fetchOfficialMarketplaceFromGcs).not.toHaveBeenCalled()
   })
 })

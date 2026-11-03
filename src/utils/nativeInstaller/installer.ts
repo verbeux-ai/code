@@ -948,6 +948,9 @@ export async function checkInstall(
   return messages
 }
 
+// VERBOO-BRAND: @verboo/code só é publicado no npm; não há binários nativos.
+const NATIVE_BUILDS_PUBLISHED = false
+
 type InstallLatestResult = {
   latestVersion: string | null
   wasUpdated: boolean
@@ -966,6 +969,12 @@ export function installLatest(
   channelOrVersion: string,
   forceReinstall: boolean = false,
 ): Promise<InstallLatestResult> {
+  // VERBOO-BRAND: não existe build nativo do @verboo/code. O caminho upstream
+  // baixava o binário do Claude Code do bucket da Anthropic; aqui nada é
+  // baixado nem instalado (a CLI é distribuída pelo npm).
+  if (!NATIVE_BUILDS_PUBLISHED) {
+    return Promise.resolve({ latestVersion: null, wasUpdated: false })
+  }
   if (forceReinstall) {
     return installLatestImpl(channelOrVersion, forceReinstall)
   }
@@ -1559,6 +1568,9 @@ export async function cleanupShellAliases(): Promise<SetupMessage[]> {
 async function manualRemoveNpmPackage(
   packageName: string,
 ): Promise<{ success: boolean; error?: string; warning?: string }> {
+  // VERBOO-BRAND: nunca remove pacotes nem binários (podia apagar
+  // <prefix>/bin/claude do Claude Code do usuário).
+  if (!NATIVE_BUILDS_PUBLISHED) return { success: false }
   try {
     // Get npm global prefix
     const prefixResult = await execFileNoThrowWithCwd('npm', [
@@ -1692,6 +1704,9 @@ export async function cleanupNpmInstallations(): Promise<{
   errors: string[]
   warnings: string[]
 }> {
+  // VERBOO-BRAND: a limpeza upstream desinstalava @anthropic-ai/claude-code e o
+  // próprio @verboo/code. Sem build nativo, não há nada a limpar.
+  if (!NATIVE_BUILDS_PUBLISHED) return { removed: 0, errors: [], warnings: [] }
   const errors: string[] = []
   const warnings: string[] = []
   let removed = 0

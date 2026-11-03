@@ -29,8 +29,9 @@ import {
 } from './shellConfig.js'
 import { jsonParse } from './slowOperations.js'
 
-const GCS_BUCKET_URL =
-  'https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases'
+// VERBOO-BRAND: o bucket upstream é o do Claude Code; o @verboo/code é
+// publicado só no npm, então não há canal GCS para consultar.
+const GCS_BUCKET_URL = ''
 
 class AutoUpdaterError extends ClaudeError {}
 
@@ -428,6 +429,7 @@ export async function getNpmDistTags(): Promise<NpmDistTags> {
 export async function getLatestVersionFromGcs(
   channel: ReleaseChannel,
 ): Promise<string | null> {
+  if (!GCS_BUCKET_URL) return null // VERBOO-BRAND
   try {
     const response = await axios.get(`${GCS_BUCKET_URL}/${channel}`, {
       timeout: 5000,

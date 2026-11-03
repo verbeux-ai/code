@@ -22,8 +22,9 @@ import { sleep } from '../sleep.js'
 import { jsonStringify, writeFileSync_DEPRECATED } from '../slowOperations.js'
 import { getBinaryName, getPlatform } from './installer.js'
 
-const GCS_BUCKET_URL =
-  'https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases'
+// VERBOO-BRAND: o bucket upstream é o do Claude Code. Não há binários do
+// @verboo/code publicados, então nenhuma URL de download existe aqui.
+const GCS_BUCKET_URL = ''
 export const ARTIFACTORY_REGISTRY_URL =
   process.env.CLAUDE_CODE_INTERNAL_ARTIFACTORY_REGISTRY_URL ?? ''
 
@@ -148,6 +149,7 @@ export async function getLatestVersion(
   }
 
   // Use GCS for external users
+  if (!GCS_BUCKET_URL) return null // VERBOO-BRAND: sem builds nativos publicados
   return getLatestVersionFromBinaryRepo(channel, GCS_BUCKET_URL)
 }
 
@@ -506,7 +508,7 @@ export async function downloadVersion(
     await downloadVersionFromBinaryRepo(
       version,
       stagingPath,
-      'https://storage.googleapis.com/claude-code-ci-sentinel',
+      '', // VERBOO-BRAND: sentinel de CI da Anthropic removido
       { headers: { Authorization: `Bearer ${stdout.trim()}` } },
     )
     return 'binary'
@@ -519,6 +521,10 @@ export async function downloadVersion(
   }
 
   // Use GCS for external users
+  if (!GCS_BUCKET_URL) {
+    // VERBOO-BRAND
+    throw new Error('Native binaries are not published for @verboo/code; install it with npm.')
+  }
   await downloadVersionFromBinaryRepo(version, stagingPath, GCS_BUCKET_URL)
   return 'binary'
 }

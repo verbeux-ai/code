@@ -53,6 +53,20 @@ em volta. Use `git grep "VERBOO-BRAND"` para localizar todos os pontos editados.
 - `src/commands/provider/` — arquivos **NÃO foram deletados** (upstream
   continua mexendo neles; deletar gera conflitos "deleted file modified upstream").
 
+#### Nada da Anthropic na inicialização
+- `src/utils/plugins/officialMarketplaceStartupCheck.ts` —
+  `checkAndInstallNativeMarketplaces` não instala `claude-plugins-official`
+  (sob demanda: instalar um plugin dela ou `/lsp recommend` ainda funcionam).
+- `src/utils/plugins/schemas.ts` — `isMarketplaceAutoUpdate`: só a loja da
+  Verboo se atualiza sozinha por padrão.
+- `src/utils/nativeInstaller/installer.ts` — `NATIVE_BUILDS_PUBLISHED = false`:
+  `installLatest`, `cleanupNpmInstallations` e `manualRemoveNpmPackage` não
+  baixam, desinstalam nem apagam nada.
+- `src/utils/nativeInstaller/download.ts` e `src/utils/autoUpdater.ts` —
+  `GCS_BUCKET_URL = ''` (o bucket upstream é o do Claude Code).
+- `src/utils/doctorDiagnostic.ts` — só procura `MACRO.PACKAGE_URL`; nunca
+  sugere desinstalar `@anthropic-ai/claude-code`.
+
 #### Mensagens reescritas
 - `src/utils/providerValidation.ts` (3 ocorrências)
 - `src/services/api/withRetry.ts`

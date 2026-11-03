@@ -43,8 +43,12 @@ test('install command displays verboo-code\\bin\\verboo on Windows', async () =>
   expect(getInstallationPath()).toBe('verboo-code\\bin\\verboo')
 })
 
-test('cleanupNpmInstallations removes Verboo local install dir', async () => {
+// VERBOO-BRAND: there is no native build of @verboo/code. The upstream cleanup
+// uninstalled @anthropic-ai/claude-code and @verboo/code and the installer
+// downloaded Claude Code from Anthropic's bucket; both must now do nothing.
+test('cleanupNpmInstallations never uninstalls or deletes anything', async () => {
   const removedPaths: string[] = []
+  const commands: string[][] = []
   ;(globalThis as Record<string, unknown>).MACRO = {
     PACKAGE_URL: '@verboo/code',
   }
@@ -54,13 +58,20 @@ test('cleanupNpmInstallations removes Verboo local install dir', async () => {
     rm: async (path: string) => {
       removedPaths.push(path)
     },
+    unlink: async (path: string) => {
+      removedPaths.push(path)
+    },
   }))
 
   mock.module('./execFileNoThrow.js', () => ({
-    execFileNoThrowWithCwd: async () => ({
-      code: 1,
-      stderr: 'npm ERR! code E404',
-    }),
+    execFileNoThrowWithCwd: async (file: string, args: string[]) => {
+      commands.push([file, ...args])
+      return { code: 0, stdout: '', stderr: '' }
+    },
+    execFileNoThrow: async (file: string, args: string[]) => {
+      commands.push([file, ...args])
+      return { code: 0, stdout: '', stderr: '' }
+    },
   }))
 
   mock.module('./envUtils.js', () => ({
@@ -69,8 +80,38 @@ test('cleanupNpmInstallations removes Verboo local install dir', async () => {
   }))
 
   const { cleanupNpmInstallations } = await importFreshInstaller()
-  await cleanupNpmInstallations()
+  expect(await cleanupNpmInstallations()).toEqual({
+    removed: 0,
+    errors: [],
+    warnings: [],
+  })
+  expect(removedPaths).toEqual([])
+  expect(commands).toEqual([])
+})
 
-  expect(removedPaths).toContain(join(homedir(), '.verboo', 'local'))
-  expect(removedPaths).not.toContain(join(homedir(), '.claude', 'local'))
+test('installLatest resolves without downloading anything', async () => {
+  let requests = 0
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = (async () => {
+    requests += 1
+    return new Response('')
+  }) as unknown as typeof fetch
+  mock.module('axios', () => ({
+    default: {
+      get: async () => {
+        requests += 1
+        return { data: '' }
+      },
+    },
+  }))
+  try {
+    const { installLatest } = await importFreshInstaller()
+    expect(await installLatest('latest', true)).toEqual({
+      latestVersion: null,
+      wasUpdated: false,
+    })
+    expect(requests).toBe(0)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
 })

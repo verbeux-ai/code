@@ -258,7 +258,8 @@ export function getInvokedBinary(): string {
   }
 }
 
-async function detectMultipleInstallations(): Promise<
+// VERBOO-BRAND: exportada para testar que o Claude Code do usuário não vira "órfão".
+export async function detectMultipleInstallations(): Promise<
   Array<{ type: string; path: string }>
 > {
   const fs = getFsImplementation()
@@ -271,8 +272,10 @@ async function detectMultipleInstallations(): Promise<
   }
 
   // Check for global npm installation
-  const packagesToCheck = ['@anthropic-ai/claude-code']
-  if (MACRO.PACKAGE_URL && MACRO.PACKAGE_URL !== '@anthropic-ai/claude-code') {
+  // VERBOO-BRAND: só o próprio pacote. Um @anthropic-ai/claude-code instalado é
+  // outro produto do usuário, não uma instalação da Verboo.
+  const packagesToCheck: string[] = []
+  if (MACRO.PACKAGE_URL) {
     packagesToCheck.push(MACRO.PACKAGE_URL)
   }
   const npmResult = await execFileNoThrow('npm', [
@@ -578,13 +581,8 @@ export async function getDoctorDiagnostic(): Promise<DiagnosticInfo> {
 
     for (const install of npmInstalls) {
       if (install.type === 'npm-global') {
-        let uninstallCmd = 'npm -g uninstall @anthropic-ai/claude-code'
-        if (
-          MACRO.PACKAGE_URL &&
-          MACRO.PACKAGE_URL !== '@anthropic-ai/claude-code'
-        ) {
-          uninstallCmd += ` && npm -g uninstall ${MACRO.PACKAGE_URL}`
-        }
+        // VERBOO-BRAND: nunca sugerir desinstalar o Claude Code do usuário.
+        const uninstallCmd = `npm -g uninstall ${MACRO.PACKAGE_URL}`
         warnings.push({
           issue: `Leftover npm global installation at ${install.path}`,
           fix: `Run: ${uninstallCmd}`,
@@ -622,7 +620,8 @@ export async function getDoctorDiagnostic(): Promise<DiagnosticInfo> {
     if (!hasUpdatePermissions && !getAutoUpdaterDisabledReason()) {
       warnings.push({
         issue: 'Insufficient permissions for auto-updates',
-        fix: `Do one of: (1) Re-install node without sudo, or (2) Use \`${getCliBinaryName()} install\` for native installation`,
+        // VERBOO-BRAND: não há instalação nativa; orientar um prefixo npm do usuário.
+        fix: 'Do one of: (1) Re-install node without sudo, or (2) Point npm to a user-writable prefix (npm config set prefix ~/.local) and reinstall',
       })
     }
   }

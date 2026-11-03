@@ -61,6 +61,11 @@ import {
 import { shouldProcessRateLimits } from '../rateLimitMocking.js' // Used for /mock-limits command
 import { extractConnectionErrorDetails, formatAPIError } from './errorUtils.js'
 import {
+  classifyProviderLimitError,
+  formatProviderLimitMessage,
+} from './providerLimitErrors.js'
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js'
+import {
   extractOpenAICategoryHost,
   extractOpenAICategoryMarker,
   isLocalhostLikeHost,
@@ -634,6 +639,18 @@ export function getAssistantMessageFromError(
 ): AssistantMessage {
   if (error instanceof FreeTokensRequiredError) return createAssistantAPIErrorMessage({ content: error.message, error: 'invalid_request' })
   if (error instanceof PaymentPastDueError) return createAssistantAPIErrorMessage({ content: error.message, error: 'billing_error' })
+  // VERBOO-BRAND: the user's own account (ChatGPT plan, OpenAI or Anthropic
+  // key) ran out. Retrying will not help; the REPL offers a Verboo model.
+  const providerLimit = classifyProviderLimitError(
+    error,
+    getActiveModelIdentity(model).provider,
+  )
+  if (providerLimit) {
+    return createAssistantAPIErrorMessage({
+      content: formatProviderLimitMessage(providerLimit),
+      error: 'rate_limit',
+    })
+  }
   // Check for SDK timeout errors
   if (
     error instanceof APIConnectionTimeoutError ||

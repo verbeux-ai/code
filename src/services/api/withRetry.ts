@@ -110,7 +110,10 @@ function isQuotaExhausted(error: any): boolean {
 
   return (
     error?.status === 429 &&
-    (msg.includes('limit: 0') || msg.includes('exceeded your current quota'))
+    (msg.includes('limit: 0') ||
+      msg.includes('exceeded your current quota') ||
+      // VERBOO-BRAND: ChatGPT plan (Codex) usage limit; it renews later.
+      msg.includes('usage_limit_reached'))
   )
 }
 

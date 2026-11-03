@@ -17,6 +17,7 @@ import compact from './commands/compact/index.js'
 import codex from './commands/codex/index.js'
 import claude from './commands/claude/index.js'
 import openai from './commands/openai/index.js'
+import limitSwitch from './commands/limit-switch/index.js'
 import config from './commands/config/index.js'
 import { context, contextNonInteractive } from './commands/context/index.js'
 import cost from './commands/cost/index.js'
@@ -293,6 +294,7 @@ const COMMANDS = memoize((): Command[] => [
   compact,
   claude,
   openai,
+  limitSwitch,
   codex,
   commitMessage,
   config,

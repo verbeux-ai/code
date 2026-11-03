@@ -267,6 +267,7 @@ import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
 import { useCanSwitchToExistingSubscription } from 'src/hooks/notifs/useCanSwitchToExistingSubscription.js';
 import { useClaudeLoginRetiredNotification } from 'src/hooks/notifs/useClaudeLoginRetiredNotification.js';
+import { limitSwitchArgsFromMessage } from 'src/services/api/providerLimitErrors.js';
 import { useTeammateLifecycleNotification } from 'src/hooks/notifs/useTeammateShutdownNotification.js';
 import { useFastModeNotification } from 'src/hooks/notifs/useFastModeNotification.js';
 import type { HookProgress } from '../types/hooks.js';
@@ -3785,6 +3786,25 @@ export function REPL({
       resetHistory: () => { }
     });
   }, []);
+  // VERBOO-BRAND: when the user's own account (ChatGPT plan, OpenAI or
+  // Anthropic key) runs out, open the switch to a Verboo model right away
+  // instead of making them type /model. Errors already in the transcript at
+  // mount (e.g. a resumed session) are ignored.
+  const handledProviderLimitRef = useRef<string | undefined>(messages.at(-1)?.uuid);
+  useEffect(() => {
+    const last = messages.at(-1);
+    if (!last || last.type !== 'assistant' || !last.isApiErrorMessage) return;
+    if (handledProviderLimitRef.current === last.uuid) return;
+    const block = last.message.content[0];
+    const args = limitSwitchArgsFromMessage(block && block.type === 'text' ? block.text : '');
+    if (args === null) return;
+    handledProviderLimitRef.current = last.uuid;
+    void onSubmitRef.current(`/limit-switch ${args}`, {
+      setCursorOffset: () => { },
+      clearBuffer: () => { },
+      resetHistory: () => { }
+    });
+  }, [messages]);
   const handleExit = useCallback(async () => {
     setIsExiting(true);
     // In bg sessions, always detach instead of kill — even when a worktree is

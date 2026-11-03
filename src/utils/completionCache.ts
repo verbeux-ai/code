@@ -6,6 +6,7 @@ import { pathToFileURL } from 'url'
 import { color } from '../components/design-system/color.js'
 import { supportsHyperlinks } from '../ink/supports-hyperlinks.js'
 import { logForDebugging } from './debug.js'
+import { getClaudeConfigHomeDir } from './envUtils.js'
 import { isENOENT } from './errors.js'
 import { execFileNoThrow } from './execFileNoThrow.js'
 import { logError } from './log.js'
@@ -24,7 +25,9 @@ type ShellInfo = {
 function detectShell(): ShellInfo | null {
   const shell = process.env.SHELL || ''
   const home = homedir()
-  const claudeDir = join(home, '.claude')
+  // VERBOO-BRAND: o cache fica no diretório da Verboo. ~/.claude/completion.*
+  // é do Claude Code e era sobrescrito a cada `verboo update`.
+  const claudeDir = getClaudeConfigHomeDir()
 
   if (shell.endsWith('/zsh') || shell.endsWith('/zsh.exe')) {
     const cacheFile = join(claudeDir, 'completion.zsh')
@@ -89,7 +92,7 @@ export async function setupShellCompletion(theme: ThemeName): Promise<string> {
   // Generate the completion script by writing directly to the cache file.
   // Using --output avoids piping through stdout where process.exit() can
   // truncate output before the pipe buffer drains.
-  const claudeBin = process.argv[1] || 'claude'
+  const claudeBin = process.argv[1] || 'verboo'
   const result = await execFileNoThrow(claudeBin, [
     'completion',
     shell.shellFlag,
@@ -104,10 +107,9 @@ export async function setupShellCompletion(theme: ThemeName): Promise<string> {
   let existing = ''
   try {
     existing = await readFile(shell.rcFile, { encoding: 'utf-8' })
-    if (
-      existing.includes('claude completion') ||
-      existing.includes(shell.cacheFile)
-    ) {
+    // VERBOO-BRAND: só o nosso cache conta; uma linha do Claude Code no rc não
+    // significa que as completions da Verboo estão instaladas.
+    if (existing.includes(shell.cacheFile)) {
       return `${EOL}${color('success', theme)(`Shell completions updated for ${shell.name}`)}${EOL}${chalk.dim(`See ${formatPathLink(shell.rcFile)}`)}${EOL}`
     }
   } catch (e: unknown) {
@@ -123,7 +125,7 @@ export async function setupShellCompletion(theme: ThemeName): Promise<string> {
     await mkdir(configDir, { recursive: true })
 
     const separator = existing && !existing.endsWith('\n') ? '\n' : ''
-    const content = `${existing}${separator}\n# Claude Code shell completions\n${shell.completionLine}\n`
+    const content = `${existing}${separator}\n# Verboo Code shell completions\n${shell.completionLine}\n`
     await writeFile(shell.rcFile, content, { encoding: 'utf-8' })
 
     return `${EOL}${color('success', theme)(`Installed ${shell.name} shell completions`)}${EOL}${chalk.dim(`Added to ${formatPathLink(shell.rcFile)}`)}${EOL}${chalk.dim(`Run: source ${shell.rcFile}`)}${EOL}`
@@ -145,7 +147,7 @@ export async function regenerateCompletionCache(): Promise<void> {
 
   logForDebugging(`update: Regenerating ${shell.name} completion cache`)
 
-  const claudeBin = process.argv[1] || 'claude'
+  const claudeBin = process.argv[1] || 'verboo'
   const result = await execFileNoThrow(claudeBin, [
     'completion',
     shell.shellFlag,

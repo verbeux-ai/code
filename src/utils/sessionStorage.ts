@@ -9,6 +9,7 @@ import { closeSync, fstatSync, openSync, readSync } from 'fs'
 import {
   appendFile as fsAppendFile,
   copyFile,
+  cp,
   open as fsOpen,
   mkdir,
   readdir,
@@ -230,13 +231,14 @@ export function getTranscriptPathForSession(sessionId: string): string {
   return join(projectDir, `${sessionId}.jsonl`)
 }
 
-// Após escrever um transcript file, espelha para diretórios adicionais
-// (ex: ~/.openclaude/projects/) para que outros CLIs vejam as alterações.
+// VERBOO-BRAND: não espelha mais transcripts para diretórios de outros
+// produtos (~/.claude, ~/.openclaude): eles são somente leitura para a Verboo.
+// Mantida como no-op para não divergir das chamadas do upstream.
 export async function mirrorTranscriptToAdditionalDirs(
   writtenFile: string,
   sessionId: string,
 ): Promise<void> {
-  const additionalDirs = getAdditionalProjectsDirs()
+  const additionalDirs: string[] = []
   if (additionalDirs.length === 0) return
 
   const projectDirName = sanitizePath(getSessionProjectDir() ?? getOriginalCwd())
@@ -1381,15 +1383,24 @@ class Project {
     }
 
     // Fallback: search additional dirs
+    // VERBOO-BRAND: diretórios adicionais são somente leitura. Ao encontrar a
+    // sessão em um deles, copia para o diretório da Verboo e grava lá; o
+    // arquivo original nunca é alterado.
     const projectDirName = sanitizePath(getOriginalCwd())
     for (const additionalDir of getAdditionalProjectsDirs()) {
       const candidate = join(additionalDir, projectDirName, `${sessionId}.jsonl`)
       try {
         await stat(candidate)
-        this.existingSessionFiles.set(sessionId, candidate)
-        return candidate
       } catch {
         continue
+      }
+      try {
+        await mkdir(dirname(targetFile), { recursive: true, mode: 0o700 })
+        await copyFile(candidate, targetFile)
+        this.existingSessionFiles.set(sessionId, targetFile)
+        return targetFile
+      } catch {
+        return null
       }
     }
 
@@ -1624,6 +1635,47 @@ export async function resetSessionFilePointer() {
  * CLI title with the stale disk value. After this write, disk == cache and
  * later calls (compaction, exit cleanup) absorb SDK writes normally.
  */
+/**
+ * VERBOO-BRAND: transcripts in read-only project dirs (old Verboo sessions in
+ * ~/.claude/projects, OpenClaude) are never written to. Before resuming one,
+ * copy it — and its session subdirectory, if any — into the matching project
+ * dir under getProjectsDir() and resume from the copy. Returns the project dir
+ * to resume in (the copy's), or the transcript's own dir when it is already
+ * writable. The original files are left untouched.
+ */
+export async function adoptReadOnlyTranscriptForResume(
+  transcriptPath: string,
+): Promise<string> {
+  const sourceDir = dirname(transcriptPath)
+  const projectsRoot = dirname(sourceDir)
+  const isReadOnly = getAdditionalProjectsDirs().some(
+    dir => join(dir) === join(projectsRoot),
+  )
+  if (!isReadOnly) return sourceDir
+
+  const targetDir = join(getProjectsDir(), basename(sourceDir))
+  const targetPath = join(targetDir, basename(transcriptPath))
+  await mkdir(targetDir, { recursive: true, mode: 0o700 })
+  try {
+    await stat(targetPath)
+  } catch {
+    await copyFile(transcriptPath, targetPath)
+    const sessionSubdir = transcriptPath.replace(/\.jsonl$/, '')
+    try {
+      if ((await stat(sessionSubdir)).isDirectory()) {
+        await cp(sessionSubdir, targetPath.replace(/\.jsonl$/, ''), {
+          recursive: true,
+          errorOnExist: false,
+          force: false,
+        })
+      }
+    } catch {
+      // No session subdirectory (tool results, subagents) to bring along.
+    }
+  }
+  return targetDir
+}
+
 export function adoptResumedSessionFile(): void {
   const project = getProject()
   project.sessionFile = getTranscriptPath()

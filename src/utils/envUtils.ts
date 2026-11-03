@@ -5,8 +5,8 @@ import { join } from 'path'
 
 // VERBOO-BRAND: paths SEMPRE isolados em ~/.verboo. Não há fallback para
 // configs de outros CLIs — são instalações distintas que podem coexistir
-// sem conflito na mesma máquina. Sessões (getProjectsDir) ficam intencionalmente
-// no diretório compartilhado de projetos para interop com /resume.
+// sem conflito na mesma máquina. Sessões também ficam em ~/.verboo/projects;
+// as antigas em ~/.claude/projects são lidas só para o /resume.
 //
 // Precedência de override:
 //   VERBOO_CONFIG_DIR (canônico)
@@ -50,22 +50,43 @@ export function getTeamsDir(): string {
   return join(getClaudeConfigHomeDir(), 'teams')
 }
 
-// Diretório de sessions/projects: mantido em ~/.claude/projects por default
-// para interop com Claude Code (/resume cross-CLI). Override via
-// VERBOO_PROJECTS_DIR quando quiser isolamento.
+// VERBOO-BRAND: sessões novas ficam em ~/.verboo/projects (ou
+// VERBOO_CONFIG_DIR/projects). Antes ficavam em ~/.claude/projects, misturadas
+// com as do Claude Code — e a limpeza de sessões antigas apagava as dele.
+// Override via VERBOO_PROJECTS_DIR.
 export function getProjectsDir(): string {
   if (process.env.VERBOO_PROJECTS_DIR) {
     return process.env.VERBOO_PROJECTS_DIR
   }
-  return join(homedir(), '.claude', 'projects')
+  return join(getClaudeConfigHomeDir(), 'projects')
 }
 
-// Diretórios adicionais de projetos para leitura multi-source.
-// Atualmente detecta OpenClaude (~/.openclaude/projects) se existir.
+// Diretórios adicionais de projetos, SOMENTE LEITURA (o /resume enxerga as
+// sessões antigas). Nada é gravado aqui: retomar uma sessão antiga copia o
+// arquivo para getProjectsDir() antes de continuar.
+// - ~/.claude/projects: sessões da Verboo anteriores à mudança de diretório
+//   (omitido quando VERBOO_CONFIG_DIR/VERBOO_PROJECTS_DIR isolam a instalação)
+// - ~/.openclaude/projects: OpenClaude, se existir
+let homeDirOverrideForTesting: string | undefined
+
+export function setHomeDirForTesting(dir: string | undefined): void {
+  homeDirOverrideForTesting = dir
+}
+
 export function getAdditionalProjectsDirs(): string[] {
   const dirs: string[] = []
+  const home = homeDirOverrideForTesting ?? homedir()
 
-  const openClaudeDir = join(homedir(), '.openclaude', 'projects')
+  const legacyDir = join(home, '.claude', 'projects')
+  if (
+    !process.env.VERBOO_CONFIG_DIR &&
+    !process.env.VERBOO_PROJECTS_DIR &&
+    existsSync(legacyDir)
+  ) {
+    dirs.push(legacyDir)
+  }
+
+  const openClaudeDir = join(home, '.openclaude', 'projects')
   if (existsSync(openClaudeDir)) {
     dirs.push(openClaudeDir)
   }

@@ -69,11 +69,13 @@ type Outcome = { format: boolean; correct: boolean; ms: number; error?: string }
 async function classify(router: string, token: string, model: string, c: Case): Promise<Outcome> {
   const transcript = `${JSON.stringify({ user: c.user })}\n${JSON.stringify(c.action)}\n`
   const start = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60_000)
   try {
     const response = await fetch(`${router}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(60_000),
+      signal: controller.signal,
       body: JSON.stringify({
         model,
         temperature: 0,
@@ -97,6 +99,8 @@ async function classify(router: string, token: string, model: string, c: Case): 
     return { format: true, correct: parsed.shouldBlock === c.block, ms }
   } catch (error) {
     return { format: false, correct: false, ms: Date.now() - start, error: String(error) }
+  } finally {
+    clearTimeout(timer)
   }
 }
 

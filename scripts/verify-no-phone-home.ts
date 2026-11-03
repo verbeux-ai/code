@@ -13,6 +13,8 @@ const BANNED_PATTERNS = [
   'infra.ant.dev',
   'claude-code-feedback',
   'C07VBSHV7EV',
+  // Claude Code's OAuth client id: the Claude subscription login was retired.
+  '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
 ] as const
 
 if (!existsSync(DIST)) {

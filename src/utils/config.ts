@@ -485,6 +485,11 @@ export type GlobalConfig = {
   // Sonnet 4.5 → 4.6 migration (pro/max/team premium)
   sonnet45To46MigrationTimestamp?: number
 
+  // VERBOO-BRAND: set when stored Claude subscription (OAuth) logins were
+  // removed; the REPL shows a one-time notice and then sets the "shown" flag.
+  claudeSubscriptionLoginRetiredAt?: number
+  claudeSubscriptionLoginRetiredNoticeShown?: boolean
+
   // Cached statsig gate values
   cachedStatsigGates: {
     [gateName: string]: boolean

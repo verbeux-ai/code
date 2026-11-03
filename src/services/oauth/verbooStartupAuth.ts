@@ -18,6 +18,7 @@ import {
 } from '../../utils/auth.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { saveGlobalConfig } from '../../utils/config.js'
+import { purgeGithubModelsCredentials } from '../../utils/githubModelsCredentials.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
@@ -47,8 +48,9 @@ import {
 } from '../api/verbooModels.js'
 import { readCodexCredentialsAsync } from '../../utils/codexCredentials.js'
 import {
-  hasCurrentClaudeRiskAcceptance,
+  isUsableClaudeCredential,
   readClaudeNativeCredentialsAsync,
+  retireClaudeOAuthCredentials,
 } from '../../utils/claudeNativeCredentials.js'
 import {
   fetchVerbooTermsStatus,
@@ -422,9 +424,33 @@ async function primeCodexCatalogIfAuthenticated(): Promise<void> {
   }
 }
 
+/**
+ * The Claude subscription login was retired (Anthropic does not allow third
+ * parties to offer Claude.ai login). Remove any stored OAuth login once and
+ * flag a one-time notice; Claude models now use the user's own API key.
+ */
+function retireClaudeSubscriptionLogins(): void {
+  const { removed, warning } = retireClaudeOAuthCredentials()
+  if (warning) {
+    logForDebugging(
+      `[VerbooStartup] Não foi possível remover o login Claude por assinatura: ${warning}`,
+      { level: 'warn' },
+    )
+  }
+  if (removed > 0) {
+    saveGlobalConfig(current => ({
+      ...current,
+      claudeSubscriptionLoginRetiredAt: Date.now(),
+      claudeSubscriptionLoginRetiredNoticeShown: false,
+    }))
+  }
+}
+
 async function primeClaudeCatalogIfAuthenticated(): Promise<void> {
+  retireClaudeSubscriptionLogins()
+  purgeGithubModelsCredentials()
   const credentials = await readClaudeNativeCredentialsAsync()
-  if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) return
+  if (!isUsableClaudeCredential(credentials)) return
   clearClaudeNativeModelsCache()
   try {
     await fetchClaudeNativeModels({ force: true })

@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   buildClaudeNativeUsageRows,
-  buildClaudeNativeUsageHeaders,
-  getClaudeNativeUsageUrl,
+  CLAUDE_API_KEY_USAGE_UNAVAILABLE,
+  fetchClaudeNativeUsage,
   normalizeClaudeNativeUsagePayload,
 } from './claudeNativeUsage.js'
 
@@ -60,14 +60,21 @@ describe('Claude native usage helpers', () => {
     ])
   })
 
-  test('uses the native Anthropic OAuth usage endpoint', () => {
-    expect(getClaudeNativeUsageUrl()).toBe(
-      'https://api.anthropic.com/api/oauth/usage',
-    )
-    expect(buildClaudeNativeUsageHeaders('oauth-token')).toMatchObject({
-      Authorization: 'Bearer oauth-token',
-      'anthropic-beta': 'oauth-2025-04-20',
-    })
+  test('API keys have no usage windows, so nothing is fetched', async () => {
+    const previousFetch = globalThis.fetch
+    let requests = 0
+    globalThis.fetch = (async () => {
+      requests += 1
+      return new Response('{}')
+    }) as unknown as typeof fetch
+    try {
+      await expect(fetchClaudeNativeUsage()).rejects.toThrow(
+        CLAUDE_API_KEY_USAGE_UNAVAILABLE,
+      )
+      expect(requests).toBe(0)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
   })
 
   test('retains only explicitly reported model-scoped weekly limits', () => {

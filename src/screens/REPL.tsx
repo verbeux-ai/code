@@ -266,6 +266,7 @@ import { useNpmDeprecationNotification } from 'src/hooks/notifs/useNpmDeprecatio
 import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js';
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
 import { useCanSwitchToExistingSubscription } from 'src/hooks/notifs/useCanSwitchToExistingSubscription.js';
+import { useClaudeLoginRetiredNotification } from 'src/hooks/notifs/useClaudeLoginRetiredNotification.js';
 import { useTeammateLifecycleNotification } from 'src/hooks/notifs/useTeammateShutdownNotification.js';
 import { useFastModeNotification } from 'src/hooks/notifs/useFastModeNotification.js';
 import type { HookProgress } from '../types/hooks.js';
@@ -742,6 +743,8 @@ export function REPL({
   // notifications
   useModelMigrationNotifications();
   useCanSwitchToExistingSubscription();
+  // VERBOO-BRAND: aviso único da remoção do login Claude por assinatura.
+  useClaudeLoginRetiredNotification();
   useIDEStatusIndicator({
     ideSelection,
     mcpClients,

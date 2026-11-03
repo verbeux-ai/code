@@ -77,8 +77,9 @@ test('401 "token expired" surfaces a re-auth hint, not the generic API-key hint 
   })
 
   expect(failure.category).toBe('auth_invalid')
-  expect(failure.hint).toContain('/onboard-github')
-  expect(failure.hint).toContain('/login')
+  // VERBOO-BRAND: /onboard-github was removed; Codex is the OAuth login left.
+  expect(failure.hint).toContain('/codex login')
+  expect(failure.hint).not.toContain('/onboard-github')
   expect(failure.hint).not.toContain('API key')
 })
 

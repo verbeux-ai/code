@@ -1,11 +1,16 @@
 import { isBareMode, isEnvTruthy } from './envUtils.js'
-import { getSecureStorage } from './secureStorage/index.js'
+import { getSecureStorage, type SecureStorageData } from './secureStorage/index.js'
+import { plainTextStorage } from './secureStorage/plainTextStorage.js'
 import { exchangeForCopilotToken } from '../services/github/deviceFlow.js'
 
 /** JSON key in the shared Verboo Code secure storage blob. */
 export const GITHUB_MODELS_STORAGE_KEY = 'githubModels' as const
 export const GITHUB_MODELS_HYDRATED_ENV_MARKER =
   'CLAUDE_CODE_GITHUB_TOKEN_HYDRATED' as const
+
+// VERBOO-BRAND: o login GitHub Copilot foi removido do Verboo Code. Tokens
+// salvos são ignorados e apagados na inicialização (purgeGithubModelsCredentials).
+const GITHUB_MODELS_LOGIN_RETIRED = true
 
 export type GithubModelsCredentialBlob = {
   accessToken: string
@@ -44,6 +49,7 @@ function checkGithubTokenStatus(token: string): GithubTokenStatus {
 }
 
 export function readGithubModelsToken(): string | undefined {
+  if (GITHUB_MODELS_LOGIN_RETIRED) return undefined // VERBOO-BRAND
   if (isBareMode()) return undefined
   try {
     const data = getSecureStorage().read() as
@@ -57,6 +63,7 @@ export function readGithubModelsToken(): string | undefined {
 }
 
 export async function readGithubModelsTokenAsync(): Promise<string | undefined> {
+  if (GITHUB_MODELS_LOGIN_RETIRED) return undefined // VERBOO-BRAND
   if (isBareMode()) return undefined
   try {
     const data = (await getSecureStorage().readAsync()) as
@@ -106,6 +113,7 @@ export function hydrateGithubModelsTokenFromSecureStorage(): void {
  * exchange the OAuth token for a fresh Copilot token and persist it.
  */
 export async function refreshGithubModelsTokenIfNeeded(): Promise<boolean> {
+  if (GITHUB_MODELS_LOGIN_RETIRED) return false // VERBOO-BRAND
   if (!isEnvTruthy(process.env.CLAUDE_CODE_USE_GITHUB)) {
     return false
   }
@@ -195,4 +203,29 @@ export function clearGithubModelsToken(): { success: boolean; warning?: string }
   const next = { ...(prev as Record<string, unknown>) }
   delete next[GITHUB_MODELS_STORAGE_KEY]
   return secureStorage.update(next as typeof prev)
+}
+
+/**
+ * VERBOO-BRAND: removes a stored GitHub Copilot login from both the native
+ * vault and the plain-text fallback file. Never throws; returns whether
+ * anything was removed.
+ */
+export function purgeGithubModelsCredentials(): boolean {
+  if (isBareMode()) return false
+  let removed = false
+  for (const storage of [
+    getSecureStorage({ allowPlainTextFallback: false }),
+    plainTextStorage,
+  ]) {
+    try {
+      const prev = storage.read() as Record<string, unknown> | null
+      if (!prev || !(GITHUB_MODELS_STORAGE_KEY in prev)) continue
+      const next = { ...prev }
+      delete next[GITHUB_MODELS_STORAGE_KEY]
+      if (storage.update(next as SecureStorageData).success) removed = true
+    } catch {
+      // A missing or locked vault must not block startup.
+    }
+  }
+  return removed
 }

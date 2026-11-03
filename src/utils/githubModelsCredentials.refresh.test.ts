@@ -27,7 +27,8 @@ describe('refreshGithubModelsTokenIfNeeded', () => {
     }
   })
 
-  test('refreshes expired Copilot token using stored OAuth token', async () => {
+  // VERBOO-BRAND: o login GitHub Copilot foi removido; nada é renovado.
+  test('never refreshes a stored Copilot token', async () => {
     process.env.CLAUDE_CODE_USE_GITHUB = '1'
     delete process.env.CLAUDE_CODE_SIMPLE
     delete process.env.GITHUB_TOKEN
@@ -64,15 +65,11 @@ describe('refreshGithubModelsTokenIfNeeded', () => {
     const { refreshGithubModelsTokenIfNeeded } = await importFreshModule()
 
     const refreshed = await refreshGithubModelsTokenIfNeeded()
-    expect(refreshed).toBe(true)
-    expect(process.env.GITHUB_TOKEN?.startsWith('tid=fresh;exp=')).toBe(true)
-
-    const githubModels = (store.githubModels ?? {}) as {
-      accessToken?: string
-      oauthAccessToken?: string
-    }
-    expect(githubModels.accessToken?.startsWith('tid=fresh;exp=')).toBe(true)
-    expect(githubModels.oauthAccessToken).toBe('ghu_oauth_secret')
+    expect(refreshed).toBe(false)
+    expect(process.env.GITHUB_TOKEN).toBeUndefined()
+    expect((store.githubModels as { accessToken?: string }).accessToken).toBe(
+      'tid=stale;exp=1;sku=free',
+    )
   })
 
   test('does not refresh when current Copilot token is valid', async () => {
@@ -111,8 +108,6 @@ describe('refreshGithubModelsTokenIfNeeded', () => {
     const refreshed = await refreshGithubModelsTokenIfNeeded()
     expect(refreshed).toBe(false)
     expect(exchangeSpy).not.toHaveBeenCalled()
-    expect(process.env.GITHUB_TOKEN?.startsWith('tid=already-valid;exp=')).toBe(
-      true,
-    )
+    expect(process.env.GITHUB_TOKEN).toBeUndefined()
   })
 })

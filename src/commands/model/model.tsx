@@ -918,7 +918,7 @@ async function callVerbooModel(
   }
   if (COMMON_HELP_ARGS.includes(trimmedArgs)) {
     onDone(
-      'Use /model para listar os modelos liberados, /model refresh para atualizar o catálogo ou /model <id> para selecionar um ID exato. /codex adiciona modelos Codex e /claude adiciona modelos Claude nativos.',
+      'Use /model para listar os modelos liberados, /model refresh para atualizar o catálogo ou /model <id> para selecionar um ID exato. /codex adiciona modelos Codex e /claude conecta sua chave de API da Anthropic para usar modelos Claude.',
       { display: 'system' },
     )
     return

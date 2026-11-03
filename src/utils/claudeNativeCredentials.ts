@@ -1,84 +1,92 @@
-import { createCombinedAbortSignal } from './combinedAbortSignal.js'
+import { createHash } from 'crypto'
+
 import { isBareMode } from './envUtils.js'
 import { getSecureStorage } from './secureStorage/index.js'
 import {
-  CLAUDE_NATIVE_CLIENT_ID,
-  CLAUDE_NATIVE_SCOPES,
-  CLAUDE_NATIVE_TOKEN_URL,
-  CLAUDE_RISK_NOTICE_VERSION,
-} from '../services/api/claudeNativeConfig.js'
-import {
+  isClaudeApiKeyCredential,
   normalizeClaudeNativeCredentials,
+  type ClaudeApiKeyCredentialBlob,
   type ClaudeNativeCredentialBlob,
-  type ClaudeRiskAcceptance,
 } from './providerAccounts/credentials.js'
 import {
   removeProviderAccount,
   upsertProviderAccount,
 } from './providerAccounts/store.js'
 import { normalizeProviderAccounts } from './providerAccounts/store.js'
-import { AccountWorkRegistry } from './providerAccounts/refreshRegistry.js'
 import type { LocalProviderAccountId } from './providerAccounts/types.js'
 
 export type {
+  ClaudeApiKeyCredentialBlob,
   ClaudeNativeCredentialBlob,
-  ClaudeRiskAcceptance,
 } from './providerAccounts/credentials.js'
 
 export const CLAUDE_NATIVE_STORAGE_KEY = 'claudeNative' as const
-const REFRESH_SKEW_MS = 60_000
-const REFRESH_FAILURE_COOLDOWN_MS = 60_000
-
-type RefreshResponse = {
-  access_token?: string
-  refresh_token?: string
-  expires_in?: number
-  scope?: string
-}
-
-type ClaudeRefreshResult = {
-  refreshed: boolean
-  credentials?: ClaudeNativeCredentialBlob
-}
-
-const claudeRefreshRegistry = new AccountWorkRegistry<ClaudeRefreshResult>()
-const inMemoryLastRefreshFailureAt = new Map<string, number>()
-
-function trimmed(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
 
 function storage() {
   return getSecureStorage({ allowPlainTextFallback: false })
 }
 
-export function hasCurrentClaudeRiskAcceptance(
+/**
+ * Only the user's own Anthropic API key can be used. The Claude subscription
+ * login (OAuth with Claude Code's client id) was retired: Anthropic does not
+ * allow third parties to offer Claude.ai login, so stored OAuth blobs are
+ * treated as absent everywhere and removed by retireClaudeOAuthCredentials.
+ */
+export function isUsableClaudeCredential(
   credentials: ClaudeNativeCredentialBlob | undefined,
-): boolean {
-  return Boolean(
-    credentials &&
-      credentials.riskAcceptance.version === CLAUDE_RISK_NOTICE_VERSION &&
-      credentials.riskAcceptance.accountId === credentials.accountId,
-  )
+): credentials is ClaudeApiKeyCredentialBlob {
+  return isClaudeApiKeyCredential(credentials)
+}
+
+/**
+ * Stable, non-secret account identity for an API key, so re-adding the same
+ * key reuses its account instead of creating a duplicate.
+ */
+export function claudeApiKeyAccountId(apiKey: string): string {
+  const digest = createHash('sha256').update(apiKey.trim()).digest('hex')
+  return `anthropic-key-${digest.slice(0, 16)}`
+}
+
+export function buildClaudeApiKeyCredential(
+  apiKey: string,
+): ClaudeApiKeyCredentialBlob {
+  const trimmed = apiKey.trim()
+  return {
+    authType: 'api-key',
+    apiKey: trimmed,
+    accountId: claudeApiKeyAccountId(trimmed),
+    keyHint: trimmed.slice(-4),
+  }
+}
+
+/** Anthropic API keys start with sk-ant-; anything else is a typo or a token. */
+export function looksLikeAnthropicApiKey(value: string): boolean {
+  return /^sk-ant-[A-Za-z0-9_-]{20,}$/.test(value.trim())
+}
+
+function selectUsable(
+  data: Record<string, unknown> | undefined,
+  localAccountId: LocalProviderAccountId | undefined,
+): ClaudeApiKeyCredentialBlob | undefined {
+  const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
+  const accountId = localAccountId ?? providerAccounts?.claude.defaultAccountId
+  const account = accountId
+    ? providerAccounts?.claude.accounts[accountId]
+    : undefined
+  const credential = account?.credential
+    ?? normalizeClaudeNativeCredentials(data?.[CLAUDE_NATIVE_STORAGE_KEY])
+  return isUsableClaudeCredential(credential) ? credential : undefined
 }
 
 export function readClaudeNativeCredentials(
   localAccountId?: LocalProviderAccountId,
-): ClaudeNativeCredentialBlob | undefined {
+): ClaudeApiKeyCredentialBlob | undefined {
   if (isBareMode()) return undefined
   try {
-    const data = storage().read()
-    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const accountId = localAccountId ?? providerAccounts?.claude.defaultAccountId
-    const account = accountId
-      ? providerAccounts?.claude.accounts[accountId]
-      : undefined
-    if (account?.credential) return account.credential
-    return normalizeClaudeNativeCredentials(data?.claudeNative)
+    return selectUsable(
+      storage().read() as Record<string, unknown> | undefined,
+      localAccountId,
+    )
   } catch {
     return undefined
   }
@@ -86,73 +94,34 @@ export function readClaudeNativeCredentials(
 
 export async function readClaudeNativeCredentialsAsync(
   localAccountId?: LocalProviderAccountId,
-): Promise<
-  ClaudeNativeCredentialBlob | undefined
-> {
+): Promise<ClaudeApiKeyCredentialBlob | undefined> {
   if (isBareMode()) return undefined
   try {
-    const data = await storage().readAsync()
-    const providerAccounts = normalizeProviderAccounts(data?.providerAccounts)
-    const accountId = localAccountId ?? providerAccounts?.claude.defaultAccountId
-    const account = accountId
-      ? providerAccounts?.claude.accounts[accountId]
-      : undefined
-    if (account?.credential) return account.credential
-    return normalizeClaudeNativeCredentials(data?.claudeNative)
+    return selectUsable(
+      (await storage().readAsync()) as Record<string, unknown> | undefined,
+      localAccountId,
+    )
   } catch {
     return undefined
   }
 }
 
 export function saveClaudeNativeCredentials(
-  credentials: ClaudeNativeCredentialBlob,
-  options?: { localAccountId?: LocalProviderAccountId; additive?: boolean },
-): { success: boolean; warning?: string } {
+  credentials: ClaudeApiKeyCredentialBlob,
+  options?: { localAccountId?: LocalProviderAccountId },
+): { success: boolean; localAccountId?: LocalProviderAccountId; warning?: string } {
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
   }
   const normalized = normalizeClaudeNativeCredentials(credentials)
-  if (!normalized || !hasCurrentClaudeRiskAcceptance(normalized)) {
-    return {
-      success: false,
-      warning: 'As credenciais Claude ou o aceite de risco estão incompletos.',
-    }
+  if (!isUsableClaudeCredential(normalized)) {
+    return { success: false, warning: 'A chave de API da Anthropic está incompleta.' }
   }
-  const secureStorage = storage()
-  const previousData = secureStorage.read() || {}
-  const providerAccounts = normalizeProviderAccounts(previousData.providerAccounts)
-  if (!providerAccounts && !options?.additive) {
-    const next = {
-      ...(previousData as Record<string, unknown>),
-      [CLAUDE_NATIVE_STORAGE_KEY]: {
-        ...normalized,
-        lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-      },
-    }
-    const result = secureStorage.update(next as typeof previousData)
-    if (result.success) {
-      const key = accountRefreshKey(options?.localAccountId, normalized)
-      if (normalized.lastRefreshFailureAt === undefined) {
-        inMemoryLastRefreshFailureAt.delete(key)
-      } else {
-        inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
-      }
-    }
-    return result
-  }
-
   try {
-    upsertProviderAccount('claude', {
-      ...normalized,
-      lastRefreshAt: normalized.lastRefreshAt ?? Date.now(),
-    }, { reconnectLocalAccountId: options?.localAccountId })
-    const key = accountRefreshKey(options?.localAccountId, normalized)
-    if (normalized.lastRefreshFailureAt === undefined) {
-      inMemoryLastRefreshFailureAt.delete(key)
-    } else {
-      inMemoryLastRefreshFailureAt.set(key, normalized.lastRefreshFailureAt)
-    }
-    return { success: true }
+    const { localAccountId } = upsertProviderAccount('claude', normalized, {
+      reconnectLocalAccountId: options?.localAccountId,
+    })
+    return { success: true, localAccountId }
   } catch (error) {
     return {
       success: false,
@@ -172,7 +141,6 @@ export function clearClaudeNativeCredentials(): {
   if (defaultAccountId) {
     try {
       removeProviderAccount('claude', defaultAccountId)
-      inMemoryLastRefreshFailureAt.clear()
       return { success: true }
     } catch (error) {
       return {
@@ -182,115 +150,46 @@ export function clearClaudeNativeCredentials(): {
     }
   }
 
-  const secureStorage = storage()
-  const previous = raw
-  const next = { ...(previous as Record<string, unknown>) }
+  const next = { ...(raw as Record<string, unknown>) }
   delete next[CLAUDE_NATIVE_STORAGE_KEY]
-  const result = secureStorage.update(next as typeof previous)
-  if (result.success) inMemoryLastRefreshFailureAt.clear()
-  return result
+  return storage().update(next as typeof raw)
 }
 
-function shouldRefresh(credentials: ClaudeNativeCredentialBlob): boolean {
-  return (
-    credentials.expiresAt !== undefined &&
-    credentials.expiresAt <= Date.now() + REFRESH_SKEW_MS
-  )
-}
-
-function accountRefreshKey(
-  localAccountId: LocalProviderAccountId | undefined,
-  credentials: ClaudeNativeCredentialBlob,
-): string {
-  return `claude:${localAccountId ?? credentials.accountId}`
-}
-
-function coolingDown(
-  credentials: ClaudeNativeCredentialBlob,
-  key: string,
-): boolean {
-  const failedAt = Math.max(
-    credentials.lastRefreshFailureAt ?? 0,
-    inMemoryLastRefreshFailureAt.get(key) ?? 0,
-  )
-  return Boolean(failedAt && Date.now() - failedAt < REFRESH_FAILURE_COOLDOWN_MS)
-}
-
-export async function refreshClaudeNativeAccessTokenIfNeeded(options?: {
-  force?: boolean
-  localAccountId?: LocalProviderAccountId
-}): Promise<ClaudeRefreshResult> {
-  const current = await readClaudeNativeCredentialsAsync(options?.localAccountId)
-  if (!current || !hasCurrentClaudeRiskAcceptance(current)) {
-    return { refreshed: false }
-  }
-  if (!current.refreshToken) return { refreshed: false, credentials: current }
-  if (!options?.force && !shouldRefresh(current)) {
-    return { refreshed: false, credentials: current }
-  }
-  const refreshKey = accountRefreshKey(options?.localAccountId, current)
-  if (!options?.force && coolingDown(current, refreshKey)) {
-    return { refreshed: false, credentials: current }
-  }
-
-  return claudeRefreshRegistry.run(refreshKey, async () => {
-    try {
-      const form = new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: current.refreshToken!,
-        client_id: CLAUDE_NATIVE_CLIENT_ID,
-        scope: CLAUDE_NATIVE_SCOPES.join(' '),
-      })
-      const { signal, cleanup } = createCombinedAbortSignal(undefined, {
-        timeoutMs: 15_000,
-      })
-      let response: Response
-      try {
-        response = await fetch(CLAUDE_NATIVE_TOKEN_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: form,
-          signal,
-        })
-      } finally {
-        cleanup()
-      }
-      if (!response.ok) {
-        const detail = (await response.text().catch(() => '')).trim().slice(0, 500)
-        throw new Error(
-          detail
-            ? `Falha ao renovar o login Claude (${response.status}): ${detail}`
-            : `Falha ao renovar o login Claude (${response.status}).`,
-        )
-      }
-      const payload = (await response.json()) as RefreshResponse
-      const accessToken = trimmed(payload.access_token)
-      if (!accessToken) {
-        throw new Error('A renovação Claude não retornou um access token.')
-      }
-      const expiresIn = finiteNumber(payload.expires_in)
-      const next: ClaudeNativeCredentialBlob = {
-        ...current,
-        accessToken,
-        refreshToken: trimmed(payload.refresh_token) ?? current.refreshToken,
-        expiresAt: expiresIn ? Date.now() + expiresIn * 1000 : current.expiresAt,
-        scopes: trimmed(payload.scope)?.split(/\s+/).filter(Boolean) ?? current.scopes,
-        lastRefreshAt: Date.now(),
-        lastRefreshFailureAt: undefined,
-      }
-      const saved = saveClaudeNativeCredentials(next, {
-        localAccountId: options?.localAccountId,
-      })
-      if (!saved.success) throw new Error(saved.warning)
-      return { refreshed: true, credentials: next }
-    } catch (error) {
-      const failedAt = Date.now()
-      inMemoryLastRefreshFailureAt.set(refreshKey, failedAt)
-      saveClaudeNativeCredentials(
-        { ...current, lastRefreshFailureAt: failedAt },
-        { localAccountId: options?.localAccountId },
-      )
-      throw error
+/**
+ * Removes every stored Claude subscription (OAuth) login, keeping API keys.
+ * Returns how many logins were removed so the caller can tell the user once.
+ * Failures are reported, never thrown: startup must not depend on this.
+ */
+export function retireClaudeOAuthCredentials(): {
+  removed: number
+  warning?: string
+} {
+  if (isBareMode()) return { removed: 0 }
+  try {
+    const raw = storage().read() || {}
+    const providerAccounts = normalizeProviderAccounts(raw.providerAccounts)
+    let removed = 0
+    for (const account of Object.values(providerAccounts?.claude.accounts ?? {})) {
+      if (isUsableClaudeCredential(account.credential)) continue
+      removeProviderAccount('claude', account.localAccountId)
+      removed += 1
     }
-  })
+    const after = storage().read() || {}
+    const legacy = normalizeClaudeNativeCredentials(
+      (after as Record<string, unknown>)[CLAUDE_NATIVE_STORAGE_KEY],
+    )
+    if (legacy && !isUsableClaudeCredential(legacy)) {
+      const next = { ...(after as Record<string, unknown>) }
+      delete next[CLAUDE_NATIVE_STORAGE_KEY]
+      const result = storage().update(next as typeof after)
+      if (!result.success) return { removed, warning: result.warning }
+      if (removed === 0) removed = 1
+    }
+    return { removed }
+  } catch (error) {
+    return {
+      removed: 0,
+      warning: error instanceof Error ? error.message : 'secure_storage_read_failed',
+    }
+  }
 }

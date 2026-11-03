@@ -17,7 +17,15 @@ export type ClaudeRiskAcceptance = {
   accountId: string
 }
 
-export type ClaudeNativeCredentialBlob = {
+/**
+ * Retired Claude subscription login (OAuth with Claude Code's client id).
+ * Anthropic does not allow third parties to offer Claude.ai login, so these
+ * blobs are never used for requests anymore. They are still parsed so that
+ * stored accounts can be found and removed (see retireClaudeOAuthCredentials)
+ * without breaking normalization of the other providers' accounts.
+ */
+export type ClaudeOAuthCredentialBlob = {
+  authType?: 'oauth'
   accessToken: string
   refreshToken?: string
   expiresAt?: number
@@ -30,6 +38,26 @@ export type ClaudeNativeCredentialBlob = {
   riskAcceptance: ClaudeRiskAcceptance
   lastRefreshAt?: number
   lastRefreshFailureAt?: number
+}
+
+/** The user's own Anthropic API key (Console), billed per use by Anthropic. */
+export type ClaudeApiKeyCredentialBlob = {
+  authType: 'api-key'
+  apiKey: string
+  /** Stable, non-secret identity derived from the key (see claudeApiKeyAccountId). */
+  accountId: string
+  /** Last characters of the key, for status output. */
+  keyHint: string
+}
+
+export type ClaudeNativeCredentialBlob =
+  | ClaudeOAuthCredentialBlob
+  | ClaudeApiKeyCredentialBlob
+
+export function isClaudeApiKeyCredential(
+  credentials: ClaudeNativeCredentialBlob | undefined,
+): credentials is ClaudeApiKeyCredentialBlob {
+  return credentials?.authType === 'api-key'
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -51,6 +79,13 @@ export function normalizeClaudeNativeCredentials(
 ): ClaudeNativeCredentialBlob | undefined {
   if (!value || typeof value !== 'object') return undefined
   const record = value as Record<string, unknown>
+  if (record.authType === 'api-key') {
+    const apiKey = asTrimmedString(record.apiKey)
+    const accountId = asTrimmedString(record.accountId)
+    const keyHint = asTrimmedString(record.keyHint)
+    if (!apiKey || !accountId || !keyHint) return undefined
+    return { authType: 'api-key', apiKey, accountId, keyHint }
+  }
   const accessToken = asTrimmedString(record.accessToken)
   const accountId = asTrimmedString(record.accountId)
   const riskAcceptance = normalizeRiskAcceptance(record.riskAcceptance)

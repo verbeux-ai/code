@@ -40,14 +40,10 @@ import {
 } from './claudeNativeModels.js'
 import { getCachedVerbooModels } from './verbooModels.js'
 import { DEFAULT_CODEX_BASE_URL } from './providerConfig.js'
+import { CLAUDE_NATIVE_API_BASE_URL } from './claudeNativeConfig.js'
 import {
-  CLAUDE_NATIVE_API_BASE_URL,
-  CLAUDE_NATIVE_OAUTH_BETA,
-} from './claudeNativeConfig.js'
-import {
-  hasCurrentClaudeRiskAcceptance,
+  isUsableClaudeCredential,
   readClaudeNativeCredentialsAsync,
-  refreshClaudeNativeAccessTokenIfNeeded,
 } from '../../utils/claudeNativeCredentials.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
@@ -318,6 +314,12 @@ export async function getAnthropicClient({
         ? selectedAccount.accountId
         : undefined
     const { createOpenAIShimClient } = await import('./openaiShim.js')
+    // Third-party providers (Codex, the user's Anthropic key) get only a
+    // User-Agent: the session id, x-app and custom headers belong to the
+    // Verboo router and must not identify the CLI as another product.
+    const thirdPartyHeaders: { [key: string]: string } = {
+      'User-Agent': getUserAgent(),
+    }
 
     const verbooModel = getCachedVerbooModels()?.find(
       candidate => candidate.id === requestedModel,
@@ -354,7 +356,7 @@ export async function getAnthropicClient({
         selectedCodexAccountId,
       )
       return createOpenAIShimClient({
-        defaultHeaders,
+        defaultHeaders: thirdPartyHeaders,
         maxRetries,
         timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
         reasoningEffort: shimReasoningEffort,
@@ -377,66 +379,21 @@ export async function getAnthropicClient({
         requestedModel,
         selectedClaudeAccountId,
       )
-      const refreshed = await refreshClaudeNativeAccessTokenIfNeeded({
-        localAccountId: selectedClaudeAccountId,
-      })
-      const credentials =
-        refreshed.credentials ??
-        (await readClaudeNativeCredentialsAsync(selectedClaudeAccountId))
-      if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
+      const credentials = await readClaudeNativeCredentialsAsync(
+        selectedClaudeAccountId,
+      )
+      if (!isUsableClaudeCredential(credentials)) {
         throw new Error(
-          'Login Claude ausente ou aceite de risco desatualizado. Execute `/claude login`.',
+          'Claude não conectado. Execute `/claude login` com sua chave de API da Anthropic.',
         )
       }
-
-      const safeHeaders: Record<string, string> = {}
-      for (const [key, value] of Object.entries(defaultHeaders)) {
-        const lower = key.toLowerCase()
-        if (
-          lower === 'authorization' ||
-          lower === 'x-api-key' ||
-          lower === 'api-key'
-        ) {
-          continue
-        }
-        safeHeaders[key] = value
-      }
-      const inheritedBetas = safeHeaders['anthropic-beta']
-        ?.split(',')
-        .map(value => value.trim())
-        .filter(Boolean) ?? []
-      safeHeaders['anthropic-beta'] = Array.from(
-        new Set([...inheritedBetas, CLAUDE_NATIVE_OAUTH_BETA]),
-      ).join(',')
-
-      const baseFetch = resolvedFetch ?? globalThis.fetch
-      const nativeFetch: ClientOptions['fetch'] = async (input, init) => {
-        const response = await baseFetch(input, init)
-        if (response.status !== 401) return response
-        try {
-          const retry = await refreshClaudeNativeAccessTokenIfNeeded({
-            force: true,
-            localAccountId: selectedClaudeAccountId,
-          })
-          if (!retry.credentials?.accessToken) return response
-          const retryHeaders = new Headers(init?.headers)
-          retryHeaders.set(
-            'Authorization',
-            `Bearer ${retry.credentials.accessToken}`,
-          )
-          return await baseFetch(input, { ...init, headers: retryHeaders })
-        } catch {
-          return response
-        }
-      }
-
+      // The user's own Anthropic API key, billed by Anthropic.
       return new Anthropic({
         ...ARGS,
         baseURL: CLAUDE_NATIVE_API_BASE_URL,
-        apiKey: null,
-        authToken: credentials.accessToken,
-        defaultHeaders: safeHeaders,
-        fetch: nativeFetch,
+        apiKey: credentials.apiKey,
+        authToken: null,
+        defaultHeaders: thirdPartyHeaders,
       })
     }
 

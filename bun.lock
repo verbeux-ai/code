@@ -102,7 +102,7 @@
         "typescript": "5.9.3",
       },
       "optionalDependencies": {
-        "@vscode/ripgrep": "^1.15.14",
+        "@vscode/ripgrep": "^1.17.1",
       },
     },
   },

@@ -40,3 +40,18 @@ test('the release package is exercised on Linux, macOS and Windows with both sup
   expect(workflow.jobs.python).toBeDefined()
   expect(workflow.jobs.web).toBeDefined()
 })
+
+test('every third-party action is pinned to a full commit SHA', () => {
+  const { readdirSync } = require('node:fs') as typeof import('node:fs')
+  const unpinned: string[] = []
+  for (const name of readdirSync('.github/workflows')) {
+    if (!/\.ya?ml$/.test(name)) continue
+    const text = readFileSync(`.github/workflows/${name}`, 'utf8')
+    for (const match of text.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)/gm)) {
+      const ref = match[1]!
+      if (ref.startsWith('./')) continue
+      if (!/@[0-9a-f]{40}$/.test(ref)) unpinned.push(`${name}: ${ref}`)
+    }
+  }
+  expect(unpinned).toEqual([])
+})

@@ -78,6 +78,8 @@ import { parseCustomHeadersEnv } from '../../utils/providerCustomHeaders.js'
 import { getClaudeAIOAuthTokensAsync } from '../../utils/auth.js'
 import { readCodexCredentialsAsync } from '../../utils/codexCredentials.js'
 import { readClaudeNativeCredentialsAsync } from '../../utils/claudeNativeCredentials.js'
+import { readOpenAIApiKeyCredentialAsync } from '../../utils/openaiApiKeyCredentials.js'
+import { fetchOpenAIApiModels, getCachedOpenAIApiModels } from '../../services/api/openaiApiModels.js'
 import {
   getActiveOpenAIModelOptionsCache,
   getActiveProviderProfile,
@@ -781,7 +783,7 @@ type UnlockedModel = {
   displayName: string
   description?: string
   contextWindow?: number
-  provider: 'verboo' | 'codex' | 'claude'
+  provider: 'verboo' | 'codex' | 'claude' | 'openai'
 }
 
 async function loadUnlockedModels(force = false): Promise<UnlockedModel[]> {
@@ -849,6 +851,27 @@ async function loadUnlockedModels(force = false): Promise<UnlockedModel[]> {
       // Claude is optional and always lower priority than Verboo and Codex.
     }
   }
+
+  const cachedOpenAI = getCachedOpenAIApiModels()
+  const openaiModels = cachedOpenAI && !force
+    ? cachedOpenAI
+    : (await readOpenAIApiKeyCredentialAsync())
+      ? await fetchOpenAIApiModels({ force }).catch(() => [])
+      : []
+  // Catalog ids are prefixed (openai-api/…), so they never shadow Codex or
+  // Verboo models with the same GPT name.
+  const seenIds = new Set(models.map(model => model.id))
+  for (const model of openaiModels) {
+    if (!seenIds.has(model.id)) {
+      models.push({
+        id: model.id,
+        displayName: model.displayName,
+        description: model.description,
+        provider: 'openai',
+      })
+      seenIds.add(model.id)
+    }
+  }
   return models
 }
 
@@ -861,7 +884,7 @@ function unlockedModelOptions(models: UnlockedModel[]): ModelOption[] {
       (model.contextWindow
         ? `${Math.round(model.contextWindow / 1000)}K context`
         : model.id)
-    }${model.provider === 'claude' ? ' · via Claude nativo' : model.provider === 'codex' ? ' · via Codex' : ''}`,
+    }${model.provider === 'claude' ? ' · via sua chave Anthropic' : model.provider === 'codex' ? ' · via Codex' : ''}`,
   }))
 }
 

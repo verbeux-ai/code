@@ -41,6 +41,8 @@ import {
 import { getCachedVerbooModels } from './verbooModels.js'
 import { DEFAULT_CODEX_BASE_URL } from './providerConfig.js'
 import { CLAUDE_NATIVE_API_BASE_URL } from './claudeNativeConfig.js'
+import { getOpenAIApiModel, OPENAI_API_BASE_URL } from './openaiApiModels.js'
+import { readOpenAIApiKeyCredentialAsync } from '../../utils/openaiApiKeyCredentials.js'
 import {
   isUsableClaudeCredential,
   readClaudeNativeCredentialsAsync,
@@ -395,6 +397,29 @@ export async function getAnthropicClient({
         authToken: null,
         defaultHeaders: thirdPartyHeaders,
       })
+    }
+
+    const openaiModel = getOpenAIApiModel(requestedModel)
+    if (openaiModel) {
+      const credential = await readOpenAIApiKeyCredentialAsync()
+      if (!credential) {
+        throw new Error(
+          'OpenAI não conectada. Execute `/openai login` com sua chave de API.',
+        )
+      }
+      // The user's own OpenAI API key, billed by OpenAI.
+      return createOpenAIShimClient({
+        defaultHeaders: thirdPartyHeaders,
+        maxRetries,
+        timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+        reasoningEffort: shimReasoningEffort,
+        suppressReasoningEffort,
+        providerOverride: {
+          model: openaiModel.upstreamId,
+          baseURL: OPENAI_API_BASE_URL,
+          apiKey: credential.apiKey,
+        },
+      }) as unknown as Anthropic
     }
 
     throw new Error(

@@ -7,6 +7,7 @@ import { VERBOO_ROUTER_URL, isVerbooMode } from '../constants/oauth.js'
 import { getCachedClaudeNativeModels } from '../services/api/claudeNativeModels.js'
 import { CLAUDE_NATIVE_API_BASE_URL } from '../services/api/claudeNativeConfig.js'
 import { getCachedCodexModels } from '../services/api/codexModels.js'
+import { getCachedOpenAIApiModels, OPENAI_API_BASE_URL } from '../services/api/openaiApiModels.js'
 import { DEFAULT_CODEX_BASE_URL, isLocalProviderUrl, resolveProviderRequest } from '../services/api/providerConfig.js'
 import { getCachedVerbooModels } from '../services/api/verbooModels.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../utils/providerDiscovery.js'
@@ -32,13 +33,15 @@ function resolveVerbooStartupModel(modelOverride?: string): string {
   const verbooModels = getCachedVerbooModels()
   const codexModels = getCachedCodexModels()
   const claudeModels = getCachedClaudeNativeModels()
+  const openaiModels = getCachedOpenAIApiModels()
   const availableModels = [
     ...(verbooModels ?? []),
     ...(codexModels ?? []),
     ...(claudeModels ?? []),
+    ...(openaiModels ?? []),
   ]
   const catalogsLoaded =
-    verbooModels !== null || codexModels !== null || claudeModels !== null
+    verbooModels !== null || codexModels !== null || claudeModels !== null || openaiModels !== null
   const resolveIfAvailable = (model: unknown): string | undefined => {
     if (typeof model !== 'string') return undefined
     const trimmed = model.trim()
@@ -70,7 +73,9 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
         ? DEFAULT_CODEX_BASE_URL
         : identity.provider === 'Claude'
           ? CLAUDE_NATIVE_API_BASE_URL
-          : VERBOO_ROUTER_URL
+          : identity.provider === 'OpenAI'
+            ? OPENAI_API_BASE_URL
+            : VERBOO_ROUTER_URL
     return {
       name: identity.provider,
       model: identity.model,

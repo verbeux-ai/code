@@ -21,4 +21,19 @@ describe('classifyActiveModelProvider', () => {
     expect(classifyActiveModelProvider('claude-sonnet-4-6[1m]', emptyCatalogs)).toBe('Claude')
     expect(classifyActiveModelProvider('ultra/minimax-m3', emptyCatalogs)).toBe('Verboo')
   })
+
+  test('models reached with the user\'s OpenAI key are labeled OpenAI, not Codex', () => {
+    const catalogs = {
+      verboo: [{ id: 'verboo-ultra' }],
+      codex: [{ id: 'gpt-5.5' }],
+      claude: null,
+      openai: [{ id: 'openai-api/gpt-5.5' }],
+    }
+
+    expect(classifyActiveModelProvider('gpt-5.5', catalogs)).toBe('Codex')
+    expect(classifyActiveModelProvider('openai-api/gpt-5.5', catalogs)).toBe('OpenAI')
+    expect(
+      classifyActiveModelProvider('openai-api/o4-mini', { verboo: null, codex: null, claude: null }),
+    ).toBe('OpenAI')
+  })
 })

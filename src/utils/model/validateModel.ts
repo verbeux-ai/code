@@ -17,6 +17,7 @@ import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 import { getCachedCodexModels } from '../../services/api/codexModels.js'
 import { getCachedClaudeNativeModels } from '../../services/api/claudeNativeModels.js'
+import { getCachedOpenAIApiModels } from '../../services/api/openaiApiModels.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -39,7 +40,8 @@ export async function validateModel(
     const verbooModels = getCachedVerbooModels()
     const codexModels = getCachedCodexModels() ?? []
     const claudeModels = getCachedClaudeNativeModels() ?? []
-    const unlocked = [...(verbooModels ?? []), ...codexModels, ...claudeModels]
+    const openaiModels = getCachedOpenAIApiModels() ?? []
+    const unlocked = [...(verbooModels ?? []), ...codexModels, ...claudeModels, ...openaiModels]
     if (unlocked.some(model => model.id === normalizedModel)) {
       validModelCache.set(normalizedModel, true)
       return { valid: true }

@@ -19,6 +19,8 @@ import {
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { saveGlobalConfig } from '../../utils/config.js'
 import { purgeGithubModelsCredentials } from '../../utils/githubModelsCredentials.js'
+import { readOpenAIApiKeyCredentialAsync } from '../../utils/openaiApiKeyCredentials.js'
+import { clearOpenAIApiModelsCache, fetchOpenAIApiModels } from '../api/openaiApiModels.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
@@ -462,6 +464,19 @@ async function primeClaudeCatalogIfAuthenticated(): Promise<void> {
   }
 }
 
+async function primeOpenAICatalogIfConnected(): Promise<void> {
+  if (!(await readOpenAIApiKeyCredentialAsync())) return
+  clearOpenAIApiModelsCache()
+  try {
+    await fetchOpenAIApiModels({ force: true })
+  } catch (error) {
+    logForDebugging(
+      `[VerbooStartup] Não foi possível atualizar o catálogo OpenAI opcional: ${errorMessage(error)}`,
+      { level: 'warn' },
+    )
+  }
+}
+
 async function loadVerbooCatalog(accessToken: string): Promise<void> {
   clearVerbooModelsCache()
   const models = await fetchVerbooModels(accessToken, { force: true })
@@ -568,6 +583,7 @@ export async function ensureVerbooAuthenticated(
     await loadVerbooCatalog(session.tokens.accessToken)
     await primeCodexCatalogIfAuthenticated()
     await primeClaudeCatalogIfAuthenticated()
+    await primeOpenAICatalogIfConnected()
     validated = true
     return
   }
@@ -586,6 +602,7 @@ export async function ensureVerbooAuthenticated(
     await loadVerbooCatalog(stored.accessToken)
     await primeCodexCatalogIfAuthenticated()
     await primeClaudeCatalogIfAuthenticated()
+    await primeOpenAICatalogIfConnected()
     validated = true
     return
   }
@@ -646,5 +663,6 @@ export async function ensureVerbooAuthenticated(
   await loadVerbooCatalog(accessToken)
   await primeCodexCatalogIfAuthenticated()
   await primeClaudeCatalogIfAuthenticated()
+  await primeOpenAICatalogIfConnected()
   validated = true
 }

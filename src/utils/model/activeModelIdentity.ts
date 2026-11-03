@@ -1,8 +1,12 @@
 import { getCachedClaudeNativeModels } from '../../services/api/claudeNativeModels.js'
 import { getCachedCodexModels } from '../../services/api/codexModels.js'
+import {
+  getCachedOpenAIApiModels,
+  OPENAI_API_MODEL_PREFIX,
+} from '../../services/api/openaiApiModels.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 
-export type ActiveModelProvider = 'Verboo' | 'Codex' | 'Claude'
+export type ActiveModelProvider = 'Verboo' | 'Codex' | 'Claude' | 'OpenAI'
 
 type ModelReference = { id: string }
 
@@ -10,6 +14,7 @@ export type ActiveModelCatalogs = {
   verboo: readonly ModelReference[] | null
   codex: readonly ModelReference[] | null
   claude: readonly ModelReference[] | null
+  openai?: readonly ModelReference[] | null
 }
 
 function comparableModelId(modelId: string): string {
@@ -35,6 +40,8 @@ export function classifyActiveModelProvider(
   if (catalogContains(catalogs.verboo, comparable)) return 'Verboo'
   if (catalogContains(catalogs.codex, comparable)) return 'Codex'
   if (catalogContains(catalogs.claude, comparable)) return 'Claude'
+  if (catalogContains(catalogs.openai ?? null, comparable)) return 'OpenAI'
+  if (comparable.startsWith(OPENAI_API_MODEL_PREFIX)) return 'OpenAI'
 
   // Catalogs are normally primed before the interactive UI appears. These
   // fallbacks keep early/degraded startup labels useful without changing the
@@ -58,6 +65,7 @@ export function getActiveModelIdentity(modelId: string): {
       verboo: getCachedVerbooModels(),
       codex: getCachedCodexModels(),
       claude: getCachedClaudeNativeModels(),
+      openai: getCachedOpenAIApiModels(),
     }),
     model,
   }

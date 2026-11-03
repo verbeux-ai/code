@@ -546,7 +546,9 @@ export function Config({
     onChange(mode: string) {
       const parsedMode = permissionModeFromString(mode);
       // Internal modes (e.g. auto) are stored directly
-      const validatedMode = isExternalPermissionMode(parsedMode) ? toExternalPermissionMode(parsedMode) : parsedMode;
+      // VERBOO-BRAND: isExternalPermissionMode() is always true outside ant
+      // builds, so "auto" was converted to "default" and the choice was lost.
+      const validatedMode = parsedMode === 'auto' ? parsedMode : isExternalPermissionMode(parsedMode) ? toExternalPermissionMode(parsedMode) : parsedMode;
       const result = updateSettingsForSource('userSettings', {
         permissions: {
           ...settingsData?.permissions,

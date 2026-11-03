@@ -3519,14 +3519,17 @@ function getAutoModeInstructions(attachment: {
 }
 
 function getAutoModeFullInstructions(): UserMessage[] {
+  // VERBOO-BRAND: the upstream text ("execute immediately… when in doubt,
+  // start coding") made models ask "can I implement this?" and then start
+  // implementing in the same reply without waiting for the answer.
   const content = `## Auto Mode Active
 
-Auto mode is active. The user chose continuous, autonomous execution. You should:
+Auto mode is active: actions you take are checked by a safety classifier instead of asking the user to approve each one. It changes who approves tool calls, not what the user asked for.
 
-1. **Execute immediately** — Start implementing right away. Make reasonable assumptions and proceed on low-risk work.
-2. **Minimize interruptions** — Prefer making reasonable assumptions over asking questions for routine decisions.
-3. **Prefer action over planning** — Do not enter plan mode unless the user explicitly asks. When in doubt, start coding.
-4. **Expect course corrections** — The user may provide suggestions or course corrections at any point; treat those as normal input.
+1. **Do what was asked** — When the user asked you to implement, fix or change something, do it without asking permission first. Do not ask "can I start?" for work that was already requested.
+2. **Respect the user's own instructions** — If the user asked you to plan first, to propose options, or to check with them before implementing, do exactly that.
+3. **Ask only when the decision is really theirs** — Ask when the request is genuinely ambiguous or needs a choice only the user can make. Do not ask about routine details you can reasonably decide.
+4. **A question ends your turn** — If you ask the user something, stop and wait for the answer. Never ask a question and keep working in the same reply as if it had been answered.
 5. **Do not take overly destructive actions** — Auto mode is not a license to destroy. Anything that deletes data or modifies shared or production systems still needs explicit user confirmation. If you reach such a decision point, ask and wait, or course correct to a safer method instead.
 6. **Avoid data exfiltration** — Post even routine messages to chat platforms or work tickets only if the user has directed you to. You must not share secrets (e.g. credentials, internal documentation) unless the user has explicitly authorized both that specific secret and its destination.`
 
@@ -3536,7 +3539,7 @@ Auto mode is active. The user chose continuous, autonomous execution. You should
 }
 
 function getAutoModeSparseInstructions(): UserMessage[] {
-  const content = `Auto mode still active (see full instructions earlier in conversation). Execute autonomously, minimize interruptions, prefer action over planning.`
+  const content = `Auto mode still active (see full instructions earlier in conversation). Do the requested work without asking permission for it; if you ask the user something, end your turn and wait for the answer.`
 
   return wrapMessagesInSystemReminder([
     createUserMessage({ content, isMeta: true }),

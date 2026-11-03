@@ -4,9 +4,9 @@
  *
  * OpenClaude does not phone home. This module replaces the original
  * analytics-driven GrowthBook client with a local-only implementation that
- * reads feature flags from ~/.claude/feature-flags.json for developer overrides.
+ * reads feature flags from ~/.verboo/feature-flags.json for developer overrides.
  *
- * Priority: CLAUDE_FEATURE_FLAGS_FILE env > ~/.claude/feature-flags.json > defaultValue
+ * Priority: CLAUDE_FEATURE_FLAGS_FILE env > ~/.verboo/feature-flags.json > defaultValue
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -25,7 +25,9 @@ const _openBuildDefaults: Record<string, unknown> = {
 	// kill switch that defaults to 'disabled' when the config is absent, which
 	// made auto mode unreachable in this build. 'enabled' exposes it in the
 	// carousel; the opt-in dialog is still shown on first entry.
-	tengu_auto_mode_config: { enabled: 'enabled' },
+	// jsonlTranscript: the classifier sees tool calls as JSON lines, so a command
+	// or file content cannot forge a "User:" line and fake the user's approval.
+	tengu_auto_mode_config: { enabled: 'enabled', jsonlTranscript: true },
 }
 
 let _flags: Record<string, unknown> | null | undefined = undefined
@@ -33,9 +35,10 @@ let _flags: Record<string, unknown> | null | undefined = undefined
 function _loadFlags(): void {
 	if (_flags !== undefined) return
 	try {
+		// VERBOO-BRAND: the overrides file lives in the Verboo config dir.
 		const flagsPath =
 			process.env.CLAUDE_FEATURE_FLAGS_FILE ||
-			join(homedir(), '.claude', 'feature-flags.json')
+			join(process.env.VERBOO_CONFIG_DIR || join(homedir(), '.verboo'), 'feature-flags.json')
 		const parsed = JSON.parse(readFileSync(flagsPath, 'utf-8'))
 		_flags =
 			parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
@@ -44,10 +47,22 @@ function _loadFlags(): void {
 	}
 }
 
+function _isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function _getFlagValue<T>(key: string, defaultValue: T): T {
 	_loadFlags()
-	if (_flags != null && Object.hasOwn(_flags as object, key))
-		return (_flags as Record<string, unknown>)[key] as T
+	if (_flags != null && Object.hasOwn(_flags as object, key)) {
+		const value = (_flags as Record<string, unknown>)[key]
+		// VERBOO-BRAND: an object override is merged over the open-build default,
+		// so {"tengu_auto_mode_config":{"model":"x"}} keeps auto mode enabled.
+		const base = _openBuildDefaults[key]
+		if (_isPlainObject(base) && _isPlainObject(value)) {
+			return { ...base, ...value } as T
+		}
+		return value as T
+	}
 	if (Object.hasOwn(_openBuildDefaults, key))
 		return _openBuildDefaults[key] as T
 	return defaultValue

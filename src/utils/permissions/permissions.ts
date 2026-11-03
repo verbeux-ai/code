@@ -844,6 +844,28 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
         // When classifier is unavailable (API error), behavior depends on
         // the tengu_iron_gate_closed gate.
         if (classifierResult.unavailable) {
+          // VERBOO-BRAND: in an interactive session a classifier that is down,
+          // slow or answered out of format never blocks the action and never
+          // allows it on its own: the user gets the normal permission prompt,
+          // like Claude Code falling back to manual approval. Headless sessions
+          // keep the fail-closed deny below.
+          if (
+            !appState.toolPermissionContext.shouldAvoidPermissionPrompts &&
+            !context.abortController.signal.aborted
+          ) {
+            logForDebugging(
+              `Auto mode classifier unavailable (${classifierResult.reason}), asking the user`,
+              { level: 'warn' },
+            )
+            return {
+              ...result,
+              decisionReason: {
+                type: 'other',
+                reason:
+                  'Auto mode classifier unavailable — asking for manual approval',
+              },
+            }
+          }
           if (
             getFeatureValue_CACHED_WITH_REFRESH(
               'tengu_iron_gate_closed',

@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { isVerbooMode } from '../../constants/oauth.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { getAPIProvider } from '../../utils/model/providers.js'
@@ -33,6 +34,12 @@ function normalizeUrl(url: string): string | undefined {
  */
 export async function prefetchOfficialMcpUrls(): Promise<void> {
   if (process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) {
+    return
+  }
+
+  // VERBOO-BRAND: nothing calls Anthropic at startup. The only consumer of this
+  // list is analytics metadata, which Verboo does not send.
+  if (isVerbooMode()) {
     return
   }
 

@@ -1,5 +1,10 @@
 # Human-session PTY harness
 
+> **Antes de rodar:** os cenários usam o pacote instalado em
+> `.artifacts/package/consumer-path.txt`, não o `dist/`. Rode
+> `bun scripts/check-cli-quality.ts --suite` e depois `--terminal`, nessa ordem, ou
+> eles testam um binário antigo. Rode um arquivo por vez, com a máquina livre.
+
 `startCli()` in `scripts/e2e/terminal.mjs` drives the installed CLI
 (`.artifacts/package/consumer-path.txt`) in node-pty + headless xterm against
 local fixtures. Everything below is optional; old tests keep working unchanged.

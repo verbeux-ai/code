@@ -198,6 +198,8 @@ const RULES: Rule[] = [
       'src/commands/model/model.tsx',
       'src/utils/model/modelOptions.ts',
       'src/services/api/providerLimitErrors.ts',
+      // Fixtures nomeiam os provedores que simulam:
+      'scripts/e2e/human/',
       // SDK error logger uses preserved upstream identifier strings:
       'src/services/api/sdk.ts',
       // Auth/account model functions reference "Anthropic" provider type:

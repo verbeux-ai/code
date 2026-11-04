@@ -642,7 +642,7 @@ export function getAssistantMessageFromError(
     if (provider === 'Claude' || provider === 'OpenAI') {
       const command = provider === 'Claude' ? '/claude login' : '/openai login'
       return createAssistantAPIErrorMessage({
-        content: `${API_ERROR_MESSAGE_PREFIX}: Sua chave ${provider === 'Claude' ? 'Anthropic' : 'OpenAI'} foi recusada. Conecte outra com ${command} ou troque de modelo com /model.`,
+        content: `${API_ERROR_MESSAGE_PREFIX}: Sua chave ${provider} foi recusada. Conecte outra com ${command} ou troque de modelo com /model.`,
         error: 'authentication_failed',
       })
     }

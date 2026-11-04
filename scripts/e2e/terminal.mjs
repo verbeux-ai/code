@@ -12,7 +12,7 @@ import { deflateRawSync } from 'node:zlib'
 import { createFakeRouter } from './fake-router.mjs'
 import { CODEX_FIXTURE_README, createCodexFixtureCredentialRecord, createCodexRouter } from './codex-router.mjs'
 
-export async function startCli({ columns = 80, rows = 24, fullscreen = false, usePty = true, slashCommands = false, model = 'fixture-model', args = [], routerOptions, codexOptions } = {}) {
+export async function startCli({ columns = 80, rows = 24, fullscreen = false, usePty = true, slashCommands = false, model = 'fixture-model', args = [], routerOptions, codexOptions, trusted = true, projectFiles = {}, settingSources = 'user' } = {}) {
   const consumer = (await readFile(resolve('.artifacts/package/consumer-path.txt'), 'utf8')).trim()
   const root = resolve('.artifacts/pty')
   await mkdir(root, { recursive: true })
@@ -27,8 +27,15 @@ export async function startCli({ columns = 80, rows = 24, fullscreen = false, us
   const git = spawnSync('git', ['init', '-q', project], { encoding: 'utf8' })
   if (git.status !== 0) throw new Error(git.stderr || 'Could not isolate fixture project')
   await writeFile(join(project, 'README.md'), `${CODEX_FIXTURE_README}\n`)
+  for (const [relativePath, contents] of Object.entries(projectFiles)) {
+    await mkdir(dirname(join(project, relativePath)), { recursive: true })
+    await writeFile(join(project, relativePath), contents)
+  }
   const projectConfigKey = project.replaceAll('\\', '/')
-  await writeFile(join(config, '.config.json'), JSON.stringify({ theme: 'dark', hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true, projects: { [projectConfigKey]: { hasTrustDialogAccepted: true } } }))
+  // Untrusted fixtures leave the project out of the config so the workspace
+  // trust prompt appears exactly as it does for a freshly cloned repository.
+  const projects = trusted ? { [projectConfigKey]: { hasTrustDialogAccepted: true } } : {}
+  await writeFile(join(config, '.config.json'), JSON.stringify({ theme: 'dark', hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true, projects }))
   const router = await createFakeRouter(routerOptions)
   const codexRouter = codexOptions ? await createCodexRouter({ projectRoot: project, ...codexOptions }) : undefined
   let codexFixtureBin
@@ -75,7 +82,7 @@ export async function startCli({ columns = 80, rows = 24, fullscreen = false, us
   terminal.unicode.activeVersion = '11'
   let child
   let stderr = ''
-  const cliArgs = ['--import', pathToFileURL(resolve('scripts/e2e/transport-preload.mjs')).href, join(consumer, 'node_modules/@verboo/code/bin/verboo'), '--model', model, '--dangerously-skip-permissions', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', ...(slashCommands ? [] : ['--disable-slash-commands']), '--debug-file', join(dir, 'debug.log'), ...args]
+  const cliArgs = ['--import', pathToFileURL(resolve('scripts/e2e/transport-preload.mjs')).href, join(consumer, 'node_modules/@verboo/code/bin/verboo'), '--model', model, '--dangerously-skip-permissions', '--setting-sources', settingSources, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', ...(slashCommands ? [] : ['--disable-slash-commands']), '--debug-file', join(dir, 'debug.log'), ...args]
   try {
     if (usePty) {
       child = pty.spawn(process.execPath, cliArgs, { cwd: project, env, cols: columns, rows, name: 'xterm-256color' })
@@ -113,7 +120,7 @@ export async function startCli({ columns = 80, rows = 24, fullscreen = false, us
   })
   const exit = new Promise(resolve => child.onExit(value => { exited = value; resolve(value) }))
   return {
-    dir, router, codexRouter, frames, chunks, screen, get raw() { return raw }, get exited() { return exited }, exit,
+    dir, project, config, router, codexRouter, frames, chunks, screen, get raw() { return raw }, get exited() { return exited }, exit,
     write(data) { child.write(data) },
     resize(cols, rows) { terminal.resize(cols, rows); child.resize(cols, rows) },
     async waitFor(predicate, timeout = 20_000) {

@@ -299,8 +299,16 @@ export type TranscriptEntry = {
   content: TranscriptBlock[]
 }
 
+// VERBOO-BRAND: text the CLI placed in a user message. The classifier treats
+// user lines as the user's intent, so command output and agent results, which
+// can carry injected instructions, must not appear as if the user wrote them.
+const NOT_WRITTEN_BY_USER =
+  /^\s*<(bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|task-notification)\b/
+
 function messageToTranscriptEntry(msg: Message): TranscriptEntry | null {
   if (msg.type === 'attachment' && msg.attachment.type === 'queued_command') {
+    const { commandMode, isMeta, origin } = msg.attachment
+    if (isMeta || origin || (commandMode && commandMode !== 'prompt')) return null
     const prompt = msg.attachment.prompt
     let text: string | null = null
     if (typeof prompt === 'string') {
@@ -324,13 +332,16 @@ function messageToTranscriptEntry(msg: Message): TranscriptEntry | null {
   }
 
   if (msg.type === 'user') {
+    if (msg.isMeta) return null
     const content = msg.message.content
     const textBlocks: TranscriptBlock[] = []
     if (typeof content === 'string') {
-      textBlocks.push({ type: 'text', text: content })
+      if (!NOT_WRITTEN_BY_USER.test(content)) {
+        textBlocks.push({ type: 'text', text: content })
+      }
     } else if (Array.isArray(content)) {
       for (const block of content) {
-        if (block.type === 'text') {
+        if (block.type === 'text' && !NOT_WRITTEN_BY_USER.test(block.text)) {
           textBlocks.push({ type: 'text', text: block.text })
         }
       }
@@ -649,7 +660,7 @@ export async function buildYoloSystemPrompt(
 
   // VERBOO-BRAND: user rules are added to the defaults instead of replacing
   // them, so a custom allow or soft_deny list never silently drops the
-  // default protections (e.g. against `curl | bash` or force pushes).
+  // default protections (e.g. against running downloaded scripts or force pushes).
   const addTo = (defaults: string, extra: string | undefined) =>
     extra ? `${defaults.trimEnd()}\n${extra}\n` : defaults
   return systemPrompt
@@ -1439,7 +1450,10 @@ const CLASSIFIER_REQUEST_TIMEOUT_MS = 45_000
 
 function classifierRequestTimeoutMs(): number {
   const value = Number(process.env.VERBOO_AUTO_MODE_TIMEOUT_MS)
-  return Number.isFinite(value) && value > 0 ? value : CLASSIFIER_REQUEST_TIMEOUT_MS
+  // Timers overflow above 2^31-1 ms and would fire right away.
+  return Number.isFinite(value) && value > 0 && value <= 2_147_483_647
+    ? value
+    : CLASSIFIER_REQUEST_TIMEOUT_MS
 }
 
 function isTransientClassifierError(error: unknown, timedOut: boolean): boolean {

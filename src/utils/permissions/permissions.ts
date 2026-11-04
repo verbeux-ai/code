@@ -70,6 +70,7 @@ import {
   getTotalCacheReadInputTokens,
   getTotalInputTokens,
   getTotalOutputTokens,
+  getIsNonInteractiveSession,
 } from '../../bootstrap/state.js'
 import { getFeatureValue_CACHED_WITH_REFRESH } from '../../services/analytics/growthbook.js'
 import {
@@ -851,6 +852,7 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
           // keep the fail-closed deny below.
           if (
             !appState.toolPermissionContext.shouldAvoidPermissionPrompts &&
+            !getIsNonInteractiveSession() &&
             !context.abortController.signal.aborted
           ) {
             logForDebugging(
@@ -877,6 +879,22 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
               'Auto mode classifier unavailable, denying with retry guidance (fail closed)',
               { level: 'warn' },
             )
+            // VERBOO-BRAND: nobody can answer a prompt here, so repeated
+            // failures must end the run instead of looping on retries.
+            const unavailableDenialState = recordDenial(denialState)
+            persistDenialState(context, unavailableDenialState)
+            const unavailableLimitResult = handleDenialLimitExceeded(
+              unavailableDenialState,
+              appState,
+              `Classifier unavailable: ${classifierResult.reason}`,
+              assistantMessage,
+              tool,
+              result,
+              context,
+            )
+            if (unavailableLimitResult) {
+              return unavailableLimitResult
+            }
             return {
               behavior: 'deny',
               decisionReason: {

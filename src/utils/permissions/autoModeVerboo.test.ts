@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { resolve } from 'path'
 
+import { buildYoloRejectionMessage, getClassifierDenialReason } from '../messages.js'
 import { buildTranscriptEntries, classifierSideQuery } from './yoloClassifier.js'
 
 const SRC = resolve(import.meta.dir, '../..')
@@ -164,4 +165,9 @@ describe('what the classifier sees as coming from the user', () => {
       ]),
     ).toEqual([])
   })
+})
+
+test('the reason of a denial can be read back for the screen', () => {
+  const reason = 'Force push to main. Risky on a shared branch'
+  expect(getClassifierDenialReason(buildYoloRejectionMessage(reason))).toBe(reason)
 })

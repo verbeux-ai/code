@@ -255,6 +255,8 @@ export const SYNTHETIC_TOOL_RESULT_PLACEHOLDER =
 // Prefix used by UI to detect classifier denials and render them concisely
 const AUTO_MODE_REJECTION_PREFIX =
   'Permission for this action has been denied. Reason: '
+// VERBOO-BRAND: what follows the reason, so the UI can show the reason alone.
+const YOLO_REJECTION_REASON_END = '. If you have other tasks'
 
 /**
  * Check if a tool result message is a classifier denial.
@@ -262,6 +264,13 @@ const AUTO_MODE_REJECTION_PREFIX =
  */
 export function isClassifierDenial(content: string): boolean {
   return content.startsWith(AUTO_MODE_REJECTION_PREFIX)
+}
+
+/** The classifier's reason inside a denial built by buildYoloRejectionMessage. */
+export function getClassifierDenialReason(content: string): string {
+  const rest = content.slice(AUTO_MODE_REJECTION_PREFIX.length)
+  const end = rest.indexOf(YOLO_REJECTION_REASON_END)
+  return end === -1 ? rest : rest.slice(0, end)
 }
 
 /**
@@ -280,8 +289,7 @@ export function buildYoloRejectionMessage(reason: string): string {
     : `To allow this type of action in the future, the user can add a Bash permission rule to their settings.`
 
   return (
-    `${prefix}${reason}. ` +
-    `If you have other tasks that don't depend on this action, continue working on those. ` +
+    `${prefix}${reason}${YOLO_REJECTION_REASON_END} that don't depend on this action, continue working on those. ` +
     `${DENIAL_WORKAROUND_GUIDANCE} ` +
     ruleHint
   )

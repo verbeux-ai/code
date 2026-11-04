@@ -53,6 +53,22 @@ em volta. Use `git grep "VERBOO-BRAND"` para localizar todos os pontos editados.
 - `src/commands/provider/` — arquivos **NÃO foram deletados** (upstream
   continua mexendo neles; deletar gera conflitos "deleted file modified upstream").
 
+#### `/onboard-github` (GitHub Copilot) desregistrado
+- `src/commands.ts` — import e entry comentados, como o `/provider`.
+- `src/utils/githubModelsCredentials.ts` — leitores e refresh retornam vazio
+  (`GITHUB_MODELS_LOGIN_RETIRED`); `purgeGithubModelsCredentials` apaga tokens
+  salvos (cofre nativo e arquivo em texto puro) na inicialização.
+- `src/commands/onboard-github/` e `src/integrations/gateways/github.ts` **não
+  foram deletados**.
+
+#### Login Claude por assinatura removido (código Verboo, não upstream)
+- O OAuth com o client id do Claude Code saiu: `claudeNativeOAuth.ts` e
+  `useClaudeNativeOAuthFlow.ts` foram deletados (eram nossos, não do upstream).
+- `/claude login` conecta a chave de API da Anthropic do usuário;
+  `retireClaudeOAuthCredentials` remove logins OAuth antigos na inicialização.
+- `src/services/api/client.ts` — provedores de terceiros (Codex, chave
+  Anthropic) recebem só `User-Agent`, sem headers de sessão do Verboo.
+
 #### Mensagens reescritas
 - `src/utils/providerValidation.ts` (3 ocorrências)
 - `src/services/api/withRetry.ts`

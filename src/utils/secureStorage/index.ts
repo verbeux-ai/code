@@ -28,22 +28,9 @@ export interface SecureStorageData {
     lastRefreshAt?: number
     lastRefreshFailureAt?: number
   }
-  claudeNative?: {
-    accessToken: string
-    refreshToken?: string
-    expiresAt?: number
-    scopes: string[]
-    accountId: string
-    email?: string
-    organizationId?: string
-    riskAcceptance: {
-      version: number
-      acceptedAt: string
-      accountId: string
-    }
-    lastRefreshAt?: number
-    lastRefreshFailureAt?: number
-  }
+  // Default Claude account (the user's Anthropic API key). Legacy OAuth blobs
+  // from the retired subscription login may still be present until removed.
+  claudeNative?: import('../providerAccounts/credentials.js').ClaudeNativeCredentialBlob
   mcpOAuth?: Record<
     string,
     {

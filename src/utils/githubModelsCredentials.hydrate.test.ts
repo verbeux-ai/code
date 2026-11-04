@@ -26,7 +26,8 @@ describe('hydrateGithubModelsTokenFromSecureStorage', () => {
     }
   })
 
-  test('sets GITHUB_TOKEN from secure storage when USE_GITHUB and env token empty', async () => {
+  // VERBOO-BRAND: o login GitHub Copilot foi removido; tokens salvos são ignorados.
+  test('ignores stored Copilot tokens even when USE_GITHUB is set', async () => {
     process.env.CLAUDE_CODE_USE_GITHUB = '1'
     delete process.env.GITHUB_TOKEN
     delete process.env.GH_TOKEN
@@ -44,8 +45,8 @@ describe('hydrateGithubModelsTokenFromSecureStorage', () => {
       './githubModelsCredentials.js?hydrate=sets-token'
     )
     hydrateGithubModelsTokenFromSecureStorage()
-    expect(process.env.GITHUB_TOKEN).toBe('stored-secret')
-    expect(process.env.CLAUDE_CODE_GITHUB_TOKEN_HYDRATED).toBe('1')
+    expect(process.env.GITHUB_TOKEN).toBeUndefined()
+    expect(process.env.CLAUDE_CODE_GITHUB_TOKEN_HYDRATED).toBeUndefined()
   })
 
   test('does not override existing GITHUB_TOKEN', async () => {

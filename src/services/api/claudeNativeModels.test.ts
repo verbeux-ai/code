@@ -64,53 +64,30 @@ afterEach(() => {
   mock.restore()
 })
 
-test('fetches and refreshes models for the explicitly selected local account', async () => {
+test('lists models for the selected account with its API key, never OAuth', async () => {
   const readAccountIds: Array<string | undefined> = []
-  const refreshAccountIds: Array<string | undefined> = []
-  let requests = 0
+  const seenHeaders: Array<Record<string, string>> = []
 
   mock.module('../../utils/claudeNativeCredentials.js', () => ({
-    hasCurrentClaudeRiskAcceptance: () => true,
+    isUsableClaudeCredential: (credentials: { authType?: string } | undefined) =>
+      credentials?.authType === 'api-key',
     readClaudeNativeCredentialsAsync: async (localAccountId?: string) => {
       readAccountIds.push(localAccountId)
       if (localAccountId !== 'local-b') {
         throw new Error('the selected local account must be passed through')
       }
       return {
-        accessToken: requests === 0 ? 'expired-token' : 'fresh-token',
-        refreshToken: 'refresh-b',
-        accountId: 'provider-b',
-        scopes: ['user:inference'],
-        riskAcceptance: {
-          version: 1,
-          acceptedAt: '2026-08-09T12:00:00.000Z',
-          accountId: 'provider-b',
-        },
-      }
-    },
-    refreshClaudeNativeAccessTokenIfNeeded: async (options?: { localAccountId?: string }) => {
-      refreshAccountIds.push(options?.localAccountId)
-      return {
-        refreshed: true,
-        credentials: {
-          accessToken: 'fresh-token',
-          refreshToken: 'refresh-b',
-          accountId: 'provider-b',
-          scopes: ['user:inference'],
-          riskAcceptance: {
-            version: 1,
-            acceptedAt: '2026-08-09T12:00:00.000Z',
-            accountId: 'provider-b',
-          },
-        },
+        authType: 'api-key',
+        apiKey: 'sk-ant-api03-account-b',
+        accountId: 'anthropic-key-b',
+        keyHint: 't-b',
       }
     },
   }))
 
   const previousFetch = globalThis.fetch
-  globalThis.fetch = (async () => {
-    requests += 1
-    if (requests === 1) return new Response('expired', { status: 401 })
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    seenHeaders.push(init?.headers as Record<string, string>)
     return new Response(
       JSON.stringify({
         data: [
@@ -136,7 +113,10 @@ test('fetches and refreshes models for the explicitly selected local account', a
 
     expect(models.map(model => model.id)).toEqual(['claude-account-b'])
     expect(readAccountIds).toEqual(['local-b'])
-    expect(refreshAccountIds).toEqual(['local-b'])
+    expect(seenHeaders).toHaveLength(1)
+    expect(seenHeaders[0]?.['x-api-key']).toBe('sk-ant-api03-account-b')
+    expect(seenHeaders[0]?.Authorization).toBeUndefined()
+    expect(seenHeaders[0]?.['anthropic-beta']).toBeUndefined()
   } finally {
     globalThis.fetch = previousFetch
   }

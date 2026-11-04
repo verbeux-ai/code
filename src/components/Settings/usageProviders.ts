@@ -1,8 +1,4 @@
 import { readCodexCredentialsAsync } from '../../utils/codexCredentials.js'
-import {
-  hasCurrentClaudeRiskAcceptance,
-  readClaudeNativeCredentialsAsync,
-} from '../../utils/claudeNativeCredentials.js'
 
 export type ConnectedUsageProviders = {
   codex: boolean
@@ -10,12 +6,10 @@ export type ConnectedUsageProviders = {
 }
 
 export async function getConnectedUsageProviders(): Promise<ConnectedUsageProviders> {
-  const [codexCredentials, claudeCredentials] = await Promise.all([
-    readCodexCredentialsAsync(),
-    readClaudeNativeCredentialsAsync(),
-  ])
+  const codexCredentials = await readCodexCredentialsAsync()
   return {
     codex: Boolean(codexCredentials),
-    claude: hasCurrentClaudeRiskAcceptance(claudeCredentials),
+    // Claude now connects with an API key, which has no usage windows to show.
+    claude: false,
   }
 }

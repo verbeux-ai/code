@@ -1,3 +1,4 @@
+import { getActiveModelIdentity } from 'src/utils/model/activeModelIdentity.js'
 import type {
   BetaContentBlock,
   BetaContentBlockParam,
@@ -511,7 +512,12 @@ export function configureTaskBudgetParams(
   }
 }
 
-export function getAPIMetadata() {
+export function getAPIMetadata(model?: string) {
+  // VERBOO-BRAND: the device, account and session ids are for the Verboo
+  // router. Requests on the user's own accounts do not carry them.
+  if (model && getActiveModelIdentity(model).provider !== 'Verboo') {
+    return undefined
+  }
   // https://docs.google.com/document/d/1dURO9ycXXQCBS0V4Vhl4poDBRgkelFc5t2BNPoEgH5Q/edit?tab=t.0#heading=h.5g7nec5b09w5
   let extra: JsonObject = {}
   const extraStr = process.env.CLAUDE_CODE_EXTRA_METADATA
@@ -1740,7 +1746,7 @@ async function* queryModel(
       tools: allTools,
       tool_choice: options.toolChoice,
       ...(useBetas && { betas: betasParams }),
-      metadata: getAPIMetadata(),
+      metadata: getAPIMetadata(options.model),
       max_tokens: maxOutputTokens,
       thinking,
       ...(temperature !== undefined && { temperature }),

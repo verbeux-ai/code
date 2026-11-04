@@ -10,6 +10,7 @@ import type { SystemAPIErrorMessage } from 'src/types/message.js'
 import { isAwsCredentialsProviderError } from 'src/utils/aws.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logError } from 'src/utils/log.js'
+import { getActiveModelIdentity } from 'src/utils/model/activeModelIdentity.js'
 import { createSystemAPIErrorMessage } from 'src/utils/messages.js'
 import { getAPIProvider, getAPIProviderForStatsig } from 'src/utils/model/providers.js'
 import {
@@ -178,6 +179,12 @@ export class FallbackTriggeredError extends Error {
   }
 }
 
+function isRejectedOwnKeyError(error: unknown, model: string): boolean {
+  if ((error as { status?: unknown } | null)?.status !== 401) return false
+  const { provider } = getActiveModelIdentity(model)
+  return provider === 'Claude' || provider === 'OpenAI'
+}
+
 export async function* withRetry<T>(
   getClient: () => Promise<Anthropic>,
   operation: (
@@ -253,7 +260,12 @@ export async function* withRetry<T>(
           (lastError instanceof APIError && lastError.status === 401) ||
           isOAuthTokenRevokedError(lastError)
         ) {
-          const failedAccessToken = getClaudeAIOAuthTokens()?.accessToken
+          // VERBOO-BRAND: only the router uses the Verboo token. Refreshing it
+          // for another provider's 401 rotates it for every running session.
+          const failedAccessToken =
+            getActiveModelIdentity(options.model).provider === 'Verboo'
+              ? getClaudeAIOAuthTokens()?.accessToken
+              : undefined
           if (failedAccessToken) {
             const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
             if (!didOAuthRefreshRecover(outcome)) {
@@ -268,6 +280,11 @@ export async function* withRetry<T>(
     } catch (error) {
       lastError = error
       if (isUsageWindowStop(error)) throw new CannotRetryError(error, retryContext)
+      // VERBOO-BRAND: a key the provider rejected stays rejected; retrying only
+      // delays the message telling the user how to fix it.
+      if (isRejectedOwnKeyError(error, options.model)) {
+        throw new CannotRetryError(error, retryContext)
+      }
       logForDebugging(
         `API error (attempt ${attempt}/${maxRetries + 1}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
         { level: 'error' },

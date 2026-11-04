@@ -9,6 +9,7 @@ import { getMainLoopModelOverride } from '../../bootstrap/state.js'
 import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedCodexModels } from '../../services/api/codexModels.js'
 import { getCachedClaudeNativeModels } from '../../services/api/claudeNativeModels.js'
+import { getCachedOpenAIApiModels } from '../../services/api/openaiApiModels.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 import { getGlobalConfig, saveGlobalConfig } from '../config.js'
 import {
@@ -66,11 +67,12 @@ export function getDefaultVerbooModel(): ModelName {
   const verbooModels = getCachedVerbooModels() ?? []
   const codexModels = getCachedCodexModels() ?? []
   const claudeModels = getCachedClaudeNativeModels() ?? []
+  const openaiModels = getCachedOpenAIApiModels() ?? []
 
   const lastModel = getGlobalConfig().lastVerbooModel
   if (
     lastModel &&
-    [...verbooModels, ...codexModels, ...claudeModels].some(
+    [...verbooModels, ...codexModels, ...claudeModels, ...openaiModels].some(
       model => model.id === lastModel,
     )
   ) {
@@ -108,6 +110,7 @@ function getVerbooSpecifiedModel(
     ...(getCachedVerbooModels() ?? []),
     ...(getCachedCodexModels() ?? []),
     ...(getCachedClaudeNativeModels() ?? []),
+    ...(getCachedOpenAIApiModels() ?? []),
   ]
   if (cached.length > 0) {
     return cached.some(m => m.id === modelWithoutContext)
@@ -266,6 +269,7 @@ export function getMainLoopModel(): ModelName {
       ...(getCachedVerbooModels() ?? []),
       ...(getCachedCodexModels() ?? []),
       ...(getCachedClaudeNativeModels() ?? []),
+      ...(getCachedOpenAIApiModels() ?? []),
     ].some(
       model => model.id === resolved,
     )

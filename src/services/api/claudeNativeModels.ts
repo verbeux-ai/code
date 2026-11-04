@@ -1,20 +1,20 @@
+import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
 import { z } from 'zod'
 
 import {
-  hasCurrentClaudeRiskAcceptance,
+  isUsableClaudeCredential,
   readClaudeNativeCredentialsAsync,
-  refreshClaudeNativeAccessTokenIfNeeded,
-  type ClaudeNativeCredentialBlob,
+  type ClaudeApiKeyCredentialBlob,
 } from '../../utils/claudeNativeCredentials.js'
 import {
   CLAUDE_NATIVE_API_BASE_URL,
   CLAUDE_NATIVE_API_VERSION,
-  CLAUDE_NATIVE_OAUTH_BETA,
 } from './claudeNativeConfig.js'
 import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
 import type { LocalProviderAccountId } from '../../utils/providerAccounts/types.js'
 import { getSelectedProviderAccount } from '../../utils/providerAccounts/selection.js'
 
+const REQUEST_TIMEOUT_MS = 10_000
 const CACHE_TTL_MS = 5 * 60 * 1_000
 
 const capabilitySchema = z
@@ -111,17 +111,16 @@ export function parseClaudeNativeModelsResponse(payload: unknown): {
   }
 }
 
-function headers(credentials: ClaudeNativeCredentialBlob): Record<string, string> {
+function headers(credentials: ClaudeApiKeyCredentialBlob): Record<string, string> {
   return {
-    Authorization: `Bearer ${credentials.accessToken}`,
+    'x-api-key': credentials.apiKey,
     'anthropic-version': CLAUDE_NATIVE_API_VERSION,
-    'anthropic-beta': CLAUDE_NATIVE_OAUTH_BETA,
     'User-Agent': getVerbooCodeUserAgent(),
   }
 }
 
 async function requestAllModels(
-  credentials: ClaudeNativeCredentialBlob,
+  credentials: ClaudeApiKeyCredentialBlob,
 ): Promise<ClaudeNativeModel[]> {
   const models: ClaudeNativeModel[] = []
   const seen = new Set<string>()
@@ -130,7 +129,11 @@ async function requestAllModels(
     const url = new URL(`${CLAUDE_NATIVE_API_BASE_URL}/v1/models`)
     url.searchParams.set('limit', '1000')
     if (afterId) url.searchParams.set('after_id', afterId)
-    const response = await fetch(url, { headers: headers(credentials) })
+    const timeout = createCombinedAbortSignal(undefined, { timeoutMs: REQUEST_TIMEOUT_MS })
+    const response = await fetch(url, {
+      headers: headers(credentials),
+      signal: timeout.signal,
+    }).finally(timeout.cleanup)
     if (!response.ok) {
       const detail = (await response.text().catch(() => '')).trim().slice(0, 500)
       throw Object.assign(
@@ -160,45 +163,31 @@ async function requestAllModels(
 export async function fetchClaudeNativeModels(options?: {
   force?: boolean
   localAccountId?: LocalProviderAccountId
-  credentials?: ClaudeNativeCredentialBlob
+  credentials?: ClaudeApiKeyCredentialBlob
 }): Promise<ClaudeNativeModel[]> {
   const effectiveLocalAccountId =
     options?.localAccountId ??
     (getSelectedProviderAccount()?.provider === 'claude'
       ? getSelectedProviderAccount()?.accountId
       : undefined)
+  // A candidate key is only being validated: until it is saved, the catalog
+  // must keep describing the stored key.
+  if (options?.credentials) return requestAllModels(options.credentials)
   const generation = cacheGeneration
-  let credentials = options?.credentials ?? (await readClaudeNativeCredentialsAsync(effectiveLocalAccountId))
-  if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
-    throw new Error('Claude não autenticado. Execute `/claude login`.')
+  const credentials = await readClaudeNativeCredentialsAsync(effectiveLocalAccountId)
+  if (!isUsableClaudeCredential(credentials)) {
+    throw new Error('Claude não conectado. Execute `/claude login` com sua chave de API da Anthropic.')
   }
   const cacheKey = effectiveLocalAccountId ?? `legacy:${credentials.accountId}`
   const previous = cacheByAccount.get(cacheKey)
   if (!options?.force && previous && Date.now() - previous.fetchedAt < CACHE_TTL_MS) {
     return previous.models
   }
-  try {
-    const models = await requestAllModels(credentials)
-    if (generation === cacheGeneration) {
-      cacheByAccount.set(cacheKey, { fetchedAt: Date.now(), models })
-    }
-    return models
-  } catch (error) {
-    if (options?.credentials || (error as { status?: number }).status !== 401) {
-      throw error
-    }
-    const refreshed = await refreshClaudeNativeAccessTokenIfNeeded({
-      force: true,
-      localAccountId: effectiveLocalAccountId,
-    })
-    credentials = refreshed.credentials ?? (await readClaudeNativeCredentialsAsync(effectiveLocalAccountId))
-    if (!credentials) throw error
-    const models = await requestAllModels(credentials)
-    if (generation === cacheGeneration) {
-      cacheByAccount.set(cacheKey, { fetchedAt: Date.now(), models })
-    }
-    return models
+  const models = await requestAllModels(credentials)
+  if (generation === cacheGeneration) {
+    cacheByAccount.set(cacheKey, { fetchedAt: Date.now(), models })
   }
+  return models
 }
 
 export function getCachedClaudeNativeModels(

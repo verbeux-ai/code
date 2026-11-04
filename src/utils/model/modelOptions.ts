@@ -46,6 +46,7 @@ import { getAntModels } from './antModels.js'
 import { isVerbooMode } from '../../constants/oauth.js'
 import { getCachedCodexModels } from '../../services/api/codexModels.js'
 import { getCachedClaudeNativeModels } from '../../services/api/claudeNativeModels.js'
+import { getCachedOpenAIApiModels } from '../../services/api/openaiApiModels.js'
 import { getCachedVerbooModels } from '../../services/api/verbooModels.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
@@ -432,9 +433,17 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
       .map(model => ({
         value: model.id,
         label: model.displayName,
-        description: `${model.contextWindow ? `${Math.round(model.contextWindow / 1000)}K context` : model.id} · via Claude nativo`,
+        description: `${model.contextWindow ? `${Math.round(model.contextWindow / 1000)}K context` : model.id} · via sua chave Anthropic`,
       }))
-    const cached = [...verboo, ...codex, ...claude]
+    for (const model of claude) existing.add(model.value)
+    const openai = (getCachedOpenAIApiModels() ?? [])
+      .filter(model => !existing.has(model.id))
+      .map(model => ({
+        value: model.id,
+        label: model.displayName,
+        description: model.description,
+      }))
+    const cached = [...verboo, ...codex, ...claude, ...openai]
     if (cached.length > 0) {
       return cached
     }

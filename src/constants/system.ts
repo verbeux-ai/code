@@ -6,6 +6,7 @@ import { logForDebugging } from '../utils/debug.js'
 import { isEnvDefinedFalsy } from '../utils/envUtils.js'
 import { getAPIProvider } from '../utils/model/providers.js'
 import { getWorkload } from '../utils/workloadContext.js'
+import { isVerbooMode } from './oauth.js'
 import { PRODUCT_DISPLAY_NAME } from './product.js'
 
 // VERBOO-BRAND: identidade do agente. Sobrescreve a string upstream para
@@ -57,6 +58,10 @@ export function getCLISyspromptPrefix(options?: {
  * Enabled by default, can be disabled via env var or GrowthBook killswitch.
  */
 function isAttributionHeaderEnabled(): boolean {
+  // VERBOO-BRAND: this block attributes the request to Claude Code.
+  if (isVerbooMode()) {
+    return false
+  }
   if (isEnvDefinedFalsy(process.env.CLAUDE_CODE_ATTRIBUTION_HEADER)) {
     return false
   }

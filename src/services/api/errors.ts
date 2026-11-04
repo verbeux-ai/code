@@ -67,6 +67,8 @@ import {
   type OpenAICompatibilityFailureCategory,
 } from './openaiErrorClassification.js'
 
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js'
+
 export const API_ERROR_MESSAGE_PREFIX = 'API Error'
 
 function stripOpenAICompatibilityMetadata(message: string): string {
@@ -634,6 +636,17 @@ export function getAssistantMessageFromError(
 ): AssistantMessage {
   if (error instanceof FreeTokensRequiredError) return createAssistantAPIErrorMessage({ content: error.message, error: 'invalid_request' })
   if (error instanceof PaymentPastDueError) return createAssistantAPIErrorMessage({ content: error.message, error: 'billing_error' })
+  if ((error as { status?: unknown } | null)?.status === 401) {
+    // VERBOO-BRAND: the user's own key was rejected; only they can replace it.
+    const { provider } = getActiveModelIdentity(model)
+    if (provider === 'Claude' || provider === 'OpenAI') {
+      const command = provider === 'Claude' ? '/claude login' : '/openai login'
+      return createAssistantAPIErrorMessage({
+        content: `${API_ERROR_MESSAGE_PREFIX}: Sua chave ${provider} foi recusada. Conecte outra com ${command} ou troque de modelo com /model.`,
+        error: 'authentication_failed',
+      })
+    }
+  }
   // Check for SDK timeout errors
   if (
     error instanceof APIConnectionTimeoutError ||

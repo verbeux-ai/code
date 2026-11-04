@@ -192,7 +192,7 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
       ...(stop_sequences && { stop_sequences }),
       ...(thinkingConfig && { thinking: thinkingConfig }),
       ...(betas.length > 0 && { betas }),
-      metadata: getAPIMetadata(),
+      metadata: getAPIMetadata(model),
     },
     { signal },
   )

@@ -61,7 +61,7 @@ describe('migrateProviderAccounts', () => {
     expect(result.data as unknown).toEqual(malformed)
   })
 
-  test('rejects Claude records whose risk acceptance belongs to another identity', () => {
+  test('drops only the Claude record whose risk acceptance belongs to another identity', () => {
     const malformed = {
       providerAccounts: {
         schemaVersion: 1,
@@ -95,7 +95,11 @@ describe('migrateProviderAccounts', () => {
       () => 'new-id',
     )
 
-    expect(result.mode).toBe('invalid')
-    expect(result.data.providerAccounts as unknown).toEqual(malformed.providerAccounts)
+    expect(result.mode).toBe('v1')
+    const accounts = result.data.providerAccounts as unknown as {
+      claude: { accounts: Record<string, unknown>; defaultAccountId?: string }
+    }
+    expect(accounts.claude.accounts).toEqual({})
+    expect(accounts.claude.defaultAccountId).toBeUndefined()
   })
 })

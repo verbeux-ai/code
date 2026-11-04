@@ -78,7 +78,7 @@ function normalizeCollection<TCredential>(
   for (const [key, raw] of Object.entries(
     record.accounts as Record<string, unknown>,
   )) {
-    if (!raw || typeof raw !== 'object') return undefined
+    if (!raw || typeof raw !== 'object') continue
     const item = raw as Record<string, unknown>
     const localAccountId = nonEmptyString(item.localAccountId)
     const providerSubjectId = nonEmptyString(item.providerSubjectId)
@@ -94,7 +94,8 @@ function normalizeCollection<TCredential>(
       !isProviderConnectionState(connectionState) ||
       getSubject(credential) !== providerSubjectId
     ) {
-      return undefined
+      // An account that cannot be used is dropped alone; the others keep working.
+      continue
     }
 
     const planId = nonEmptyString(item.planId)
@@ -112,8 +113,11 @@ function normalizeCollection<TCredential>(
     }
   }
 
-  const defaultAccountId = nonEmptyString(record.defaultAccountId)
-  if (defaultAccountId && !accounts[defaultAccountId]) return undefined
+  const storedDefaultId = nonEmptyString(record.defaultAccountId)
+  const defaultAccountId =
+    storedDefaultId && accounts[storedDefaultId]
+      ? storedDefaultId
+      : Object.keys(accounts).sort()[0]
 
   return {
     defaultAccountId,

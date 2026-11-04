@@ -1,17 +1,4 @@
-import {
-  hasCurrentClaudeRiskAcceptance,
-  readClaudeNativeCredentialsAsync,
-  refreshClaudeNativeAccessTokenIfNeeded,
-  type ClaudeNativeCredentialBlob,
-} from '../../utils/claudeNativeCredentials.js'
-import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
-import { logForDebugging } from '../../utils/debug.js'
-import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
 import type { ExtraUsage, RateLimit, Utilization } from './usage.js'
-import {
-  CLAUDE_NATIVE_API_BASE_URL,
-  CLAUDE_NATIVE_OAUTH_BETA,
-} from './claudeNativeConfig.js'
 
 export type ClaudeNativeUsageRow = {
   label: string
@@ -181,99 +168,16 @@ export function buildClaudeNativeUsageRows(
   )
 }
 
-export function getClaudeNativeUsageUrl(
-  baseUrl = CLAUDE_NATIVE_API_BASE_URL,
-): string {
-  return new URL('/api/oauth/usage', baseUrl).toString()
-}
+export const CLAUDE_API_KEY_USAGE_UNAVAILABLE =
+  'Uso por janela não existe para chave de API da Anthropic; o consumo aparece no Console da Anthropic (console.anthropic.com).'
 
-export function buildClaudeNativeUsageHeaders(
-  accessToken: string,
-): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: `Bearer ${accessToken}`,
-    'anthropic-beta': CLAUDE_NATIVE_OAUTH_BETA,
-    'User-Agent': getVerbooCodeUserAgent(),
-  }
-}
-
-async function requestClaudeNativeUsage(
-  credentials: ClaudeNativeCredentialBlob,
-): Promise<{ status: number; body: string; payload?: unknown }> {
-  const { signal, cleanup } = createCombinedAbortSignal(undefined, {
-    timeoutMs: 5_000,
-  })
-  try {
-    const response = await fetch(getClaudeNativeUsageUrl(), {
-      method: 'GET',
-      headers: buildClaudeNativeUsageHeaders(credentials.accessToken),
-      signal,
-    })
-    const body = await response.text()
-    let payload: unknown
-    if (body.trim()) {
-      try {
-        payload = JSON.parse(body)
-      } catch {
-        payload = undefined
-      }
-    }
-    return { status: response.status, body, payload }
-  } finally {
-    cleanup()
-  }
-}
-
-function usageError(status: number, body: string): Error {
-  const detail = body.trim().slice(0, 500)
-  return new Error(
-    detail
-      ? `Claude usage error ${status}: ${detail}`
-      : `Claude usage error ${status}.`,
-  )
-}
-
-export async function fetchClaudeNativeUsage(options?: {
+/**
+ * Usage windows (session/weekly limits) belonged to the Claude subscription
+ * login, which was retired. An API key has no such windows: its spend is
+ * reported by the Anthropic Console, so there is nothing to fetch here.
+ */
+export async function fetchClaudeNativeUsage(_options?: {
   localAccountId?: string
 }): Promise<Utilization> {
-  const refreshResult = await refreshClaudeNativeAccessTokenIfNeeded({
-    localAccountId: options?.localAccountId,
-  }).catch(
-    async error => {
-      logForDebugging(
-        `[claude] access token refresh failed before usage fetch: ${error instanceof Error ? error.message : String(error)}`,
-        { level: 'warn' },
-      )
-      return {
-        refreshed: false,
-        credentials: await readClaudeNativeCredentialsAsync(options?.localAccountId),
-      }
-    },
-  )
-  let credentials =
-    refreshResult.credentials ??
-    (await readClaudeNativeCredentialsAsync(options?.localAccountId))
-  if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
-    throw new Error('Claude auth is required. Execute /claude login.')
-  }
-
-  let response = await requestClaudeNativeUsage(credentials)
-  if (response.status === 401) {
-    const retried = await refreshClaudeNativeAccessTokenIfNeeded({
-      force: true,
-      localAccountId: options?.localAccountId,
-    })
-    credentials =
-      retried.credentials ??
-      (await readClaudeNativeCredentialsAsync(options?.localAccountId))
-    if (!credentials || !hasCurrentClaudeRiskAcceptance(credentials)) {
-      throw usageError(response.status, response.body)
-    }
-    response = await requestClaudeNativeUsage(credentials)
-  }
-  if (response.status < 200 || response.status >= 300) {
-    throw usageError(response.status, response.body)
-  }
-  return normalizeClaudeNativeUsagePayload(response.payload)
+  throw new Error(CLAUDE_API_KEY_USAGE_UNAVAILABLE)
 }

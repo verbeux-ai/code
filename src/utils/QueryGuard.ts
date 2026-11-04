@@ -102,6 +102,11 @@ export class QueryGuard {
     return this._status !== 'idle'
   }
 
+  // VERBOO-BRAND: a reservation (dispatching) is not a turn; see canCancelWork in REPL.
+  get isRunning(): boolean {
+    return this._status === 'running'
+  }
+
   get generation(): number {
     return this._generation
   }

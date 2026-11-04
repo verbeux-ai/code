@@ -250,11 +250,11 @@ export const getAllModelBetas = memoize((model: string): string[] => {
   const betaHeaders = []
   const canonical = getCanonicalName(model)
   const isHaiku = canonical.includes('haiku')
-  const isVerbooNonClaudeModel = isVerbooMode() && !canonical.includes('claude-')
   const provider = getAPIProvider()
   const includeFirstPartyOnlyBetas = shouldIncludeFirstPartyOnlyBetas()
 
-  if (!isHaiku && !isVerbooNonClaudeModel) {
+  // VERBOO-BRAND: this beta identifies the caller as Claude Code; never send it.
+  if (!isHaiku && !isVerbooMode()) {
     betaHeaders.push(CLAUDE_CODE_20250219_BETA_HEADER)
     if (
       process.env.USER_TYPE === 'ant' &&

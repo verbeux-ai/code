@@ -101,8 +101,8 @@ export function formatProviderLimitMessage(limit: ProviderLimit, now = Date.now(
   return `${PROVIDER_LIMIT_MESSAGE_PREFIX} ${what}${renews}. Você pode trocar para um modelo Verboo e continuar.`
 }
 
-/** Arguments for the hidden /limit-switch command, built from the error text. */
-export function limitSwitchArgsFromMessage(text: string): string | null {
+/** What ran out, taken from the error text, for the REPL's switch dialog. */
+export function limitSwitchReasonFromMessage(text: string): string | null {
   if (!text.startsWith(PROVIDER_LIMIT_MESSAGE_PREFIX)) return null
   return text.slice(PROVIDER_LIMIT_MESSAGE_PREFIX.length).trim()
 }

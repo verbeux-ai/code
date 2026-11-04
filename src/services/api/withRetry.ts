@@ -10,6 +10,8 @@ import type { SystemAPIErrorMessage } from 'src/types/message.js'
 import { isAwsCredentialsProviderError } from 'src/utils/aws.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logError } from 'src/utils/log.js'
+import { getActiveModelIdentity } from 'src/utils/model/activeModelIdentity.js'
+import { classifyProviderLimitError } from './providerLimitErrors.js'
 import { createSystemAPIErrorMessage } from 'src/utils/messages.js'
 import { getAPIProvider, getAPIProviderForStatsig } from 'src/utils/model/providers.js'
 import {
@@ -112,7 +114,8 @@ function isQuotaExhausted(error: any): boolean {
     error?.status === 429 &&
     (msg.includes('limit: 0') ||
       msg.includes('exceeded your current quota') ||
-      // VERBOO-BRAND: ChatGPT plan (Codex) usage limit; it renews later.
+      // VERBOO-BRAND: own-account limits. They renew or need a top-up later.
+      msg.includes('insufficient_quota') ||
       msg.includes('usage_limit_reached'))
   )
 }
@@ -179,6 +182,12 @@ export class FallbackTriggeredError extends Error {
     super(`Model fallback triggered: ${originalModel} -> ${fallbackModel}`)
     this.name = 'FallbackTriggeredError'
   }
+}
+
+function isRejectedOwnKeyError(error: unknown, model: string): boolean {
+  if ((error as { status?: unknown } | null)?.status !== 401) return false
+  const { provider } = getActiveModelIdentity(model)
+  return provider === 'Claude' || provider === 'OpenAI'
 }
 
 export async function* withRetry<T>(
@@ -256,7 +265,12 @@ export async function* withRetry<T>(
           (lastError instanceof APIError && lastError.status === 401) ||
           isOAuthTokenRevokedError(lastError)
         ) {
-          const failedAccessToken = getClaudeAIOAuthTokens()?.accessToken
+          // VERBOO-BRAND: only the router uses the Verboo token. Refreshing it
+          // for another provider's 401 rotates it for every running session.
+          const failedAccessToken =
+            getActiveModelIdentity(options.model).provider === 'Verboo'
+              ? getClaudeAIOAuthTokens()?.accessToken
+              : undefined
           if (failedAccessToken) {
             const outcome = await handleOAuth401ErrorWithOutcome(failedAccessToken)
             if (!didOAuthRefreshRecover(outcome)) {
@@ -271,11 +285,21 @@ export async function* withRetry<T>(
     } catch (error) {
       lastError = error
       if (isUsageWindowStop(error)) throw new CannotRetryError(error, retryContext)
+      // VERBOO-BRAND: a key the provider rejected stays rejected; retrying only
+      // delays the message telling the user how to fix it.
+      if (isRejectedOwnKeyError(error, options.model)) {
+        throw new CannotRetryError(error, retryContext)
+      }
       logForDebugging(
         `API error (attempt ${attempt}/${maxRetries + 1}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
         { level: 'error' },
       )
         if (isQuotaExhausted(error)) {
+          // VERBOO-BRAND: keep the provider's error, so the REPL can name the
+          // account that ran out and offer the switch to a Verboo model.
+          if (classifyProviderLimitError(error, getActiveModelIdentity(options.model).provider)) {
+            throw new CannotRetryError(error, retryContext)
+          }
           throw new CannotRetryError(
             new Error(
               'API quota exhausted or not enabled.\n' +

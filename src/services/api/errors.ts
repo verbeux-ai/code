@@ -63,6 +63,7 @@ import { extractConnectionErrorDetails, formatAPIError } from './errorUtils.js'
 import {
   classifyProviderLimitError,
   formatProviderLimitMessage,
+  PROVIDER_LIMIT_MESSAGE_PREFIX,
 } from './providerLimitErrors.js'
 import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js'
 import {
@@ -71,6 +72,8 @@ import {
   isLocalhostLikeHost,
   type OpenAICompatibilityFailureCategory,
 } from './openaiErrorClassification.js'
+
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js'
 
 export const API_ERROR_MESSAGE_PREFIX = 'API Error'
 
@@ -210,7 +213,9 @@ function mapOpenAICompatibilityFailureToAssistantMessage(options: {
 export function startsWithApiErrorPrefix(text: string): boolean {
   return (
     text.startsWith(API_ERROR_MESSAGE_PREFIX) ||
-    text.startsWith(`Please run /login · ${API_ERROR_MESSAGE_PREFIX}`)
+    text.startsWith(`Please run /login · ${API_ERROR_MESSAGE_PREFIX}`) ||
+    // VERBOO-BRAND: also a failed request; /compact must not keep it as a summary.
+    text.startsWith(PROVIDER_LIMIT_MESSAGE_PREFIX)
   )
 }
 export const PROMPT_TOO_LONG_ERROR_MESSAGE = 'Prompt is too long'
@@ -639,6 +644,17 @@ export function getAssistantMessageFromError(
 ): AssistantMessage {
   if (error instanceof FreeTokensRequiredError) return createAssistantAPIErrorMessage({ content: error.message, error: 'invalid_request' })
   if (error instanceof PaymentPastDueError) return createAssistantAPIErrorMessage({ content: error.message, error: 'billing_error' })
+  if ((error as { status?: unknown } | null)?.status === 401) {
+    // VERBOO-BRAND: the user's own key was rejected; only they can replace it.
+    const { provider } = getActiveModelIdentity(model)
+    if (provider === 'Claude' || provider === 'OpenAI') {
+      const command = provider === 'Claude' ? '/claude login' : '/openai login'
+      return createAssistantAPIErrorMessage({
+        content: `${API_ERROR_MESSAGE_PREFIX}: Sua chave ${provider === 'Claude' ? 'Anthropic' : 'OpenAI'} foi recusada. Conecte outra com ${command} ou troque de modelo com /model.`,
+        error: 'authentication_failed',
+      })
+    }
+  }
   // VERBOO-BRAND: the user's own account (ChatGPT plan, OpenAI or Anthropic
   // key) ran out. Retrying will not help; the REPL offers a Verboo model.
   const providerLimit = classifyProviderLimitError(

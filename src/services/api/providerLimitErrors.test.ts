@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   classifyProviderLimitError,
   formatProviderLimitMessage,
-  limitSwitchArgsFromMessage,
+  limitSwitchReasonFromMessage,
   PROVIDER_LIMIT_MESSAGE_PREFIX,
 } from './providerLimitErrors.js'
 
@@ -53,8 +53,8 @@ test('the message carries the prefix the REPL uses to open the switch', () => {
   expect(text.startsWith(PROVIDER_LIMIT_MESSAGE_PREFIX)).toBe(true)
   expect(text).toContain('plano ChatGPT')
   expect(text).toContain('renova')
-  expect(limitSwitchArgsFromMessage(text)).toContain('o limite do seu plano ChatGPT acabou')
-  expect(limitSwitchArgsFromMessage('API Error: 500 Internal error')).toBeNull()
+  expect(limitSwitchReasonFromMessage(text)).toContain('o limite do seu plano ChatGPT acabou')
+  expect(limitSwitchReasonFromMessage('API Error: 500 Internal error')).toBeNull()
 })
 
 test('the API error path, retries and REPL are wired to the account limit flow', async () => {
@@ -65,9 +65,12 @@ test('the API error path, retries and REPL are wired to the account limit flow',
   expect(errors.indexOf('classifyProviderLimitError(')).toBeLessThan(
     errors.indexOf('Your credit balance is too low'),
   )
-  expect(await read('services/api/withRetry.ts')).toContain("msg.includes('usage_limit_reached')")
+  const retry = await read('services/api/withRetry.ts')
+  expect(retry).toContain("msg.includes('usage_limit_reached')")
+  expect(retry).toContain("msg.includes('insufficient_quota')")
   const repl = await read('screens/REPL.tsx')
-  expect(repl).toContain('limitSwitchArgsFromMessage(')
-  expect(repl).toContain('`/limit-switch ${args}`')
+  expect(repl).toContain('limitSwitchReasonFromMessage(')
+  expect(repl).toContain('<LimitSwitchDialog')
+  expect(repl).not.toContain('/limit-switch')
   expect(repl).toContain('useRef<string | undefined>(messages.at(-1)?.uuid)')
 })

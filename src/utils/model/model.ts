@@ -88,8 +88,17 @@ export function getDefaultVerbooModel(): ModelName {
 }
 
 export function saveLastVerbooModel(model: string): void {
-  if (getGlobalConfig().lastVerbooModel !== model) {
-    saveGlobalConfig(current => ({ ...current, lastVerbooModel: model }))
+  const isRouterModel = getCachedVerbooModels()?.some(candidate => candidate.id === model) === true
+  const config = getGlobalConfig()
+  if (
+    config.lastVerbooModel !== model ||
+    (isRouterModel && config.lastRouterModel !== model)
+  ) {
+    saveGlobalConfig(current => ({
+      ...current,
+      lastVerbooModel: model,
+      ...(isRouterModel ? { lastRouterModel: model } : {}),
+    }))
   }
 }
 

@@ -17,6 +17,7 @@ import {
   standardEffortToOpenAI,
 } from 'src/utils/effort.js'
 import { getUserAgent } from 'src/utils/http.js'
+import { getVerbooCodeUserAgent } from 'src/utils/userAgent.js'
 import {
   getDefaultVerbooModel,
   getSmallFastModel,
@@ -320,7 +321,7 @@ export async function getAnthropicClient({
     // User-Agent: the session id, x-app and custom headers belong to the
     // Verboo router and must not identify the CLI as another product.
     const thirdPartyHeaders: { [key: string]: string } = {
-      'User-Agent': getUserAgent(),
+      'User-Agent': getVerbooCodeUserAgent(),
     }
 
     const verbooModel = getCachedVerbooModels()?.find(

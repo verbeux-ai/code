@@ -580,6 +580,12 @@ export type Props = {
   thinkingConfig: ThinkingConfig;
 };
 export type Screen = 'prompt' | 'transcript';
+/** What ran out, when this message is the provider-limit error of a user's own account. */
+function providerLimitReason(message: MessageType): string | null {
+  if (message.type !== 'assistant' || !message.isApiErrorMessage) return null;
+  const block = message.message.content[0];
+  return limitSwitchReasonFromMessage(block && block.type === 'text' ? block.text : '');
+}
 export function REPL({
   commands: initialCommands,
   debug,
@@ -3820,10 +3826,8 @@ export function REPL({
   // submitted as a command: the prompt draft, history and transcript stay intact.
   useEffect(() => {
     const last = messages.at(-1);
-    if (!last || last.type !== 'assistant' || !last.isApiErrorMessage) return;
-    if (handledProviderLimitRef.current === last.uuid) return;
-    const block = last.message.content[0];
-    const reason = limitSwitchReasonFromMessage(block && block.type === 'text' ? block.text : '');
+    if (!last || handledProviderLimitRef.current === last.uuid) return;
+    const reason = providerLimitReason(last);
     if (reason === null) return;
     handledProviderLimitRef.current = last.uuid;
     const models = getCachedVerbooModels() ?? [];
@@ -4130,9 +4134,13 @@ export function REPL({
       queuedCommands
     });
   }, [queryGuard, commands, setToolJSX, getToolUseContext, messages, mainLoopModel, ideSelection, setUserInputOnProcessing, canUseTool, setAbortController, onQuery, addNotification, setAppState, onBeforeQuery, awaitPendingHooks]);
+  // VERBOO-BRAND: a queued message waits for the choice on the limit dialog; it
+  // must not hit the account that just ran out while the dialog is opening.
+  const lastMessage = messages.at(-1);
+  const isLimitSwitchPending = limitResendPrompt !== null || (lastMessage !== undefined && handledProviderLimitRef.current !== lastMessage.uuid && providerLimitReason(lastMessage) !== null);
   useQueueProcessor({
     executeQueuedInput,
-    hasActiveLocalJsxUI: isShowingLocalJSXCommand,
+    hasActiveLocalJsxUI: isShowingLocalJSXCommand || isLimitSwitchPending,
     queryGuard
   });
 

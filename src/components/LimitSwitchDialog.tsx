@@ -118,6 +118,7 @@ export function LimitSwitchDialog({
         <Select
           defaultFocusValue={options[0]!.value}
           options={options}
+          visibleOptionCount={options.length}
           onChange={value => (value === KEEP ? onKeep() : onSwitch(value))}
           onCancel={onKeep}
         />

@@ -10,6 +10,9 @@ function run(command: string[]) {
 const terminalOnly = process.argv.includes('--terminal')
 if (!terminalOnly) {
   run([process.execPath, 'scripts/build.ts'])
+  // The bundle must not phone home to Anthropic services or download from its buckets.
+  run([process.execPath, 'scripts/verify-no-phone-home.ts'])
+  run([process.execPath, 'scripts/rebrand-check.ts'])
   run([node, 'node_modules/typescript/bin/tsc', '--project', 'tsconfig.agent-contracts.json'])
   run([process.execPath, 'scripts/run-tests-isolated.ts'])
   run([node, 'dist/cli.mjs', '--version'])

@@ -43,6 +43,15 @@ function ClaudeApiKeyLogin({
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [status, setStatus] = React.useState<LoginState>({ state: 'editing' })
 
+  // The field is masked: nothing shows that a refused entry is still in it, and
+  // pasting a corrected key would glue the two together.
+  React.useEffect(() => {
+    if (status.state === 'editing' && status.error) {
+      setValue('')
+      setCursorOffset(0)
+    }
+  }, [status])
+
   const cancelledRef = React.useRef(false)
 
   const cancel = React.useCallback(() => {
@@ -161,10 +170,13 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
   if (action.action === 'status') {
     try {
       const accounts = listProviderAccountSummaries()
-      const status = formatProviderAccountStatus('claude', accounts)
       const credentials = await readClaudeNativeCredentialsAsync()
-      const key = credentials ? ` Chave em uso: …${credentials.keyHint}.` : ''
-      onDone(`${status}${key}`, { display: 'system' })
+      onDone(
+        credentials
+          ? `Claude conectado. Chave em uso: …${credentials.keyHint}. Use /claude login para trocar de chave.`
+          : formatProviderAccountStatus('claude', accounts),
+        { display: 'system' },
+      )
     } catch {
       onDone('Não foi possível consultar as contas Claude no armazenamento seguro. Tente novamente.', { display: 'system' })
     }
@@ -172,6 +184,14 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
   }
 
   if (action.action === 'logout') {
+    let credentials: Awaited<ReturnType<typeof readClaudeNativeCredentialsAsync>>
+    try {
+      listProviderAccountSummaries()
+      credentials = await readClaudeNativeCredentialsAsync()
+    } catch {
+      onDone('Não foi possível consultar as contas Claude no armazenamento seguro. Tente novamente.', { display: 'system' })
+      return
+    }
     const claudeIds = new Set(
       (getCachedClaudeNativeModels() ?? []).map(model => model.id),
     )
@@ -199,9 +219,12 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
           }
         : prev,
     )
-    onDone('Chave da Anthropic removida. O Verboo continua disponível.', {
-      display: 'system',
-    })
+    onDone(
+      credentials
+        ? 'Chave da Anthropic removida. O Verboo continua disponível.'
+        : 'Nenhuma chave da Anthropic conectada.',
+      { display: 'system' },
+    )
     return
   }
 

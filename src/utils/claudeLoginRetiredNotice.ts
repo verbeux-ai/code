@@ -1,8 +1,9 @@
 import type { Notification } from '../context/notifications.js'
 import { getGlobalConfig, saveGlobalConfig } from './config.js'
 
+// The command comes first: the footer cuts this text on narrow terminals.
 export const CLAUDE_LOGIN_RETIRED_NOTICE =
-  'Login Claude desativado. Use /claude login.'
+  'Use /claude login: login antigo desativado.'
 
 /**
  * One-time notice after startup removed a stored Claude subscription login

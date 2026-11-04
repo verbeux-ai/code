@@ -31,7 +31,7 @@ test('PRs and every publication surface require the shared quality gate', () => 
 
 test('the release package is exercised on Linux, macOS and Windows with both supported Node lines', () => {
   const workflow = parse(readFileSync('.github/workflows/cli-quality.yml', 'utf8'))
-  expect(workflow.jobs.terminal.strategy.matrix).toEqual({ os: ['ubuntu-24.04', 'macos-15-intel', 'windows-latest'], node: [22, 24] })
+  expect(workflow.jobs.terminal.strategy.matrix).toEqual({ os: ['ubuntu-24.04', 'macos-26-intel', 'windows-latest'], node: [22, 24] })
   expect(workflow.jobs.terminal.strategy['fail-fast']).toBe(false)
   expect(workflow.jobs.terminal.needs).toBe('suite')
   for (const job of Object.values(workflow.jobs) as Array<{ steps: Array<{ 'continue-on-error'?: boolean }> }>) {

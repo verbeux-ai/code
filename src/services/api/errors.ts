@@ -61,6 +61,12 @@ import {
 import { shouldProcessRateLimits } from '../rateLimitMocking.js' // Used for /mock-limits command
 import { extractConnectionErrorDetails, formatAPIError } from './errorUtils.js'
 import {
+  classifyProviderLimitError,
+  formatProviderLimitMessage,
+  PROVIDER_LIMIT_MESSAGE_PREFIX,
+} from './providerLimitErrors.js'
+import { getActiveModelIdentity } from '../../utils/model/activeModelIdentity.js'
+import {
   extractOpenAICategoryHost,
   extractOpenAICategoryMarker,
   isLocalhostLikeHost,
@@ -207,7 +213,9 @@ function mapOpenAICompatibilityFailureToAssistantMessage(options: {
 export function startsWithApiErrorPrefix(text: string): boolean {
   return (
     text.startsWith(API_ERROR_MESSAGE_PREFIX) ||
-    text.startsWith(`Please run /login · ${API_ERROR_MESSAGE_PREFIX}`)
+    text.startsWith(`Please run /login · ${API_ERROR_MESSAGE_PREFIX}`) ||
+    // VERBOO-BRAND: also a failed request; /compact must not keep it as a summary.
+    text.startsWith(PROVIDER_LIMIT_MESSAGE_PREFIX)
   )
 }
 export const PROMPT_TOO_LONG_ERROR_MESSAGE = 'Prompt is too long'
@@ -646,6 +654,18 @@ export function getAssistantMessageFromError(
         error: 'authentication_failed',
       })
     }
+  }
+  // VERBOO-BRAND: the user's own account (ChatGPT plan, OpenAI or Anthropic
+  // key) ran out. Retrying will not help; the REPL offers a Verboo model.
+  const providerLimit = classifyProviderLimitError(
+    error,
+    getActiveModelIdentity(model).provider,
+  )
+  if (providerLimit) {
+    return createAssistantAPIErrorMessage({
+      content: formatProviderLimitMessage(providerLimit),
+      error: 'rate_limit',
+    })
   }
   // Check for SDK timeout errors
   if (

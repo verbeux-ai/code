@@ -11,6 +11,7 @@ import { isAwsCredentialsProviderError } from 'src/utils/aws.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logError } from 'src/utils/log.js'
 import { getActiveModelIdentity } from 'src/utils/model/activeModelIdentity.js'
+import { classifyProviderLimitError } from './providerLimitErrors.js'
 import { createSystemAPIErrorMessage } from 'src/utils/messages.js'
 import { getAPIProvider, getAPIProviderForStatsig } from 'src/utils/model/providers.js'
 import {
@@ -111,7 +112,11 @@ function isQuotaExhausted(error: any): boolean {
 
   return (
     error?.status === 429 &&
-    (msg.includes('limit: 0') || msg.includes('exceeded your current quota'))
+    (msg.includes('limit: 0') ||
+      msg.includes('exceeded your current quota') ||
+      // VERBOO-BRAND: own-account limits. They renew or need a top-up later.
+      msg.includes('insufficient_quota') ||
+      msg.includes('usage_limit_reached'))
   )
 }
 
@@ -290,6 +295,11 @@ export async function* withRetry<T>(
         { level: 'error' },
       )
         if (isQuotaExhausted(error)) {
+          // VERBOO-BRAND: keep the provider's error, so the REPL can name the
+          // account that ran out and offer the switch to a Verboo model.
+          if (classifyProviderLimitError(error, getActiveModelIdentity(options.model).provider)) {
+            throw new CannotRetryError(error, retryContext)
+          }
           throw new CannotRetryError(
             new Error(
               'API quota exhausted or not enabled.\n' +

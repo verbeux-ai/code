@@ -268,6 +268,10 @@ import { useIDEStatusIndicator } from 'src/hooks/notifs/useIDEStatusIndicator.js
 import { useModelMigrationNotifications } from 'src/hooks/notifs/useModelMigrationNotifications.js';
 import { useCanSwitchToExistingSubscription } from 'src/hooks/notifs/useCanSwitchToExistingSubscription.js';
 import { useClaudeLoginRetiredNotification } from 'src/hooks/notifs/useClaudeLoginRetiredNotification.js';
+import { limitSwitchReasonFromMessage } from 'src/services/api/providerLimitErrors.js';
+import { describeFailedTurn, limitSwitchDoneMessage, LimitSwitchDialog } from 'src/components/LimitSwitchDialog.js';
+import { getCachedVerbooModels } from 'src/services/api/verbooModels.js';
+import { saveLastVerbooModel } from 'src/utils/model/model.js';
 import { useTeammateLifecycleNotification } from 'src/hooks/notifs/useTeammateShutdownNotification.js';
 import { useFastModeNotification } from 'src/hooks/notifs/useFastModeNotification.js';
 import type { HookProgress } from '../types/hooks.js';
@@ -576,6 +580,12 @@ export type Props = {
   thinkingConfig: ThinkingConfig;
 };
 export type Screen = 'prompt' | 'transcript';
+/** What ran out, when this message is the provider-limit error of a user's own account. */
+function providerLimitReason(message: MessageType): string | null {
+  if (message.type !== 'assistant' || !message.isApiErrorMessage) return null;
+  const block = message.message.content[0];
+  return limitSwitchReasonFromMessage(block && block.type === 'text' ? block.text : '');
+}
 export function REPL({
   commands: initialCommands,
   debug,
@@ -1815,6 +1825,7 @@ export function REPL({
     ...prev,
     fileHistory: fileHistoryState
   })));
+  const handledProviderLimitRef = useRef<string | undefined>(messages.at(-1)?.uuid);
   const resume = useCallback(async (sessionId: UUID, log: LogOption, entrypoint: ResumeEntrypoint) => {
     const resumeStart = performance.now();
     try {
@@ -2014,6 +2025,9 @@ export function REPL({
         contentReplacementStateRef.current = reconstructContentReplacementState(messages, log.contentReplacements ?? []);
       }
       const hydratedMessages = contentReplacementStateRef.current ? applyToolResultReplacementsToMessages(messages, contentReplacementStateRef.current.replacements) : messages;
+
+      // VERBOO-BRAND: a limit error saved in that session is old news.
+      handledProviderLimitRef.current = hydratedMessages.at(-1)?.uuid;
 
       // Reset messages to the provided initial messages
       // Use a callback to ensure we're not dependent on stale state
@@ -3790,6 +3804,68 @@ export function REPL({
       resetHistory: () => { }
     });
   }, []);
+  // VERBOO-BRAND: the resend waits for the next render. onSubmit reads the model
+  // from its closure, so calling it right after the switch would send the prompt
+  // back to the account that just ran out.
+  const [limitResendPrompt, setLimitResendPrompt] = useState<string | null>(null);
+  useEffect(() => {
+    if (limitResendPrompt === null) return;
+    setLimitResendPrompt(null);
+    void onSubmitRef.current(limitResendPrompt, {
+      setCursorOffset: () => { },
+      clearBuffer: () => { },
+      resetHistory: () => { }
+    }, undefined, {
+      fromKeybinding: true
+    });
+  }, [limitResendPrompt]);
+  // VERBOO-BRAND: when the user's own account (ChatGPT plan, OpenAI or
+  // Anthropic key) runs out, open the switch to a Verboo model right away
+  // instead of making them type /model. Errors that came with a resumed session
+  // are ignored (see handledProviderLimitRef). The dialog is rendered here, not
+  // submitted as a command: the prompt draft, history and transcript stay intact.
+  useEffect(() => {
+    const last = messages.at(-1);
+    if (!last || handledProviderLimitRef.current === last.uuid) return;
+    const reason = providerLimitReason(last);
+    if (reason === null) return;
+    handledProviderLimitRef.current = last.uuid;
+    const models = getCachedVerbooModels() ?? [];
+    if (models.length === 0) {
+      setMessages(prev => [...prev, createSystemMessage('Nenhum modelo Verboo disponível na sua conta. Use /model para ver as opções.', 'warning')]);
+      return;
+    }
+    const turn = describeFailedTurn(messages);
+    const close = (text: string) => {
+      setToolJSX({
+        jsx: null,
+        shouldHidePromptInput: false,
+        clearLocalJSX: true
+      });
+      // Not 'info': that level only shows in verbose mode.
+      setMessages(prev => [...prev, createSystemMessage(text, 'suggestion')]);
+    };
+    setToolJSX({
+      jsx: <LimitSwitchDialog reason={reason} models={models} lastRouterModel={getGlobalConfig().lastRouterModel} turn={turn} onKeep={() => close('Modelo mantido. Use /model quando quiser trocar.')} onSwitch={model => {
+        saveLastVerbooModel(model);
+        setAppState(prev => ({
+          ...prev,
+          mainLoopModel: model,
+          mainLoopModelForSession: null
+        }));
+        close(limitSwitchDoneMessage(model, turn));
+        if (turn.prompt === null || turn.toolsRan) return;
+        // Nothing ran: the failed attempt leaves history, so the model gets the
+        // request once. fromKeybinding keeps the draft and skips adding to history.
+        const prompt = turn.prompt;
+        setMessages(prev => prev.filter(message => message.uuid !== turn.promptUuid && message.uuid !== last.uuid));
+        setLimitResendPrompt(prompt);
+      }} />,
+      shouldHidePromptInput: true,
+      showSpinner: false,
+      isLocalJSXCommand: true
+    });
+  }, [messages]);
   const handleExit = useCallback(async () => {
     setIsExiting(true);
     // In bg sessions, always detach instead of kill — even when a worktree is
@@ -4058,9 +4134,13 @@ export function REPL({
       queuedCommands
     });
   }, [queryGuard, commands, setToolJSX, getToolUseContext, messages, mainLoopModel, ideSelection, setUserInputOnProcessing, canUseTool, setAbortController, onQuery, addNotification, setAppState, onBeforeQuery, awaitPendingHooks]);
+  // VERBOO-BRAND: a queued message waits for the choice on the limit dialog; it
+  // must not hit the account that just ran out while the dialog is opening.
+  const lastMessage = messages.at(-1);
+  const isLimitSwitchPending = limitResendPrompt !== null || (lastMessage !== undefined && handledProviderLimitRef.current !== lastMessage.uuid && providerLimitReason(lastMessage) !== null);
   useQueueProcessor({
     executeQueuedInput,
-    hasActiveLocalJsxUI: isShowingLocalJSXCommand,
+    hasActiveLocalJsxUI: isShowingLocalJSXCommand || isLimitSwitchPending,
     queryGuard
   });
 

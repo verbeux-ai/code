@@ -603,6 +603,8 @@ export type GlobalConfig = {
   teammateMode?: 'auto' | 'tmux' | 'in-process' // How to spawn teammates (default: 'auto')
   // Last Verboo model used across sessions (persisted for default selection)
   lastVerbooModel?: string
+  /** Last model used from the Verboo catalog; lastVerbooModel also follows own-account models. */
+  lastRouterModel?: string
 
   // Model for new teammates when the tool call doesn't pass one.
   // undefined = hardcoded Opus (backward-compat); null = leader's model; string = model alias/ID.

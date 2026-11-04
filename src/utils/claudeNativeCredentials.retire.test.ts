@@ -84,7 +84,13 @@ test('removes Claude OAuth logins and keeps API keys and Codex accounts', async 
   } as unknown as SecureStorageData)
 
   const key = credentials.buildClaudeApiKeyCredential(API_KEY)
-  expect(credentials.saveClaudeNativeCredentials(key).success).toBe(true)
+  const store = await import('./providerAccounts/store.js')
+  store.upsertProviderAccount('claude', key)
+  store.setDefaultProviderAccount(
+    'claude',
+    store.resolveProviderAccount('claude', key.accountId)?.localAccountId ??
+      Object.keys(store.readProviderAccounts().claude.accounts).find(id => id !== 'claude-oauth')!,
+  )
 
   const result = credentials.retireClaudeOAuthCredentials()
   expect(result).toEqual({ removed: 1 })
@@ -118,4 +124,37 @@ test('a legacy single-blob OAuth login is removed and never read', async () => {
   expect(credentials.readClaudeNativeCredentials()).toBeUndefined()
   expect(credentials.retireClaudeOAuthCredentials()).toEqual({ removed: 1 })
   expect((readState() as Record<string, unknown>).claudeNative).toBeUndefined()
+})
+
+test('connecting a new key replaces every stored Claude login, and logout removes them all', async () => {
+  const { credentials, readState } = await load('replace', {
+    providerAccounts: {
+      schemaVersion: 1,
+      codex: { accounts: {} },
+      claude: {
+        defaultAccountId: 'claude-oauth',
+        accounts: {
+          'claude-oauth': account('claude-oauth', 'claude-account', oauthLogin('claude-account')),
+        },
+      },
+    },
+  } as unknown as SecureStorageData)
+  const claudeAccounts = () =>
+    Object.values(
+      (readState() as unknown as {
+        providerAccounts: { claude: { accounts: Record<string, { credential: { apiKey?: string } }> } }
+      }).providerAccounts.claude.accounts,
+    )
+
+  const first = credentials.buildClaudeApiKeyCredential(API_KEY)
+  const second = credentials.buildClaudeApiKeyCredential(`${API_KEY}-rotated`)
+  expect(credentials.saveClaudeNativeCredentials(first).success).toBe(true)
+  expect(credentials.saveClaudeNativeCredentials(second).success).toBe(true)
+
+  expect(claudeAccounts().map(item => item.credential.apiKey)).toEqual([second.apiKey])
+  expect((await credentials.readClaudeNativeCredentialsAsync())?.apiKey).toBe(second.apiKey)
+
+  expect(credentials.clearClaudeNativeCredentials().success).toBe(true)
+  expect(claudeAccounts()).toEqual([])
+  expect(await credentials.readClaudeNativeCredentialsAsync()).toBeUndefined()
 })

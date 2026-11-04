@@ -2,7 +2,6 @@ import * as React from 'react'
 
 import TextInput from '../../components/TextInput.js'
 import { Box, Text, useInput } from '../../ink.js'
-import { useKeybinding } from '../../keybindings/useKeybinding.js'
 import {
   clearClaudeNativeModelsCache,
   fetchClaudeNativeModels,
@@ -37,22 +36,22 @@ type LoginState =
  */
 function ClaudeApiKeyLogin({
   onDone,
-  reconnectLocalAccountId,
 }: {
   onDone: LocalJSXCommandOnDone
-  reconnectLocalAccountId?: string
 }) {
   const [value, setValue] = React.useState('')
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [status, setStatus] = React.useState<LoginState>({ state: 'editing' })
 
+  const cancelledRef = React.useRef(false)
+
   const cancel = React.useCallback(() => {
+    cancelledRef.current = true
     onDone('Conexão Claude cancelada. O Verboo continua disponível.', {
       display: 'system',
     })
   }, [onDone])
 
-  useKeybinding('confirm:no', cancel, { context: 'Confirmation' })
   useInput((input, key, event) => {
     if (key.escape || (key.ctrl && input === 'c')) {
       event.stopImmediatePropagation()
@@ -73,8 +72,10 @@ function ClaudeApiKeyLogin({
       setStatus({ state: 'validating' })
       const credentials = buildClaudeApiKeyCredential(apiKey)
       try {
-        clearClaudeNativeModelsCache()
+        // A candidate key never touches the catalog of the key in use: a typo
+        // here must not break the working session.
         const models = await fetchClaudeNativeModels({ force: true, credentials })
+        if (cancelledRef.current) return
         if (models.length === 0) {
           setStatus({
             state: 'editing',
@@ -82,23 +83,23 @@ function ClaudeApiKeyLogin({
           })
           return
         }
-        const saved = saveClaudeNativeCredentials(credentials, {
-          localAccountId: reconnectLocalAccountId,
-        })
+        const saved = saveClaudeNativeCredentials(credentials)
         if (!saved.success) {
-          clearClaudeNativeModelsCache()
           setStatus({
             state: 'editing',
             error: saved.warning ?? 'Não foi possível salvar a chave no armazenamento seguro.',
           })
           return
         }
+        clearClaudeNativeModelsCache()
+        await fetchClaudeNativeModels({ force: true }).catch(() => undefined)
+        if (cancelledRef.current) return
         onDone(
           `Chave da Anthropic conectada (…${credentials.keyHint}). ${models.length} modelo(s) Claude liberado(s), cobrados pela Anthropic na sua chave. Use /model para escolher.`,
           { display: 'system' },
         )
       } catch (error) {
-        clearClaudeNativeModelsCache()
+        if (cancelledRef.current) return
         const status = (error as { status?: number }).status
         setStatus({
           state: 'editing',
@@ -109,7 +110,7 @@ function ClaudeApiKeyLogin({
         })
       }
     },
-    [onDone, reconnectLocalAccountId],
+    [onDone],
   )
 
   return (
@@ -209,9 +210,6 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     return
   }
   return (
-    <ClaudeApiKeyLogin
-      onDone={onDone}
-      reconnectLocalAccountId={action.reconnectLocalAccountId}
-    />
+    <ClaudeApiKeyLogin onDone={onDone} />
   )
 }

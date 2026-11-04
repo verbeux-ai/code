@@ -78,6 +78,13 @@ export function saveOpenAIApiKeyCredential(
 export function clearOpenAIApiKeyCredential(): { success: boolean; warning?: string } {
   if (isBareMode()) return { success: true }
   const secureStorage = storage()
+  const current = secureStorage.readResult?.()
+  if (current?.kind === 'error') {
+    return {
+      success: false,
+      warning: current.warning ?? 'Não foi possível ler o armazenamento seguro.',
+    }
+  }
   const previous = (secureStorage.read() || {}) as Record<string, unknown>
   if (!(OPENAI_API_KEY_STORAGE_KEY in previous)) return { success: true }
   const next = { ...previous }

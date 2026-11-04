@@ -65,7 +65,8 @@ test('lists models with the given key as a Bearer token', async () => {
     expect(seen).toEqual([
       { url: 'https://api.openai.com/v1/models', auth: 'Bearer sk-proj-abcdefghijklmnopqrstuvwx' },
     ])
-    expect(api.getOpenAIApiModel(`${OPENAI_API_MODEL_PREFIX}gpt-5.5`)?.upstreamId).toBe('gpt-5.5')
+    // A candidate key is only being validated: the catalog stays as it was.
+    expect(api.getOpenAIApiModel(`${OPENAI_API_MODEL_PREFIX}gpt-5.5`)).toBeUndefined()
   } finally {
     globalThis.fetch = previousFetch
   }

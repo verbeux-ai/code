@@ -1,3 +1,4 @@
+import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
 import { z } from 'zod'
 
 import {
@@ -13,6 +14,7 @@ import { getVerbooCodeUserAgent } from '../../utils/userAgent.js'
 import type { LocalProviderAccountId } from '../../utils/providerAccounts/types.js'
 import { getSelectedProviderAccount } from '../../utils/providerAccounts/selection.js'
 
+const REQUEST_TIMEOUT_MS = 10_000
 const CACHE_TTL_MS = 5 * 60 * 1_000
 
 const capabilitySchema = z
@@ -127,7 +129,11 @@ async function requestAllModels(
     const url = new URL(`${CLAUDE_NATIVE_API_BASE_URL}/v1/models`)
     url.searchParams.set('limit', '1000')
     if (afterId) url.searchParams.set('after_id', afterId)
-    const response = await fetch(url, { headers: headers(credentials) })
+    const timeout = createCombinedAbortSignal(undefined, { timeoutMs: REQUEST_TIMEOUT_MS })
+    const response = await fetch(url, {
+      headers: headers(credentials),
+      signal: timeout.signal,
+    }).finally(timeout.cleanup)
     if (!response.ok) {
       const detail = (await response.text().catch(() => '')).trim().slice(0, 500)
       throw Object.assign(
@@ -164,8 +170,11 @@ export async function fetchClaudeNativeModels(options?: {
     (getSelectedProviderAccount()?.provider === 'claude'
       ? getSelectedProviderAccount()?.accountId
       : undefined)
+  // A candidate key is only being validated: until it is saved, the catalog
+  // must keep describing the stored key.
+  if (options?.credentials) return requestAllModels(options.credentials)
   const generation = cacheGeneration
-  const credentials = options?.credentials ?? (await readClaudeNativeCredentialsAsync(effectiveLocalAccountId))
+  const credentials = await readClaudeNativeCredentialsAsync(effectiveLocalAccountId)
   if (!isUsableClaudeCredential(credentials)) {
     throw new Error('Claude não conectado. Execute `/claude login` com sua chave de API da Anthropic.')
   }

@@ -10,6 +10,7 @@ import {
 } from './providerAccounts/credentials.js'
 import {
   removeProviderAccount,
+  setDefaultProviderAccount,
   upsertProviderAccount,
 } from './providerAccounts/store.js'
 import { normalizeProviderAccounts } from './providerAccounts/store.js'
@@ -106,9 +107,13 @@ export async function readClaudeNativeCredentialsAsync(
   }
 }
 
+/**
+ * Connects the key as the one in use. Each key has its own account id, so a
+ * rotated key would otherwise sit unused next to the old one, which must also
+ * stop being stored.
+ */
 export function saveClaudeNativeCredentials(
   credentials: ClaudeApiKeyCredentialBlob,
-  options?: { localAccountId?: LocalProviderAccountId },
 ): { success: boolean; localAccountId?: LocalProviderAccountId; warning?: string } {
   if (isBareMode()) {
     return { success: false, warning: 'Bare mode: secure storage is disabled.' }
@@ -118,9 +123,13 @@ export function saveClaudeNativeCredentials(
     return { success: false, warning: 'A chave de API da Anthropic está incompleta.' }
   }
   try {
-    const { localAccountId } = upsertProviderAccount('claude', normalized, {
-      reconnectLocalAccountId: options?.localAccountId,
-    })
+    const { localAccountId } = upsertProviderAccount('claude', normalized)
+    setDefaultProviderAccount('claude', localAccountId)
+    const raw = storage().read() || {}
+    const stored = normalizeProviderAccounts(raw.providerAccounts)
+    for (const otherId of Object.keys(stored?.claude.accounts ?? {})) {
+      if (otherId !== localAccountId) removeProviderAccount('claude', otherId)
+    }
     return { success: true, localAccountId }
   } catch (error) {
     return {
@@ -137,10 +146,12 @@ export function clearClaudeNativeCredentials(): {
   if (isBareMode()) return { success: true }
   const raw = storage().read() || {}
   const providerAccounts = normalizeProviderAccounts(raw.providerAccounts)
-  const defaultAccountId = providerAccounts?.claude.defaultAccountId
-  if (defaultAccountId) {
+  const accountIds = Object.keys(providerAccounts?.claude.accounts ?? {})
+  if (accountIds.length > 0) {
     try {
-      removeProviderAccount('claude', defaultAccountId)
+      for (const accountId of accountIds) {
+        removeProviderAccount('claude', accountId)
+      }
       return { success: true }
     } catch (error) {
       return {

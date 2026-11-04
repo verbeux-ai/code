@@ -1,6 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
 import { isVerbooMode } from '../constants/oauth.js'
+import { OPENAI_API_BASE_URL, OPENAI_API_MODEL_PREFIX } from '../services/api/openaiApiModels.js'
 import { getVerbooModelMeta } from '../services/api/verbooModels.js'
 import { getClaudeNativeModel } from '../services/api/claudeNativeModels.js'
 import { getGlobalConfig } from './config.js'
@@ -79,6 +80,15 @@ function shouldUseIntegrationRuntimeLimits(
   )
 }
 
+const OPENAI_API_UNKNOWN_MAX_OUTPUT_TOKENS = 16_384
+
+function openAIApiModelLimits(model: string) {
+  return resolveModelRuntimeLimits({
+    model: model.slice(OPENAI_API_MODEL_PREFIX.length),
+    baseUrl: OPENAI_API_BASE_URL,
+  })
+}
+
 export function getContextWindowForModel(
   model: string,
   betas?: string[],
@@ -112,6 +122,11 @@ export function getContextWindowForModel(
     const claudeMeta = getClaudeNativeModel(model)
     if (claudeMeta?.contextWindow) {
       return claudeMeta.contextWindow
+    }
+    if (model.startsWith(OPENAI_API_MODEL_PREFIX)) {
+      return (
+        openAIApiModelLimits(model).contextWindow ?? OPENAI_FALLBACK_CONTEXT_WINDOW
+      )
     }
   }
 
@@ -220,6 +235,13 @@ export function getModelMaxOutputTokens(model: string): {
       upperLimit = antModel.upperMaxTokensLimit ?? MAX_OUTPUT_TOKENS_UPPER_LIMIT
       return { default: defaultTokens, upperLimit }
     }
+  }
+
+  // VERBOO-BRAND: the user's OpenAI key. OpenAI rejects a request above the
+  // model's real output limit, so an unknown model gets a low, safe value.
+  if (isVerbooMode() && model.startsWith(OPENAI_API_MODEL_PREFIX)) {
+    const limit = openAIApiModelLimits(model).maxOutputTokens ?? OPENAI_API_UNKNOWN_MAX_OUTPUT_TOKENS
+    return { default: limit, upperLimit: limit }
   }
 
   // OpenAI-compatible provider — use known output limits to avoid 400 errors

@@ -2,7 +2,6 @@ import * as React from 'react'
 
 import TextInput from '../../components/TextInput.js'
 import { Box, Text, useInput } from '../../ink.js'
-import { useKeybinding } from '../../keybindings/useKeybinding.js'
 import {
   clearOpenAIApiModelsCache,
   fetchOpenAIApiModels,
@@ -37,13 +36,15 @@ function OpenAIApiKeyLogin({ onDone }: { onDone: LocalJSXCommandOnDone }) {
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [status, setStatus] = React.useState<LoginState>({ state: 'editing' })
 
+  const cancelledRef = React.useRef(false)
+
   const cancel = React.useCallback(() => {
+    cancelledRef.current = true
     onDone('Conexão OpenAI cancelada. O Verboo continua disponível.', {
       display: 'system',
     })
   }, [onDone])
 
-  useKeybinding('confirm:no', cancel, { context: 'Confirmation' })
   useInput((input, key, event) => {
     if (key.escape || (key.ctrl && input === 'c')) {
       event.stopImmediatePropagation()
@@ -65,6 +66,7 @@ function OpenAIApiKeyLogin({ onDone }: { onDone: LocalJSXCommandOnDone }) {
       const credential = buildOpenAIApiKeyCredential(apiKey)
       try {
         const models = await fetchOpenAIApiModels({ force: true, credential })
+        if (cancelledRef.current) return
         if (models.length === 0) {
           setStatus({
             state: 'editing',
@@ -82,11 +84,13 @@ function OpenAIApiKeyLogin({ onDone }: { onDone: LocalJSXCommandOnDone }) {
         }
         clearOpenAIApiModelsCache()
         await fetchOpenAIApiModels({ force: true }).catch(() => undefined)
+        if (cancelledRef.current) return
         onDone(
           `Chave da OpenAI conectada (…${credential.keyHint}). ${models.length} modelo(s) GPT liberado(s), cobrados pela OpenAI na sua chave. Use /model para escolher.`,
           { display: 'system' },
         )
       } catch (error) {
+        if (cancelledRef.current) return
         const status = (error as { status?: number }).status
         setStatus({
           state: 'editing',

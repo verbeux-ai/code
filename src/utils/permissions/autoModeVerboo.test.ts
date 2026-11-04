@@ -81,6 +81,14 @@ describe('classifierSideQuery', () => {
 })
 
 describe('auto mode wiring', () => {
+  test('on the user\'s own account the classifier never uses the router role', async () => {
+    const content = await source('utils/permissions/yoloClassifier.ts')
+    const body = content.slice(content.indexOf('function getClassifierModel()'))
+    const ownAccount = body.indexOf("getActiveModelIdentity(mainLoopModel).provider !== 'Verboo'")
+    expect(ownAccount).toBeGreaterThan(-1)
+    expect(ownAccount).toBeLessThan(body.indexOf("getVerbooAgentModelForRole('classifier')"))
+  })
+
   test('an unavailable classifier asks the user in interactive sessions', async () => {
     const content = await source('utils/permissions/permissions.ts')
     const branch = content.slice(content.indexOf('if (classifierResult.unavailable) {'))

@@ -28,6 +28,7 @@ import { errorMessage } from '../errors.js'
 import { lazySchema } from '../lazySchema.js'
 import { extractTextContent } from '../messages.js'
 import { resolveAntModel } from '../model/antModels.js'
+import { getActiveModelIdentity } from '../model/activeModelIdentity.js'
 import { getMainLoopModel } from '../model/model.js'
 import { getAutoModeConfig } from '../settings/settings.js'
 import { sideQuery } from '../sideQuery.js'
@@ -1525,9 +1526,17 @@ function getClassifierModel(): string {
   // "classifier" role (agent_model_roles.classifier on /models), configurable
   // server-side; VERBOO_AUTO_MODE_MODEL overrides it for diagnosis. Without
   // either, it falls back to the conversation model as before.
+  //
+  // On the user's own account (ChatGPT plan, OpenAI or Anthropic key) it uses
+  // that account: nothing from the session reaches the router, the Verboo plan
+  // is not billed, and auto mode keeps working when that plan runs out.
   if (isVerbooMode()) {
     const override = process.env.VERBOO_AUTO_MODE_MODEL?.trim()
     if (override) return override
+    const mainLoopModel = getMainLoopModel()
+    if (getActiveModelIdentity(mainLoopModel).provider !== 'Verboo') {
+      return mainLoopModel
+    }
     const roleModel = getVerbooAgentModelForRole('classifier')
     if (roleModel) return roleModel
   }

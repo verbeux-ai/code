@@ -55,6 +55,9 @@ export async function startCli({ columns = 80, rows = 24, fullscreen = false, us
     VERBOO_DISABLE_PLUGINS: '1', VERBOO_CONFIG_DIR: config, VERBOO_PROJECTS_DIR: join(dir, 'projects'),
     TMPDIR: join(dir, 'tmp'), TMP: join(dir, 'tmp'), TEMP: join(dir, 'tmp'),
     CLAUDE_CODE_OAUTH_TOKEN: 'fixture-session', CLAUDE_CODE_NO_FLICKER: fullscreen ? '1' : '0',
+    // Background memory extraction makes unrelated model calls after a turn.
+    // Keep request counts deterministic for the goal/agent protocol fixtures.
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
     DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1',
     CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: '1',
     CLI_E2E_ORIGIN: router.origin, CLI_E2E_NETWORK_LOG: join(dir, 'unexpected-network.log'),

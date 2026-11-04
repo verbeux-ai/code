@@ -3798,6 +3798,21 @@ export function REPL({
       resetHistory: () => { }
     });
   }, []);
+  // VERBOO-BRAND: the resend waits for the next render. onSubmit reads the model
+  // from its closure, so calling it right after the switch would send the prompt
+  // back to the account that just ran out.
+  const [limitResendPrompt, setLimitResendPrompt] = useState<string | null>(null);
+  useEffect(() => {
+    if (limitResendPrompt === null) return;
+    setLimitResendPrompt(null);
+    void onSubmitRef.current(limitResendPrompt, {
+      setCursorOffset: () => { },
+      clearBuffer: () => { },
+      resetHistory: () => { }
+    }, undefined, {
+      fromKeybinding: true
+    });
+  }, [limitResendPrompt]);
   // VERBOO-BRAND: when the user's own account (ChatGPT plan, OpenAI or
   // Anthropic key) runs out, open the switch to a Verboo model right away
   // instead of making them type /model. Errors that came with a resumed session
@@ -3823,7 +3838,8 @@ export function REPL({
         shouldHidePromptInput: false,
         clearLocalJSX: true
       });
-      setMessages(prev => [...prev, createSystemMessage(text, 'info')]);
+      // Not 'info': that level only shows in verbose mode.
+      setMessages(prev => [...prev, createSystemMessage(text, 'suggestion')]);
     };
     setToolJSX({
       jsx: <LimitSwitchDialog reason={reason} models={models} lastRouterModel={getGlobalConfig().lastRouterModel} turn={turn} onKeep={() => close('Modelo mantido. Use /model quando quiser trocar.')} onSwitch={model => {
@@ -3839,13 +3855,7 @@ export function REPL({
         // request once. fromKeybinding keeps the draft and skips adding to history.
         const prompt = turn.prompt;
         setMessages(prev => prev.filter(message => message.uuid !== turn.promptUuid && message.uuid !== last.uuid));
-        void onSubmitRef.current(prompt, {
-          setCursorOffset: () => { },
-          clearBuffer: () => { },
-          resetHistory: () => { }
-        }, undefined, {
-          fromKeybinding: true
-        });
+        setLimitResendPrompt(prompt);
       }} />,
       shouldHidePromptInput: true,
       showSpinner: false,

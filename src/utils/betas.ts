@@ -421,9 +421,8 @@ export function getMergedBetas(
   // For non-Haiku models these are already in baseBetas; for Haiku they're
   // excluded by getAllModelBetas() since non-agentic Haiku calls don't need them.
   if (options?.isAgenticQuery) {
-    const _agenticCanonical = getCanonicalName(model)
-    const _isVerbooNonClaude = isVerbooMode() && !_agenticCanonical.includes('claude-')
-    if (!_isVerbooNonClaude && !baseBetas.includes(CLAUDE_CODE_20250219_BETA_HEADER)) {
+    // VERBOO-BRAND: this beta identifies the caller as Claude Code; never send it.
+    if (!isVerbooMode() && !baseBetas.includes(CLAUDE_CODE_20250219_BETA_HEADER)) {
       baseBetas.push(CLAUDE_CODE_20250219_BETA_HEADER)
     }
     if (

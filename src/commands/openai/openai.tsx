@@ -36,6 +36,15 @@ function OpenAIApiKeyLogin({ onDone }: { onDone: LocalJSXCommandOnDone }) {
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [status, setStatus] = React.useState<LoginState>({ state: 'editing' })
 
+  // The field is masked: nothing shows that a refused entry is still in it, and
+  // pasting a corrected key would glue the two together.
+  React.useEffect(() => {
+    if (status.state === 'editing' && status.error) {
+      setValue('')
+      setCursorOffset(0)
+    }
+  }, [status])
+
   const cancelledRef = React.useRef(false)
 
   const cancel = React.useCallback(() => {

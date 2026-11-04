@@ -78,6 +78,7 @@ import { useCostSummary } from '../costHook.js';
 import { useFpsMetrics } from '../context/fpsMetrics.js';
 import { useAfterFirstRender } from '../hooks/useAfterFirstRender.js';
 import { useDeferredHookMessages } from '../hooks/useDeferredHookMessages.js';
+import { redactProviderKeyInCommand } from 'src/utils/providerKeyRedaction.js';
 import { addToHistory, removeLastFromHistory, expandPastedTextRefs, parseReferences } from '../history.js';
 import { prependModeCharacterToInput } from '../components/PromptInput/inputModes.js';
 import { prependToShellHistoryCache } from '../utils/suggestions/shellHistoryCompletion.js';
@@ -2196,9 +2197,11 @@ export function REPL({
     if (was !== now) repinScroll();
     prevDialogRef.current = focusedInputDialog;
   }, [focusedInputDialog, repinScroll]);
-  const canCancelWork = () => queryGuard.isActive ||
+  // VERBOO-BRAND: a command dialog waiting for its answer holds the guard and an
+  // abort controller while no turn runs, so Esc and Ctrl+C belong to the dialog.
+  const canCancelWork = () => !(isShowingLocalJSXCommand && !queryGuard.isRunning) && (queryGuard.isActive ||
     (!!abortControllerRef.current && !abortControllerRef.current.signal.aborted) ||
-    (!queryGuard.isPaused && isExternalLoading) || hasActiveSessionTasks(store.getState().tasks);
+    (!queryGuard.isPaused && isExternalLoading) || hasActiveSessionTasks(store.getState().tasks));
 
   function onCancel() {
     if (!canCancelWork()) return;
@@ -3338,6 +3341,8 @@ export function REPL({
   }, options?: {
     fromKeybinding?: boolean;
   }) => {
+    // VERBOO-BRAND: a key typed as an argument stays off the screen, history and transcript.
+    input = redactProviderKeyInCommand(input);
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches OpenCode's auto-scroll behavior).
     repinScroll();

@@ -23,6 +23,9 @@ export type {
 
 export const CLAUDE_NATIVE_STORAGE_KEY = 'claudeNative' as const
 
+const STORAGE_FAILED_MESSAGE =
+  'Não foi possível usar o armazenamento seguro do sistema. Confira se o chaveiro está desbloqueado e tente de novo.'
+
 function storage() {
   return getSecureStorage({ allowPlainTextFallback: false })
 }
@@ -131,10 +134,10 @@ export function saveClaudeNativeCredentials(
       if (otherId !== localAccountId) removeProviderAccount('claude', otherId)
     }
     return { success: true, localAccountId }
-  } catch (error) {
+  } catch {
     return {
       success: false,
-      warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+      warning: STORAGE_FAILED_MESSAGE,
     }
   }
 }
@@ -153,10 +156,10 @@ export function clearClaudeNativeCredentials(): {
         removeProviderAccount('claude', accountId)
       }
       return { success: true }
-    } catch (error) {
+    } catch {
       return {
         success: false,
-        warning: error instanceof Error ? error.message : 'secure_storage_write_failed',
+        warning: STORAGE_FAILED_MESSAGE,
       }
     }
   }

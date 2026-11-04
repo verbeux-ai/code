@@ -55,9 +55,13 @@ export function isMarketplaceAutoUpdate(
   entry: { autoUpdate?: boolean },
 ): boolean {
   const normalizedName = marketplaceName.toLowerCase()
+  // VERBOO-BRAND: só a loja da Verboo se atualiza sozinha por padrão. As lojas
+  // da Anthropic são sob demanda: atualizam quando o usuário pede ou quando
+  // ele mesmo liga autoUpdate.
   return (
     entry.autoUpdate ??
-    (ALLOWED_OFFICIAL_MARKETPLACE_NAMES.has(normalizedName) &&
+    (normalizedName === VERBOO_MARKETPLACE_NAME &&
+      ALLOWED_OFFICIAL_MARKETPLACE_NAMES.has(normalizedName) &&
       !NO_AUTO_UPDATE_OFFICIAL_MARKETPLACES.has(normalizedName))
   )
 }

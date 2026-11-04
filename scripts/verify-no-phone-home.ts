@@ -13,6 +13,9 @@ const BANNED_PATTERNS = [
   'infra.ant.dev',
   'claude-code-feedback',
   'C07VBSHV7EV',
+  // Anthropic's Claude Code release buckets: there are no native @verboo/code builds.
+  'claude-code-dist-86c565f3',
+  'claude-code-ci-sentinel',
 ] as const
 
 if (!existsSync(DIST)) {

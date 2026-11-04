@@ -46,7 +46,8 @@ describe('prefetchOfficialMcpUrls', () => {
     expect(getSpy).not.toHaveBeenCalled()
   })
 
-  test('fetches registry in first-party mode', async () => {
+  // VERBOO-BRAND: startup does not call Anthropic, even in first-party mode.
+  test('never fetches the registry', async () => {
     delete process.env.CLAUDE_CODE_USE_OPENAI
     delete process.env.CLAUDE_CODE_USE_GEMINI
     delete process.env.CLAUDE_CODE_USE_GITHUB
@@ -66,7 +67,7 @@ describe('prefetchOfficialMcpUrls', () => {
     const { prefetchOfficialMcpUrls, isOfficialMcpUrl } = await importFreshModule()
     await prefetchOfficialMcpUrls()
 
-    expect(getSpy).toHaveBeenCalledTimes(1)
-    expect(isOfficialMcpUrl('https://example.com/mcp')).toBe(true)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(isOfficialMcpUrl('https://example.com/mcp')).toBe(false)
   })
 })

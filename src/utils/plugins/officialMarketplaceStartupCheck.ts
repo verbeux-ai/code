@@ -350,7 +350,14 @@ export type NativeMarketplaceCheckResults = {
  */
 export async function checkAndInstallNativeMarketplaces(): Promise<NativeMarketplaceCheckResults> {
   const verboo = await checkAndInstallVerbooMarketplace()
-  const claude = await checkAndInstallOfficialMarketplace()
+  // VERBOO-BRAND: a loja da Anthropic é só sob demanda — nada é baixado na
+  // inicialização. Ela é instalada quando o usuário instala um plugin dela
+  // (ou roda /lsp recommend), via checkAndInstallOfficialMarketplace.
+  const claude: OfficialMarketplaceCheckResult = {
+    installed: false,
+    skipped: true,
+    reason: 'policy_blocked',
+  }
   return { verboo, claude }
 }
 

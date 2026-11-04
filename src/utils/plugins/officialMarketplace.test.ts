@@ -55,4 +55,13 @@ describe('native marketplace sources', () => {
   test('enables automatic updates for the Verboo marketplace by default', () => {
     expect(isMarketplaceAutoUpdate(VERBOO_MARKETPLACE_NAME, {})).toBe(true)
   })
+
+  // VERBOO-BRAND: Anthropic marketplaces are on demand; they only auto-update
+  // when the user explicitly turned it on.
+  test('does not auto-update Anthropic marketplaces unless the user opts in', () => {
+    expect(isMarketplaceAutoUpdate(CLAUDE_MARKETPLACE_NAME, {})).toBe(false)
+    expect(isMarketplaceAutoUpdate('anthropic-plugins', {})).toBe(false)
+    expect(isMarketplaceAutoUpdate(CLAUDE_MARKETPLACE_NAME, { autoUpdate: true })).toBe(true)
+    expect(isMarketplaceAutoUpdate(VERBOO_MARKETPLACE_NAME, { autoUpdate: false })).toBe(false)
+  })
 })

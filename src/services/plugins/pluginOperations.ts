@@ -11,6 +11,8 @@
  * - Return result objects indicating success/failure with messages
  * - Can throw errors for unexpected failures
  */
+import { OFFICIAL_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js'
+import { checkAndInstallOfficialMarketplace } from '../../utils/plugins/officialMarketplaceStartupCheck.js'
 import { dirname, join } from 'path'
 import { getOriginalCwd } from '../../bootstrap/state.js'
 import { isBuiltinPluginId } from '../../plugins/builtinPlugins.js'
@@ -341,6 +343,21 @@ export async function installPluginOp(
         message:
           `Could not refresh Verboo marketplace before installing "${pluginName}": ` +
           errorMessage(error),
+      }
+    }
+  }
+
+  // VERBOO-BRAND: Anthropic's marketplace is on demand, not fetched at startup.
+  // Installing a plugin from it is the explicit request that brings it in.
+  if (marketplaceName?.toLowerCase() === OFFICIAL_MARKETPLACE_NAME) {
+    const result = await checkAndInstallOfficialMarketplace()
+    if (!result.installed && result.reason !== 'already_installed') {
+      return {
+        success: false,
+        message:
+          `Could not add the "${OFFICIAL_MARKETPLACE_NAME}" marketplace to install "${pluginName}"` +
+          (result.reason ? ` (${result.reason})` : '') +
+          `. Add it with /plugin marketplace add and try again.`,
       }
     }
   }

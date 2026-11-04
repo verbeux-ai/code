@@ -1643,15 +1643,48 @@ export async function resetSessionFilePointer() {
  * to resume in (the copy's), or the transcript's own dir when it is already
  * writable. The original files are left untouched.
  */
+function isInReadOnlyProjectsDir(transcriptPath: string): boolean {
+  const projectsRoot = join(dirname(dirname(transcriptPath)))
+  return getAdditionalProjectsDirs().some(dir => join(dir) === projectsRoot)
+}
+
+async function findInReadOnlyProjectsDirs(
+  transcriptPath: string,
+): Promise<string | undefined> {
+  try {
+    await stat(transcriptPath)
+    return undefined
+  } catch {
+    // Not in the writable dir: look for it where old sessions live.
+  }
+  for (const dir of getAdditionalProjectsDirs()) {
+    const candidate = join(
+      dir,
+      basename(dirname(transcriptPath)),
+      basename(transcriptPath),
+    )
+    try {
+      await stat(candidate)
+      return candidate
+    } catch {
+      // Not in this one.
+    }
+  }
+  return undefined
+}
+
 export async function adoptReadOnlyTranscriptForResume(
   transcriptPath: string,
 ): Promise<string> {
   const sourceDir = dirname(transcriptPath)
-  const projectsRoot = dirname(sourceDir)
-  const isReadOnly = getAdditionalProjectsDirs().some(
-    dir => join(dir) === join(projectsRoot),
-  )
-  if (!isReadOnly) return sourceDir
+  let sourcePath = transcriptPath
+  if (!isInReadOnlyProjectsDir(sourcePath)) {
+    // Lookups by session id build the path in the writable dir even when the
+    // session only exists in a read-only one.
+    const original = await findInReadOnlyProjectsDirs(transcriptPath)
+    if (!original) return sourceDir
+    sourcePath = original
+  }
 
   const targetDir = join(getProjectsDir(), basename(sourceDir))
   const targetPath = join(targetDir, basename(transcriptPath))
@@ -1659,8 +1692,8 @@ export async function adoptReadOnlyTranscriptForResume(
   try {
     await stat(targetPath)
   } catch {
-    await copyFile(transcriptPath, targetPath)
-    const sessionSubdir = transcriptPath.replace(/\.jsonl$/, '')
+    await copyFile(sourcePath, targetPath)
+    const sessionSubdir = sourcePath.replace(/\.jsonl$/, '')
     try {
       if ((await stat(sessionSubdir)).isDirectory()) {
         await cp(sessionSubdir, targetPath.replace(/\.jsonl$/, ''), {
@@ -2959,6 +2992,21 @@ async function trackSessionBranchingAnalytics(
 export async function fetchLogs(limit?: number): Promise<LogOption[]> {
   const projectDir = getProjectDir(getOriginalCwd())
   const logs = await getSessionFilesLite(projectDir, limit, getOriginalCwd())
+  // VERBOO-BRAND: sessions saved before the move to ~/.verboo/projects are still
+  // candidates for --continue.
+  const seen = new Set(logs.map(log => log.sessionId))
+  for (const dir of getAdditionalProjectsDirs()) {
+    const older = await getSessionFilesLite(
+      join(dir, basename(projectDir)),
+      limit,
+      getOriginalCwd(),
+    )
+    for (const log of older) {
+      if (seen.has(log.sessionId)) continue
+      seen.add(log.sessionId)
+      logs.push(log)
+    }
+  }
   // Sessões do Codex CLI (ainda não convertidas) para --continue cross-CLI
   logs.push(...(await getCodexLogOptions(new Set([getOriginalCwd()]))))
 
@@ -2976,13 +3024,33 @@ function appendEntryToFile(
   entry: Record<string, unknown>,
 ): void {
   const fs = getFsImplementation()
+  const path = writablePathForSessionFile(fullPath)
   const line = jsonStringify(entry) + '\n'
   try {
-    fs.appendFileSync(fullPath, line, { mode: 0o600 })
+    fs.appendFileSync(path, line, { mode: 0o600 })
   } catch {
-    fs.mkdirSync(dirname(fullPath), { mode: 0o700 })
-    fs.appendFileSync(fullPath, line, { mode: 0o600 })
+    fs.mkdirSync(dirname(path), { mode: 0o700 })
+    fs.appendFileSync(path, line, { mode: 0o600 })
   }
+}
+
+/**
+ * VERBOO-BRAND: metadata writers (rename, tag) get a path from the picker, which
+ * may be an old session in a read-only dir. The entry goes to its copy instead.
+ */
+function writablePathForSessionFile(fullPath: string): string {
+  if (!isInReadOnlyProjectsDir(fullPath)) return fullPath
+  const fs = getFsImplementation()
+  const target = join(
+    getProjectsDir(),
+    basename(dirname(fullPath)),
+    basename(fullPath),
+  )
+  if (!fs.existsSync(target)) {
+    fs.mkdirSync(dirname(target), { mode: 0o700 })
+    fs.copyFileSync(fullPath, target)
+  }
+  return target
 }
 
 /**

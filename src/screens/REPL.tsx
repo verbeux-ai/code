@@ -172,7 +172,7 @@ import type { ContentBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resou
 import type { ProcessUserInputContext } from '../utils/processUserInput/processUserInput.js';
 import type { PastedContent } from '../utils/config.js';
 import { copyPlanForFork, copyPlanForResume, getPlanSlug, setPlanSlug } from '../utils/plans.js';
-import { clearSessionMetadata, resetSessionFilePointer, adoptResumedSessionFile, removeTranscriptMessage, restoreSessionMetadata, getCurrentSessionTitle, isEphemeralToolProgress, isLoggableMessage, saveWorktreeState, getAgentTranscript, recordAiGeneratedTitle } from '../utils/sessionStorage.js';
+import { adoptReadOnlyTranscriptForResume, clearSessionMetadata, resetSessionFilePointer, adoptResumedSessionFile, removeTranscriptMessage, restoreSessionMetadata, getCurrentSessionTitle, isEphemeralToolProgress, isLoggableMessage, saveWorktreeState, getAgentTranscript, recordAiGeneratedTitle } from '../utils/sessionStorage.js';
 import { deserializeMessages } from '../utils/conversationRecovery.js';
 import { extractReadFilesFromMessages, extractBashToolsFromMessages } from '../utils/queryHelpers.js';
 import { resetMicrocompactState } from '../services/compact/microCompact.js';
@@ -1929,7 +1929,8 @@ export function REPL({
       // Switch session (id + project dir atomically). fullPath may point to
       // a different project (cross-worktree, /branch); null derives from
       // current originalCwd.
-      switchSession(asSessionId(sessionId), log.fullPath ? dirname(log.fullPath) : null);
+      // VERBOO-BRAND: an old session in a read-only dir is resumed from a copy.
+      switchSession(asSessionId(sessionId), log.fullPath ? await adoptReadOnlyTranscriptForResume(log.fullPath) : null);
       // Rename asciicast recording to match the resumed session ID
       const {
         renameRecordingForSession

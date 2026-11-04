@@ -681,6 +681,16 @@ function enforceStrictSchema(schema: unknown): Record<string, unknown> {
     }
   }
 
+  // VERBOO-BRAND: strict function schemas only document anyOf, and zod 4 emits
+  // oneOf for discriminated unions (the SendMessage tool, for one).
+  if (Array.isArray(record.oneOf)) {
+    record.anyOf = [
+      ...(Array.isArray(record.anyOf) ? record.anyOf : []),
+      ...record.oneOf,
+    ]
+    delete record.oneOf
+  }
+
   // Recurse into combinators
   for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
     if (key in record && Array.isArray(record[key])) {

@@ -145,6 +145,8 @@ import type {
   ServerResource,
 } from './types.js'
 
+const MCP_STDIO_MAX_MESSAGE_BYTES = 256 * 1024 * 1024
+
 /**
  * Custom error class to indicate that an MCP tool call failed due to
  * authentication issues (e.g., expired OAuth token returning 401).
@@ -977,6 +979,9 @@ export const connectToServer = memoize(
             ...serverRef.env,
           } as Record<string, string>,
           stderr: 'pipe', // prevents error output from the MCP server from printing to the UI
+          // VERBOO-BRAND: SDK 1.32 closes the server on a message above 10 MB.
+          // Larger results used to arrive and be saved to a file by the CLI.
+          maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES,
         })
       } else {
         throw new Error(`Unsupported server type: ${serverRef.type}`)

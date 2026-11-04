@@ -2405,3 +2405,36 @@ describe('convertSystemPrompt', () => {
     )
   })
 })
+
+test('strict tool schemas turn oneOf into anyOf, as zod 4 emits for discriminated unions', () => {
+  const [tool] = convertToolsToResponsesTools([
+    {
+      name: 'SendMessage',
+      description: 'd',
+      input_schema: {
+        type: 'object',
+        properties: {
+          message: {
+            anyOf: [
+              { type: 'string' },
+              {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: { type: { type: 'string', const: 'shutdown_request' } },
+                    required: ['type'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        required: ['message'],
+        additionalProperties: false,
+      },
+    },
+  ])
+  expect(JSON.stringify(tool?.parameters)).not.toContain('oneOf')
+  expect(JSON.stringify(tool?.parameters)).toContain('shutdown_request')
+})

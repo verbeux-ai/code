@@ -30,19 +30,6 @@ export const COMMON_EXTERNALS: string[] = [
   // International phone metadata is sizeable and ships as a normal runtime
   // dependency; keep it outside both bundles.
   'libphonenumber-js',
-  // VERBOO-BRAND: telemetry stack (kept external — see no-telemetry-plugin.ts)
-  '@growthbook/growthbook',
-  '@opentelemetry/api',
-  '@opentelemetry/api-logs',
-  '@opentelemetry/core',
-  '@opentelemetry/exporter-logs-otlp-http',
-  '@opentelemetry/exporter-trace-otlp-grpc',
-  '@opentelemetry/resources',
-  '@opentelemetry/sdk-logs',
-  '@opentelemetry/sdk-metrics',
-  '@opentelemetry/sdk-trace-base',
-  '@opentelemetry/sdk-trace-node',
-  '@opentelemetry/semantic-conventions',
 ]
 
 // Additional packages external only in the SDK bundle (TUI + heavy deps)
@@ -70,9 +57,7 @@ export const SDK_EXTERNALS: string[] = [...COMMON_EXTERNALS, ...SDK_ONLY_EXTERNA
 export const INTENTIONALLY_BUNDLED: string[] = [
   // Anthropic provider variants (bundled, not the main SDK)
   '@anthropic-ai/bedrock-sdk',
-  '@anthropic-ai/foundry-sdk',
   '@anthropic-ai/sandbox-runtime',
-  '@anthropic-ai/vertex-sdk',
   // CLI / TUI utilities
   '@alcalzone/ansi-tokenize',
   '@commander-js/extra-typings',
@@ -111,8 +96,6 @@ export const INTENTIONALLY_BUNDLED: string[] = [
   'semver',
   'shell-quote',
   'signal-exit',
-  'stack-utils',
-  'code-excerpt',
   'type-fest',
   // Networking
   'axios',

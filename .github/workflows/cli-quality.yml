@@ -47,7 +47,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-latest]
+        # Use the current hosted macOS image for terminal coverage on Intel.
+        # PR checks still build and smoke-test the native arm64 desktop CLI.
+        os: [ubuntu-24.04, macos-26-intel, windows-latest]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:

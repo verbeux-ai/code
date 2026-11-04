@@ -23,11 +23,11 @@ export const subscriptionSourceSchema = z.union([
 
 const subscriptionSchema = z
   .object({
-    id: z.string().uuid(),
-    groupId: z.string().uuid(),
+    id: z.guid(),
+    groupId: z.guid(),
     group: z
       .object({
-        id: z.string().uuid(),
+        id: z.guid(),
         name: z.string().min(1),
         slug: z.string().min(1),
         priceCents: z.number().int().nonnegative(),

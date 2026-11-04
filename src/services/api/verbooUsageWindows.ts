@@ -7,8 +7,8 @@ import { parseApiEnvelope } from './verbooApiError.js'
 import { readWithRetry, retryableReadStatus, retryAfterMilliseconds } from './readRetry.js'
 
 export const usageWindowsSchema = z.array(z.object({
-  groupId: z.string().uuid(), groupName: z.string(), limited: z.boolean(), blocked: z.boolean(), accountingPending: z.boolean(), availableAt: z.string().nullable(),
-  windows: z.array(z.object({ id: z.string().uuid(), durationSeconds: z.number().int().positive(), usedPercent: z.number().min(0).max(100), resetsAt: z.string().nullable() })),
+  groupId: z.guid(), groupName: z.string(), limited: z.boolean(), blocked: z.boolean(), accountingPending: z.boolean(), availableAt: z.string().nullable(),
+  windows: z.array(z.object({ id: z.guid(), durationSeconds: z.number().int().positive(), usedPercent: z.number().min(0).max(100), resetsAt: z.string().nullable() })),
 }))
 export type UsageWindowsStatus = z.infer<typeof usageWindowsSchema>
 export async function fetchUsageWindows(signal?: AbortSignal): Promise<UsageWindowsStatus> {

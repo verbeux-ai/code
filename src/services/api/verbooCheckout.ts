@@ -25,14 +25,14 @@ const checkoutResultSchema = z.discriminatedUnion('mode', [
   z
     .object({
       mode: z.literal('stripe'),
-      attemptId: z.string().uuid(),
+      attemptId: z.guid(),
       url: httpUrlSchema,
     })
     .passthrough(),
   z
     .object({
       mode: z.literal('woovi'),
-      attemptId: z.string().uuid(),
+      attemptId: z.guid(),
       wooviQrCode: z.string().min(1),
       wooviSubscriptionId: z.string().min(1),
     })
@@ -44,7 +44,7 @@ const checkoutInputSchema = z
   .object({
     paymentMethod: z.enum(['stripe', 'woovi']),
     billingInterval: z.enum(['month', 'year']).optional(),
-    requestId: z.string().uuid().optional(),
+    requestId: z.guid().optional(),
     purchaseIntent: z.enum(['new', 'additional']).optional(),
     woovi: z
       .object({
@@ -101,7 +101,7 @@ const cardlessTrialInputSchema = z.discriminatedUnion('useVerifiedPhone', [
 const verificationRequiredSchema = z
   .object({
     mode: z.literal('verification_required'),
-    verificationId: z.string().uuid(),
+    verificationId: z.guid(),
     maskedPhone: z.string().min(1),
     expiresAt: z.string().datetime({ offset: true }),
     resendAt: z.string().datetime({ offset: true }),
@@ -112,7 +112,7 @@ const verificationRequiredSchema = z
 const trialActivatedSchema = z
   .object({
     mode: z.literal('trial_activated'),
-    groupId: z.string().uuid(),
+    groupId: z.guid(),
     status: z.literal('trialing'),
   })
   .passthrough()
@@ -148,7 +148,7 @@ function actorScope(accessToken: string): string {
   let actor = accessToken
   try {
     const claims = JSON.parse(Buffer.from(accessToken.split('.')[1] ?? '', 'base64url').toString('utf8'))
-    if (typeof claims.sub === 'string' && z.string().uuid().safeParse(claims.sub).success) actor = claims.sub
+    if (typeof claims.sub === 'string' && z.guid().safeParse(claims.sub).success) actor = claims.sub
   } catch { /* Opaque tokens remain bound to their exact authenticated token. */ }
   return createHash('sha256').update(actor).digest('hex')
 }
@@ -210,7 +210,7 @@ export async function getPurchaseOptions(accessToken: string, groupId: string, b
   const observation = commercialOperation('catalog', undefined, actorScope(accessToken))
   try {
     const response = await commercialGet(`${VERBOO_API_BASE_URL}/api/me/groups/${groupId}/purchase-options`, {headers: {...authHeaders(accessToken), ...observation.headers},params: {billingInterval},timeout: 10_000})
-    const result = parseApiEnvelope(z.object({version: z.literal(1),groupId: z.string().uuid(),billingInterval: z.enum(['month', 'year']),recommendation: z.enum(['checkout', 'choose', 'change', 'manage', 'convert', 'resume', 'recover', 'support'])}),response.data,'opções de compra')
+    const result = parseApiEnvelope(z.object({version: z.literal(1),groupId: z.guid(),billingInterval: z.enum(['month', 'year']),recommendation: z.enum(['checkout', 'choose', 'change', 'manage', 'convert', 'resume', 'recover', 'support'])}),response.data,'opções de compra')
     if (result.groupId !== groupId || result.billingInterval !== billingInterval) throw new VerbooApiError({kind:'contract',code:'contract_error',message:'Opções de compra incompatíveis.'})
     observation.complete();return result
   } catch (error) {observation.fail(error);throw toVerbooApiError(error,'Não foi possível consultar as opções de compra.')}
@@ -219,7 +219,7 @@ export async function isPurchaseAttemptSucceeded(accessToken: string, attemptId:
   const observation = commercialOperation('payment_return', attemptId, actorScope(accessToken))
   try {
     const response = await commercialGet(`${VERBOO_API_BASE_URL}/api/me/purchase-attempts/${attemptId}`, {headers: {...authHeaders(accessToken), ...observation.headers},signal,timeout:10_000})
-    const attempt = parseApiEnvelope(z.object({id:z.string().uuid(),groupId:z.string().uuid(),status:z.enum(['pending','requires_action','succeeded','failed','expired','review'])}),response.data,'confirmação da compra')
+    const attempt = parseApiEnvelope(z.object({id:z.guid(),groupId:z.guid(),status:z.enum(['pending','requires_action','succeeded','failed','expired','review'])}),response.data,'confirmação da compra')
     if (attempt.id !== attemptId || attempt.groupId !== groupId) throw new VerbooApiError({kind:'contract',code:'contract_error',message:'Identidade de compra incompatível.'})
     if (['failed','expired','review'].includes(attempt.status)) throw new VerbooApiError({kind:'request',code:`purchase_attempt_${attempt.status}`,message:'A compra exige revisão no billing.'})
     observation.complete();return attempt.status === 'succeeded'
@@ -234,7 +234,7 @@ export async function createCheckoutSession(
   const requestId = checkoutRequest(accessToken,groupId,input)
   let request: z.infer<typeof checkoutInputSchema>
   try {
-    parseRequest(z.string().uuid(), groupId, 'checkout')
+    parseRequest(z.guid(), groupId, 'checkout')
     request = parseRequest(checkoutInputSchema, {...input, requestId, purchaseIntent: input.purchaseIntent ?? 'new'}, 'checkout')
   } catch (error) { commercialOperation('checkout_request', requestId, actorScope(accessToken)).fail(error); throw error }
   return postAndParse(
@@ -287,7 +287,7 @@ export async function startCardlessTrial(
   groupId: string,
   input: CardlessTrialInput,
 ): Promise<CardlessTrialResult> {
-  parseRequest(z.string().uuid(), groupId, 'trial')
+  parseRequest(z.guid(), groupId, 'trial')
   const request = parseRequest(cardlessTrialInputSchema, input, 'trial')
   return postAndParse(
     `${VERBOO_API_BASE_URL}/api/me/groups/${groupId}/cardless-trial`,
@@ -303,7 +303,7 @@ export async function confirmCardlessTrial(
   verificationId: string,
   code: string,
 ): Promise<CardlessTrialResult> {
-  parseRequest(z.string().uuid(), verificationId, 'confirmação do trial')
+  parseRequest(z.guid(), verificationId, 'confirmação do trial')
   const request = parseRequest(
     z.object({ code: z.string().regex(/^\d{6}$/) }),
     { code },
@@ -322,7 +322,7 @@ export async function resendCardlessTrialCode(
   accessToken: string,
   verificationId: string,
 ): Promise<z.infer<typeof verificationRequiredSchema>> {
-  parseRequest(z.string().uuid(), verificationId, 'reenvio do código')
+  parseRequest(z.guid(), verificationId, 'reenvio do código')
   return postAndParse(
     `${VERBOO_API_BASE_URL}/api/me/cardless-trial-verifications/${verificationId}/resend`,
     accessToken,

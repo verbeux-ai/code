@@ -26,7 +26,7 @@ import { listProviderAccountSummaries } from '../../utils/providerAccounts/store
 import { formatProviderAccountStatus } from '../../utils/providerAccounts/status.js'
 
 type LoginState =
-  | { state: 'editing'; error?: string }
+  | { state: 'editing'; error?: string; keepEntry?: boolean }
   | { state: 'validating' }
 
 /**
@@ -46,7 +46,7 @@ function ClaudeApiKeyLogin({
   // The field is masked: nothing shows that a refused entry is still in it, and
   // pasting a corrected key would glue the two together.
   React.useEffect(() => {
-    if (status.state === 'editing' && status.error) {
+    if (status.state === 'editing' && status.error && !status.keepEntry) {
       setValue('')
       setCursorOffset(0)
     }
@@ -96,6 +96,7 @@ function ClaudeApiKeyLogin({
         if (!saved.success) {
           setStatus({
             state: 'editing',
+            keepEntry: true,
             error: saved.warning ?? 'Não foi possível salvar a chave no armazenamento seguro.',
           })
           return
@@ -112,6 +113,8 @@ function ClaudeApiKeyLogin({
         const status = (error as { status?: number }).status
         setStatus({
           state: 'editing',
+          // A key that could not be checked may be fine: Enter tries it again.
+          keepEntry: status !== 401 && status !== 403,
           error:
             status === 401 || status === 403
               ? 'A Anthropic recusou essa chave. Confira a chave no Console da Anthropic.'

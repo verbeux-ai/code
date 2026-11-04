@@ -53,6 +53,16 @@ em volta. Use `git grep "VERBOO-BRAND"` para localizar todos os pontos editados.
 - `src/commands/provider/` — arquivos **NÃO foram deletados** (upstream
   continua mexendo neles; deletar gera conflitos "deleted file modified upstream").
 
+#### Nada gravado nas pastas de outros apps
+- `src/utils/envUtils.ts` — `getProjectsDir()` = `~/.verboo/projects` (ou
+  `VERBOO_CONFIG_DIR/projects`); `~/.claude/projects` e `~/.openclaude/projects`
+  entram em `getAdditionalProjectsDirs()` só para leitura.
+- `src/utils/sessionStorage.ts` — `mirrorTranscriptToAdditionalDirs` virou
+  no-op; retomar sessão de diretório somente leitura copia o arquivo
+  (`adoptReadOnlyTranscriptForResume`, usado em `sessionRestore.ts`).
+- `src/utils/completionCache.ts` — cache em `~/.verboo/completion.<shell>`.
+- `scripts/postinstall.mjs` — não copia nada de `~/.claude`.
+
 #### Mensagens reescritas
 - `src/utils/providerValidation.ts` (3 ocorrências)
 - `src/services/api/withRetry.ts`

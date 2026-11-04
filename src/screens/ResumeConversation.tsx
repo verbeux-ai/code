@@ -1,6 +1,5 @@
 import { c as _c } from "react-compiler-runtime";
 import { feature } from 'bun:bundle';
-import { dirname } from 'path';
 import React from 'react';
 import { useTerminalSize } from 'src/hooks/useTerminalSize.js';
 import { getOriginalCwd, switchSession } from '../bootstrap/state.js';
@@ -31,7 +30,7 @@ import { logError } from '../utils/log.js';
 import { handoffToResume } from '../utils/resumeHandoff.js';
 import { createSystemMessage } from '../utils/messages.js';
 import { computeStandaloneAgentContext, restoreAgentFromSession, restoreWorktreeForResume } from '../utils/sessionRestore.js';
-import { adoptResumedSessionFile, enrichLogs, getSessionIdFromLog, isCustomTitleEnabled, loadAllProjectsMessageLogsProgressive, loadSameRepoMessageLogsProgressive, recordContentReplacement, resetSessionFilePointer, restoreSessionMetadata, type SessionLogResult } from '../utils/sessionStorage.js';
+import { adoptReadOnlyTranscriptForResume, adoptResumedSessionFile, enrichLogs, getSessionIdFromLog, isCustomTitleEnabled, loadAllProjectsMessageLogsProgressive, loadSameRepoMessageLogsProgressive, recordContentReplacement, resetSessionFilePointer, restoreSessionMetadata, type SessionLogResult } from '../utils/sessionStorage.js';
 import type { ThinkingConfig } from '../utils/thinking.js';
 import type { ContentReplacementRecord } from '../utils/toolResultStorage.js';
 import { REPL } from './REPL.js';
@@ -232,7 +231,8 @@ export function ResumeConversation({
         // Prefer the resolved fullPath: for imported sessions (Codex) it
         // points to the converted native file, not the foreign source.
         const sessionDirPath = result_3.fullPath ?? log_0.fullPath;
-        switchSession(asSessionId(result_3.sessionId), sessionDirPath ? dirname(sessionDirPath) : null);
+        // VERBOO-BRAND: an old session in a read-only dir is resumed from a copy.
+        switchSession(asSessionId(result_3.sessionId), sessionDirPath ? await adoptReadOnlyTranscriptForResume(sessionDirPath) : null);
         await renameRecordingForSession();
         await resetSessionFilePointer();
         restoreCostStateForSession(result_3.sessionId);

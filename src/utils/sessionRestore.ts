@@ -1,6 +1,5 @@
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
-import { dirname } from 'path'
 import {
   getMainLoopModelOverride,
   getSessionId,
@@ -45,6 +44,7 @@ import { parseUserSpecifiedModel } from './model/model.js'
 import { getPlansDirectory } from './plans.js'
 import { setCwd } from './Shell.js'
 import {
+  adoptReadOnlyTranscriptForResume,
   adoptResumedSessionFile,
   recordContentReplacement,
   resetSessionFilePointer,
@@ -439,9 +439,13 @@ export async function processResumedConversation(
       // When resuming from a different project directory (git worktrees,
       // cross-project), transcriptPath points to the actual file; its dirname
       // is the project dir. Otherwise the session lives in the current project.
+      // VERBOO-BRAND: a session found in a read-only dir (~/.claude/projects)
+      // is copied into ~/.verboo/projects first and resumed from the copy.
       switchSession(
         asSessionId(sid),
-        opts.transcriptPath ? dirname(opts.transcriptPath) : null,
+        opts.transcriptPath
+          ? await adoptReadOnlyTranscriptForResume(opts.transcriptPath)
+          : null,
       )
       // Rename asciicast recording to match the resumed session ID so
       // getSessionRecordingPaths() can discover it during /share

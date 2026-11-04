@@ -9,7 +9,7 @@
 import type { UUID } from 'crypto'
 import { open as fsOpen, readdir, realpath, stat } from 'fs/promises'
 import { join } from 'path'
-import { getProjectsDir } from './envUtils.js'
+import { getProjectsDir, getProjectsDirs } from './envUtils.js'
 import { getWorktreePathsPortable } from './getWorktreePathsPortable.js'
 import { djb2Hash } from './hash.js'
 
@@ -441,21 +441,24 @@ export async function resolveSessionFilePath(
   }
 
   // No dir — scan all project directories
-  const projectsDir = getProjectsDir()
-  let dirents: string[]
-  try {
-    dirents = await readdir(projectsDir)
-  } catch {
-    return undefined
-  }
-  for (const name of dirents) {
-    const filePath = join(projectsDir, name, fileName)
+  // VERBOO-BRAND: inclui os diretórios somente leitura (sessões antigas em
+  // ~/.claude/projects); o diretório da Verboo vem primeiro.
+  for (const projectsDir of getProjectsDirs()) {
+    let dirents: string[]
     try {
-      const s = await stat(filePath)
-      if (s.size > 0)
-        return { filePath, projectPath: undefined, fileSize: s.size }
+      dirents = await readdir(projectsDir)
     } catch {
-      // ENOENT/ENOTDIR — not in this project, keep scanning
+      continue
+    }
+    for (const name of dirents) {
+      const filePath = join(projectsDir, name, fileName)
+      try {
+        const s = await stat(filePath)
+        if (s.size > 0)
+          return { filePath, projectPath: undefined, fileSize: s.size }
+      } catch {
+        // ENOENT/ENOTDIR — not in this project, keep scanning
+      }
     }
   }
   return undefined

@@ -2,7 +2,6 @@ import { parseAgentUsageMetadata } from '../utils/agentUsageSchema.js'
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle'
 import { readFile, stat } from 'fs/promises'
-import { dirname } from 'path'
 import {
   downloadUserSettings,
   redownloadUserSettings,
@@ -211,6 +210,7 @@ import { parseSessionIdentifier } from 'src/utils/sessionUrl.js'
 import {
   hydrateRemoteSession,
   hydrateFromCCRv2InternalEvents,
+  adoptReadOnlyTranscriptForResume,
   resetSessionFilePointer,
   doesMessageExistInSession,
   findUnresolvedToolUse,
@@ -4960,7 +4960,10 @@ async function loadInitialMessages(
           if (result.sessionId) {
             switchSession(
               asSessionId(result.sessionId),
-              result.fullPath ? dirname(result.fullPath) : null,
+              // VERBOO-BRAND: an old session in a read-only dir is resumed from a copy.
+              result.fullPath
+                ? await adoptReadOnlyTranscriptForResume(result.fullPath)
+                : null,
             )
             if (persistSession) {
               await resetSessionFilePointer()
@@ -5161,7 +5164,10 @@ async function loadInitialMessages(
       if (!options.forkSession && result.sessionId) {
         switchSession(
           asSessionId(result.sessionId),
-          result.fullPath ? dirname(result.fullPath) : null,
+          // VERBOO-BRAND: an old session in a read-only dir is resumed from a copy.
+          result.fullPath
+            ? await adoptReadOnlyTranscriptForResume(result.fullPath)
+            : null,
         )
         if (persistSession) {
           await resetSessionFilePointer()

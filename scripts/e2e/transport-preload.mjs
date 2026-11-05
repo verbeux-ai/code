@@ -105,12 +105,14 @@ const fixtureOrigins = new Set(redirects.values())
 // signal reach the local socket. Mock response piping loses post-header aborts.
 const realFetch = globalThis.fetch
 globalThis.fetch = (input, init) => {
-  const request = new Request(input, init)
-  const url = new URL(request.url)
+  // Keep the caller's init: a chain of Request objects follows its signal through
+  // weak references, and a garbage collection in the middle loses the abort.
+  const isRequest = input instanceof Request
+  const url = new URL(isRequest ? input.url : String(input))
   const targetOrigin = redirects.get(url.hostname)
-  return realFetch(targetOrigin
-    ? new Request(`${targetOrigin}${url.pathname}${url.search}`, request)
-    : request)
+  if (!targetOrigin) return realFetch(input, init)
+  const target = `${targetOrigin}${url.pathname}${url.search}`
+  return realFetch(isRequest ? new Request(target, input) : target, init)
 }
 
 const HOP_BY_HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'keep-alive', 'expect', 'upgrade', 'proxy-connection'])

@@ -28,9 +28,13 @@ import { errorMessage } from '../errors.js'
 import { lazySchema } from '../lazySchema.js'
 import { extractTextContent } from '../messages.js'
 import { resolveAntModel } from '../model/antModels.js'
+import { getActiveModelIdentity } from '../model/activeModelIdentity.js'
 import { getMainLoopModel } from '../model/model.js'
 import { getAutoModeConfig } from '../settings/settings.js'
 import { sideQuery } from '../sideQuery.js'
+import { createCombinedAbortSignal } from '../combinedAbortSignal.js'
+import { isVerbooMode } from '../../constants/oauth.js'
+import { getVerbooAgentModelForRole } from '../../services/api/verbooModels.js'
 import { jsonStringify } from '../slowOperations.js'
 import { tokenCountWithEstimation } from '../tokens.js'
 import {
@@ -296,8 +300,16 @@ export type TranscriptEntry = {
   content: TranscriptBlock[]
 }
 
+// VERBOO-BRAND: text the CLI placed in a user message. The classifier treats
+// user lines as the user's intent, so command output and agent results, which
+// can carry injected instructions, must not appear as if the user wrote them.
+const NOT_WRITTEN_BY_USER =
+  /^\s*<(bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|task-notification)\b/
+
 function messageToTranscriptEntry(msg: Message): TranscriptEntry | null {
   if (msg.type === 'attachment' && msg.attachment.type === 'queued_command') {
+    const { commandMode, isMeta, origin } = msg.attachment
+    if (isMeta || origin || (commandMode && commandMode !== 'prompt')) return null
     const prompt = msg.attachment.prompt
     let text: string | null = null
     if (typeof prompt === 'string') {
@@ -321,13 +333,16 @@ function messageToTranscriptEntry(msg: Message): TranscriptEntry | null {
   }
 
   if (msg.type === 'user') {
+    if (msg.isMeta) return null
     const content = msg.message.content
     const textBlocks: TranscriptBlock[] = []
     if (typeof content === 'string') {
-      textBlocks.push({ type: 'text', text: content })
+      if (!NOT_WRITTEN_BY_USER.test(content)) {
+        textBlocks.push({ type: 'text', text: content })
+      }
     } else if (Array.isArray(content)) {
       for (const block of content) {
-        if (block.type === 'text') {
+        if (block.type === 'text' && !NOT_WRITTEN_BY_USER.test(block.text)) {
           textBlocks.push({ type: 'text', text: block.text })
         }
       }
@@ -644,18 +659,23 @@ export async function buildYoloSystemPrompt(
     ? autoMode.environment.map(e => `- ${e}`).join('\n')
     : undefined
 
+  // VERBOO-BRAND: user rules are added to the defaults instead of replacing
+  // them, so a custom allow or soft_deny list never silently drops the
+  // default protections (e.g. against running downloaded scripts or force pushes).
+  const addTo = (defaults: string, extra: string | undefined) =>
+    extra ? `${defaults.trimEnd()}\n${extra}\n` : defaults
   return systemPrompt
     .replace(
       /<user_allow_rules_to_replace>([\s\S]*?)<\/user_allow_rules_to_replace>/,
-      (_m, defaults: string) => userAllow ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userAllow),
     )
     .replace(
       /<user_deny_rules_to_replace>([\s\S]*?)<\/user_deny_rules_to_replace>/,
-      (_m, defaults: string) => userDeny ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userDeny),
     )
     .replace(
       /<user_environment_to_replace>([\s\S]*?)<\/user_environment_to_replace>/,
-      (_m, defaults: string) => userEnvironment ?? defaults,
+      (_m, defaults: string) => addTo(defaults, userEnvironment),
     )
 }
 // ============================================================================
@@ -911,7 +931,7 @@ async function classifyYoloActionXml(
         ...(mode !== 'fast' && { stop_sequences: ['</block>'] }),
         querySource: 'auto_mode',
       }
-      const stage1Raw = await sideQuery(stage1Opts)
+      const stage1Raw = await classifierSideQuery(stage1Opts)
       stage1DurationMs = Date.now() - stage1Start
       stage1Usage = extractUsage(stage1Raw)
       stage1RequestId = extractRequestId(stage1Raw)
@@ -947,7 +967,9 @@ async function classifyYoloActionXml(
           logAutoModeOutcome('parse_failure', model, { classifierType })
           return {
             shouldBlock: true,
-            reason: 'Classifier stage 1 unparseable - blocking for safety',
+            // VERBOO-BRAND: malfunction, not a verdict — ask the user.
+            unavailable: true,
+            reason: 'Classifier returned an unparsable response',
             model,
             usage: stage1Usage,
             durationMs: stage1DurationMs,
@@ -996,7 +1018,7 @@ async function classifyYoloActionXml(
       signal,
       querySource: 'auto_mode' as const,
     }
-    const stage2Raw = await sideQuery(stage2Opts)
+    const stage2Raw = await classifierSideQuery(stage2Opts)
     const stage2DurationMs = Date.now() - stage2Start
     const stage2Usage = extractUsage(stage2Raw)
     const stage2RequestId = extractRequestId(stage2Raw)
@@ -1017,7 +1039,9 @@ async function classifyYoloActionXml(
       logAutoModeOutcome('parse_failure', model, { classifierType })
       return {
         shouldBlock: true,
-        reason: 'Classifier stage 2 unparseable - blocking for safety',
+        // VERBOO-BRAND: malfunction, not a verdict — ask the user.
+        unavailable: true,
+        reason: 'Classifier returned an unparsable response',
         model,
         usage: totalUsage,
         durationMs: totalDurationMs,
@@ -1265,7 +1289,7 @@ export async function classifyYoloAction(
       signal,
       querySource: 'auto_mode' as const,
     }
-    const result = await sideQuery(sideQueryOpts)
+    const result = await classifierSideQuery(sideQueryOpts)
     void maybeDumpAutoMode(sideQueryOpts, result, start)
     setLastClassifierRequests([sideQueryOpts])
     const durationMs = Date.now() - start
@@ -1308,9 +1332,13 @@ export async function classifyYoloAction(
         level: 'warn',
       })
       logAutoModeOutcome('parse_failure', model, { failureKind: 'no_tool_use' })
+      // VERBOO-BRAND: the action was never judged, so this is a malfunction
+      // (unavailable), not a verdict: the user is asked instead of the action
+      // being blocked and counted as a policy denial.
       return {
         shouldBlock: true,
-        reason: 'Classifier returned no tool use block - blocking for safety',
+        unavailable: true,
+        reason: 'Classifier returned an unparsable response',
         model,
         usage,
         durationMs,
@@ -1332,9 +1360,11 @@ export async function classifyYoloAction(
       logAutoModeOutcome('parse_failure', model, {
         failureKind: 'invalid_schema',
       })
+      // VERBOO-BRAND: malfunction, not a verdict (see no_tool_use above).
       return {
         shouldBlock: true,
-        reason: 'Invalid classifier response - blocking for safety',
+        unavailable: true,
+        reason: 'Classifier returned an unparsable response',
         model,
         usage,
         durationMs,
@@ -1413,6 +1443,54 @@ export async function classifyYoloAction(
   }
 }
 
+// VERBOO-BRAND: each classifier request gets a deadline and one retry on a
+// transient upstream failure (429/5xx/timeout). Without them a slow or
+// overloaded router left the session waiting indefinitely. A failure after
+// that is reported as "unavailable", which asks the user instead of blocking.
+const CLASSIFIER_REQUEST_TIMEOUT_MS = 45_000
+
+function classifierRequestTimeoutMs(): number {
+  const value = Number(process.env.VERBOO_AUTO_MODE_TIMEOUT_MS)
+  // Timers overflow above 2^31-1 ms and would fire right away.
+  return Number.isFinite(value) && value > 0 && value <= 2_147_483_647
+    ? value
+    : CLASSIFIER_REQUEST_TIMEOUT_MS
+}
+
+function isTransientClassifierError(error: unknown, timedOut: boolean): boolean {
+  if (timedOut) return true
+  const status = (error as { status?: unknown } | undefined)?.status
+  return typeof status === 'number' && (status === 429 || status >= 500)
+}
+
+export async function classifierSideQuery(
+  opts: Parameters<typeof sideQuery>[0],
+  query: typeof sideQuery = sideQuery,
+): ReturnType<typeof sideQuery> {
+  const callerSignal = opts.signal
+  for (let attempt = 0; ; attempt++) {
+    const { signal, cleanup } = createCombinedAbortSignal(callerSignal, {
+      timeoutMs: classifierRequestTimeoutMs(),
+    })
+    try {
+      return await query({ ...opts, signal })
+    } catch (error) {
+      if (callerSignal?.aborted) throw error
+      const timedOut = signal.aborted
+      if (attempt === 0 && isTransientClassifierError(error, timedOut)) {
+        logForDebugging(
+          `Auto mode classifier: retrying after ${timedOut ? 'timeout' : `status ${(error as { status?: number }).status}`}`,
+          { level: 'warn' },
+        )
+        continue
+      }
+      throw error
+    } finally {
+      cleanup()
+    }
+  }
+}
+
 type TwoStageMode = 'both' | 'fast' | 'thinking'
 
 type AutoModeConfig = {
@@ -1443,6 +1521,24 @@ function getClassifierModel(): string {
   if (process.env.USER_TYPE === 'ant') {
     const envModel = process.env.CLAUDE_CODE_AUTO_MODE_MODEL
     if (envModel) return envModel
+  }
+  // VERBOO-BRAND: the classifier runs on the model the router assigns to the
+  // "classifier" role (agent_model_roles.classifier on /models), configurable
+  // server-side; VERBOO_AUTO_MODE_MODEL overrides it for diagnosis. Without
+  // either, it falls back to the conversation model as before.
+  //
+  // On the user's own account (ChatGPT plan, OpenAI or Anthropic key) it uses
+  // that account: nothing from the session reaches the router, the Verboo plan
+  // is not billed, and auto mode keeps working when that plan runs out.
+  if (isVerbooMode()) {
+    const override = process.env.VERBOO_AUTO_MODE_MODEL?.trim()
+    if (override) return override
+    const mainLoopModel = getMainLoopModel()
+    if (getActiveModelIdentity(mainLoopModel).provider !== 'Verboo') {
+      return mainLoopModel
+    }
+    const roleModel = getVerbooAgentModelForRole('classifier')
+    if (roleModel) return roleModel
   }
   const config = getFeatureValue_CACHED_MAY_BE_STALE(
     'tengu_auto_mode_config',

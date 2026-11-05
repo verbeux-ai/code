@@ -44,16 +44,16 @@ let _flags = undefined;
 // features. Only keys that DIFFER from upstream belong here — the
 // catalog below is pure documentation and does NOT affect resolution.
 //
-// Priority: ~/.claude/feature-flags.json > _openBuildDefaults > defaultValue
+// Priority: ~/.verboo/feature-flags.json > _openBuildDefaults > defaultValue
 //
-// To override at runtime, create ~/.claude/feature-flags.json:
+// To override at runtime, create ~/.verboo/feature-flags.json:
 //   { "tengu_some_flag": true }
 const _openBuildDefaults = {
   'tengu_sedge_lantern': true,  // AWAY_SUMMARY — "while you were away" recap (upstream: false)
   'tengu_hive_evidence': true,  // VERIFICATION_AGENT — read-only test/verification agent (upstream: false)
   'tengu_passport_quail': true, // EXTRACT_MEMORIES — enable memory extraction (upstream: false)
   'tengu_coral_fern': true,     // EXTRACT_MEMORIES — enable memory search in past context (upstream: false)
-  'tengu_auto_mode_config': { enabled: 'enabled' }, // AUTO MODE — expose the permission classifier in the Shift+Tab carousel (upstream default: 'disabled' when unset)
+  'tengu_auto_mode_config': { enabled: 'enabled', jsonlTranscript: true }, // AUTO MODE — expose the classifier in the Shift+Tab carousel; JSONL transcript so tool output cannot forge a "User:" line
 };
 
 /* ── Known runtime feature keys (reference only) ───────────────────────
@@ -65,7 +65,7 @@ const _openBuildDefaults = {
  * Some keys have different defaults at different call sites — this is
  * intentional upstream (the server unifies the value at runtime).
  *
- * To activate any of these, add them to ~/.claude/feature-flags.json
+ * To activate any of these, add them to ~/.verboo/feature-flags.json
  * or to _openBuildDefaults above.
  *
  * ── Reasoning & thinking ──────────────────────────────────────────────
@@ -188,8 +188,9 @@ const _openBuildDefaults = {
 function _loadFlags() {
   if (_flags !== undefined) return;
   try {
+    // VERBOO-BRAND: the overrides file lives in the Verboo config dir.
     const flagsPath = process.env.CLAUDE_FEATURE_FLAGS_FILE
-      || _path.join(_os.homedir(), '.claude', 'feature-flags.json');
+      || _path.join(process.env.VERBOO_CONFIG_DIR || _path.join(_os.homedir(), '.verboo'), 'feature-flags.json');
     const parsed = JSON.parse(_fs.readFileSync(flagsPath, 'utf-8'));
     _flags = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
   } catch {
@@ -199,7 +200,13 @@ function _loadFlags() {
 
 function _getFlagValue(key, defaultValue) {
   _loadFlags();
-  if (_flags != null && Object.hasOwn(_flags, key)) return _flags[key];
+  if (_flags != null && Object.hasOwn(_flags, key)) {
+    const value = _flags[key];
+    const base = _openBuildDefaults[key];
+    // VERBOO-BRAND: object overrides merge over the open-build default.
+    const isObj = v => typeof v === 'object' && v !== null && !Array.isArray(v);
+    return isObj(base) && isObj(value) ? { ...base, ...value } : value;
+  }
   if (Object.hasOwn(_openBuildDefaults, key)) return _openBuildDefaults[key];
   return defaultValue;
 }

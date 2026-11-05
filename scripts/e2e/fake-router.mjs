@@ -1,28 +1,53 @@
 import { createServer } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 
-export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsage = false, partialUsage = false, stall = false, background = false, childFailure = false, childToolLoop = false, routedCompletion = false, model: configuredModel } = {}) {
+// Optional for human-session scenarios:
+//   models           ids or model objects served by GET .../models (default [model])
+//   agentModelRoles  merged over the default agent_model_roles (e.g. { classifier: 'fixture-classifier' })
+//   routerHandler    async (req, body, res) => true | undefined. Runs before the
+//                    default behavior for every endpoint (req.pathname/req.query
+//                    are set, body is parsed JSON, raw text or undefined). Return
+//                    true or write the response to replace the default.
+export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsage = false, partialUsage = false, stall = false, background = false, childFailure = false, childToolLoop = false, routedCompletion = false, model: configuredModel, models: modelList, agentModelRoles, routerHandler } = {}) {
   const requests = []
+  // Every request (any endpoint) with headers; `requests` keeps only chat bodies.
+  const allRequests = []
   const unexpected = []
   let sequence = 0
   const activeAgents = new Set()
   const activeRequests = new Set()
   const model = routedCompletion ? 'jev-router' : configuredModel ?? 'fixture-model'
   async function handleRequest(req, res) {
-    const path = new URL(req.url, 'http://fixture').pathname
+    const url = new URL(req.url, 'http://fixture')
+    const path = url.pathname
     const json = value => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)) }
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const raw = Buffer.concat(chunks).toString()
+    const record = { index: allRequests.length, at: Date.now(), method: req.method, path, query: Object.fromEntries(url.searchParams), headers: { ...req.headers }, body: undefined }
+    allRequests.push(record)
+    let body
+    if (path === '/router/v1/chat/completions') {
+      body = JSON.parse(raw)
+      requests.push(body)
+    } else if (raw) {
+      try { body = JSON.parse(raw) } catch { body = raw }
+    }
+    record.body = body
+    if (routerHandler) {
+      req.pathname = path
+      req.query = record.query
+      const handled = await routerHandler(req, body, res)
+      if (handled === true || res.headersSent || res.writableEnded) return
+    }
     if (path === '/') return json({ ok: true })
     if (path === '/api/claude_code/settings') return json({ settings: {} })
     if (path === '/api/plugins/marketplace.json') return json({ name: 'fixture', owner: { name: 'Fixture' }, plugins: [] })
-    if (path.endsWith('/models')) return json({ data: [{ id: model, object: 'model' }], agent_model_roles: { explore: model, balanced: model, powerful: model } })
+    if (path.endsWith('/models')) return json({ data: (modelList ?? [model]).map(entry => typeof entry === 'string' ? { id: entry, object: 'model' } : entry), agent_model_roles: { explore: model, balanced: model, powerful: model, ...agentModelRoles } })
     if (path === '/api/me') return json({ data: { id: '11111111-1111-4111-8111-111111111111', email: 'fixture@example.test', name: 'Fixture', confirmed: true } })
     if (path === '/api/me/subscriptions') return json({ data: [{ id: '11111111-1111-4111-8111-111111111111', groupId: '22222222-2222-4222-8222-222222222222', status: 'active', currentPeriodEnd: '2099-01-01T00:00:00Z' }] })
     if (path === '/api/me/terms/status') return json({ data: { configured: false, mustAccept: false, pendingReacceptance: false } })
     if (path !== '/router/v1/chat/completions') { unexpected.push(path); res.statusCode = 404; return json({ error: { message: `Unknown fixture endpoint: ${path}` } }) }
-    const chunks = []
-    for await (const chunk of req) chunks.push(chunk)
-    const body = JSON.parse(Buffer.concat(chunks).toString())
-    requests.push(body)
     const id = `fixture-${++sequence}`
     const prompt = body.messages.filter(message => message.role === 'user').map(message => JSON.stringify(message.content)).join('\n')
     const isChild = prompt.includes('AGENT_FIXTURE_')
@@ -75,7 +100,7 @@ export async function createFakeRouter({ agents = 2, omitUsage = false, zeroUsag
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   return {
-    origin: `http://127.0.0.1:${server.address().port}`, requests, unexpected, activeAgents, activeRequests,
+    origin: `http://127.0.0.1:${server.address().port}`, requests, allRequests, unexpected, activeAgents, activeRequests,
     async close() {
       const closed = new Promise(resolve => server.close(resolve))
       server.closeAllConnections()

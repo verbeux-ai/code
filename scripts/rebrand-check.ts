@@ -121,9 +121,12 @@ const COMMON_ALLOWLIST = [
 const RULES: Rule[] = [
   {
     name: 'Verboo Code product literal',
-    pattern: /\b(Verboo Code|Open Claude|OPEN CLAUDE)\b/,
+    pattern: /\b(OpenClaude|Open Claude|OPEN CLAUDE)\b/,
     allowlist: [
       ...COMMON_ALLOWLIST,
+      // ~/.openclaude/projects é lido (somente leitura) para o /resume:
+      'src/utils/envUtils.ts',
+      'src/utils/sessionStorage.ts',
       // CLI brand fallback gated por VERBOO_CLI_BRAND=verboo (alias deprecated):
       'src/main.tsx',
     ],
@@ -158,6 +161,10 @@ const RULES: Rule[] = [
       'src/services/api/filesApi.ts',
       // StartupScreen mostra base URL (corrigido em separado):
       'src/components/StartupScreen.ts',
+      // Preset do vendor Anthropic (o usuário escolhe explicitamente):
+      'src/integrations/vendors/anthropic.ts',
+      // Chave de API da Anthropic do próprio usuário (/claude login):
+      'src/services/api/claudeNativeConfig.ts',
     ],
   },
   {
@@ -172,6 +179,27 @@ const RULES: Rule[] = [
       // OAuth flow (deferred):
       'src/constants/oauth.ts',
       'src/main.tsx',  // OAuth getOauthConfig contém refs upstream Anthropic
+      // A loja de plugins da Anthropic (sob demanda) é nomeada como tal:
+      'src/commands/lsp/lsp.ts',
+      // Nomes de provedor/vendor (Anthropic é o fornecedor, não a marca):
+      'src/commands/usage/index.ts',
+      'src/integrations/routeMetadata.ts',
+      'src/integrations/vendors/anthropic.ts',
+      // Comentário com aspas, não texto de UI:
+      'src/utils/effort.ts',
+      // Conexão com a chave de API da Anthropic do usuário (nomeia o provedor):
+      'src/commands/claude/',
+      'src/utils/claudeLoginRetiredNotice.ts',
+      'src/utils/claudeNativeCredentials.ts',
+      'src/services/api/claudeNativeModels.ts',
+      'src/services/api/claudeNativeUsage.ts',
+      'src/services/api/client.ts',
+      // Rótulos "via sua chave Anthropic" no /model e o aviso de saldo esgotado:
+      'src/commands/model/model.tsx',
+      'src/utils/model/modelOptions.ts',
+      'src/services/api/providerLimitErrors.ts',
+      // Fixtures nomeiam os provedores que simulam:
+      'scripts/e2e/human/',
       // SDK error logger uses preserved upstream identifier strings:
       'src/services/api/sdk.ts',
       // Auth/account model functions reference "Anthropic" provider type:

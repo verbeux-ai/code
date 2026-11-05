@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 
-const DIST = 'dist/cli.mjs'
-const BANNED_PATTERNS = [
+// The SDK bundle ships too when present; both must stay free of these.
+export const BUNDLES = ['dist/cli.mjs', 'dist/sdk.mjs'] as const
+
+export const BANNED_PATTERNS = [
   'datadoghq.com',
   'api/event_logging/batch',
   'api/claude_code/metrics',
@@ -15,33 +17,40 @@ const BANNED_PATTERNS = [
   'C07VBSHV7EV',
 ] as const
 
-if (!existsSync(DIST)) {
-  console.error(`ERROR: ${DIST} not found. Run 'bun run build' first.`)
-  process.exit(1)
+export function findBannedPatterns(
+  contents: string,
+  patterns: readonly string[] = BANNED_PATTERNS,
+): Array<{ pattern: string; count: number }> {
+  return patterns
+    .map(pattern => ({ pattern, count: contents.split(pattern).length - 1 }))
+    .filter(result => result.count > 0)
 }
 
-const contents = readFileSync(DIST, 'utf8')
-let exitCode = 0
-
-console.log(`Checking ${DIST} for banned patterns...`)
-console.log('')
-
-for (const pattern of BANNED_PATTERNS) {
-  const count = contents.split(pattern).length - 1
-  if (count > 0) {
-    console.log(`  FAIL: '${pattern}' found (${count} occurrences)`)
-    exitCode = 1
-  } else {
-    console.log(`  PASS: '${pattern}' not found`)
+function main(): number {
+  if (!existsSync(BUNDLES[0])) {
+    console.error(`ERROR: ${BUNDLES[0]} not found. Run 'bun run build' first.`)
+    return 1
   }
+
+  let exitCode = 0
+  for (const bundle of BUNDLES) {
+    if (!existsSync(bundle)) continue
+    const found = findBannedPatterns(readFileSync(bundle, 'utf8'))
+    console.log(`Checking ${bundle} for banned patterns...`)
+    for (const { pattern, count } of found) {
+      console.log(`  FAIL: '${pattern}' found (${count} occurrences)`)
+      exitCode = 1
+    }
+    if (found.length === 0) console.log(`  PASS: none of ${BANNED_PATTERNS.length} patterns found`)
+  }
+
+  console.log('')
+  console.log(
+    exitCode === 0
+      ? '✓ All checks passed — no banned patterns in build output'
+      : '✗ FAILED — banned patterns found in build output',
+  )
+  return exitCode
 }
 
-console.log('')
-
-if (exitCode === 0) {
-  console.log('✓ All checks passed — no banned patterns in build output')
-} else {
-  console.log('✗ FAILED — banned patterns found in build output')
-}
-
-process.exit(exitCode)
+if (import.meta.main) process.exit(main())

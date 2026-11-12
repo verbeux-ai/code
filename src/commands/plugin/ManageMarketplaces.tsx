@@ -83,7 +83,8 @@ export function ManageMarketplaces({
         // Load marketplaces with graceful degradation
         const {
           marketplaces,
-          failures
+          failures,
+          skippedEntries
         } = await loadMarketplacesWithGracefulDegradation(config);
         const states: MarketplaceState[] = [];
         for (const {
@@ -118,7 +119,11 @@ export function ManageMarketplaces({
 
         // Handle marketplace loading errors/warnings
         const successCount = count(marketplaces, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(failures, successCount);
+        const errorResult = formatMarketplaceLoadingErrors(
+          failures,
+          successCount,
+          skippedEntries
+        );
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setProcessError(errorResult.message);

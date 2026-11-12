@@ -21,6 +21,7 @@ import {
   getFlaggedPlugins,
   loadFlaggedPlugins,
 } from './pluginFlagging.js'
+import { getSkippedMarketplaceEntries } from './schemas.js'
 import type { InstalledPluginsFileV2, PluginMarketplace } from './schemas.js'
 
 /**
@@ -83,8 +84,23 @@ export async function detectAndUninstallDelistedPlugins(): Promise<string[]> {
         marketplace,
         marketplaceName,
       )
+      // A plugin whose marketplace entry failed validation is missing from the
+      // parsed manifest, but the marketplace didn't remove it — dropping the
+      // entry is our fallback, so never treat it as a removal.
+      const skipped = new Set(
+        getSkippedMarketplaceEntries(marketplace).map(entry => entry.name),
+      )
+      const suffix = `@${marketplaceName}`
 
       for (const pluginId of delisted) {
+        const pluginName = pluginId.slice(0, -suffix.length)
+        if (skipped.has(pluginName)) {
+          logForDebugging(
+            `Not uninstalling ${pluginId}: its marketplace entry is invalid, not removed`,
+            { level: 'warn' },
+          )
+          continue
+        }
         if (pluginId in alreadyFlagged) continue
 
         // Skip managed-only plugins — enterprise admin should handle those

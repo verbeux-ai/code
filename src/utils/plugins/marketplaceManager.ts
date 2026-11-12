@@ -77,6 +77,7 @@ import {
 import { parsePluginIdentifier } from './pluginIdentifier.js'
 import { deletePluginOptions } from './pluginOptionsStorage.js'
 import {
+  getSkippedMarketplaceEntries,
   isLocalMarketplaceSource,
   type KnownMarketplace,
   type KnownMarketplacesFile,
@@ -1337,13 +1338,18 @@ async function cacheMarketplaceFromUrl(
     performance.now() - fetchStarted,
   )
 
+  // Entries the schema couldn't parse are dropped from result.data, but the
+  // cache is a mirror of what upstream published — same as a git clone keeps
+  // the raw marketplace.json. Writing the sanitized copy instead would make the
+  // dropped entries vanish from the cache, so a later cache read would look
+  // clean and the marketplace would report no skipped entries.
   safeCallProgress(onProgress, 'Saving marketplace to cache')
   // Ensure cache directory exists
   const cacheDir = join(cachePath, '..')
   await fs.mkdir(cacheDir)
 
-  // Write the validated marketplace file
-  writeFileSync_DEPRECATED(cachePath, jsonStringify(result.data, null, 2), {
+  // Write the manifest as published, not the sanitized parse result — see above.
+  writeFileSync_DEPRECATED(cachePath, jsonStringify(response.data, null, 2), {
     encoding: 'utf-8',
     flush: true,
   })
@@ -1367,20 +1373,74 @@ function getCachePathForSource(source: MarketplaceSource): string {
 }
 
 /**
- * Parse and validate JSON file with a Zod schema
+ * Marketplaces whose skipped entries have already been reported in this
+ * process. A manifest is parsed on every cache read, so without this the same
+ * drop would be reported on each startup and each `/plugin` open.
  */
-async function parseFileWithSchema<T>(
+const reportedSkippedMarketplaces = new Set<string>()
+
+/**
+ * Report plugin entries dropped from a marketplace manifest.
+ *
+ * Losing an entry silently is exactly what turns this class of breakage into a
+ * support ticket ("one of my plugins says not found"), so it goes to the debug
+ * log with the reason, and to the error log once per process so it shows up in
+ * diagnostics a user can share.
+ */
+function reportSkippedMarketplaceEntries(
   filePath: string,
-  schema: {
-    safeParse: (data: unknown) => {
-      success: boolean
-      data?: T
-      error?: {
-        issues: Array<{ path: PropertyKey[]; message: string }>
-      }
-    }
-  },
-): Promise<T> {
+  marketplace: PluginMarketplace,
+): void {
+  const skipped = getSkippedMarketplaceEntries(marketplace)
+  if (skipped.length === 0) {
+    return
+  }
+
+  const detail = skipped
+    .map(entry => `${entry.name} (${entry.reason})`)
+    .join('; ')
+  logForDebugging(
+    `Marketplace "${marketplace.name}": skipped ${skipped.length} invalid ` +
+      `plugin entr${skipped.length === 1 ? 'y' : 'ies'} from ${filePath}: ` +
+      `${detail}. The rest of the marketplace loaded normally.`,
+    { level: 'warn' },
+  )
+
+  const reportKey = `${marketplace.name}\0${skipped.length}\0${skipped
+    .map(entry => entry.name)
+    .join(',')}`
+  if (reportedSkippedMarketplaces.has(reportKey)) {
+    return
+  }
+  reportedSkippedMarketplaces.add(reportKey)
+
+  // Nothing parsed at all is a different failure from one odd entry: it means
+  // the whole catalog moved to a shape this build doesn't understand, and the
+  // user is looking at an empty marketplace rather than one missing a plugin.
+  const parsedCount = marketplace.plugins.length
+  const wholesale = parsedCount === 0
+  logError(
+    new Error(
+      wholesale
+        ? `Marketplace "${marketplace.name}" has no usable plugin entries: all ` +
+          `${skipped.length} entries failed to parse and were skipped: ${detail}`
+        : `Marketplace "${marketplace.name}" has ${skipped.length} plugin ` +
+          `entr${skipped.length === 1 ? 'y' : 'ies'} this build cannot parse and ` +
+          `skipped: ${detail}`,
+    ),
+  )
+}
+
+/**
+ * Parse and validate a marketplace manifest file.
+ *
+ * Plugin entries that fail validation are dropped by PluginMarketplaceSchema
+ * rather than failing the whole manifest — one entry this build can't parse
+ * must not make every plugin from the marketplace resolve to plugin-not-found.
+ */
+async function parseMarketplaceFile(
+  filePath: string,
+): Promise<PluginMarketplace> {
   const fs = getFsImplementation()
   const content = await fs.readFile(filePath, { encoding: 'utf-8' })
   let data: unknown
@@ -1393,7 +1453,7 @@ async function parseFileWithSchema<T>(
       content,
     )
   }
-  const result = schema.safeParse(data)
+  const result = PluginMarketplaceSchema().safeParse(data)
   if (!result.success) {
     throw new ConfigParseError(
       `Invalid schema: ${filePath} ${result.error?.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
@@ -1401,7 +1461,8 @@ async function parseFileWithSchema<T>(
       data,
     )
   }
-  return result.data!
+  reportSkippedMarketplaceEntries(filePath, result.data)
+  return result.data
 }
 
 /**
@@ -1649,7 +1710,7 @@ async function loadAndCacheMarketplace(
         // marketplace.json on disk so getMarketplaceCacheOnly reads it
         // like any other source. The plugins array already passed
         // PluginMarketplaceEntrySchema validation when settings were parsed;
-        // the post-switch parseFileWithSchema re-validates the full
+        // the post-switch parseMarketplaceFile re-validates the full
         // PluginMarketplaceSchema (catches schema drift between the two).
         //
         // Writing to source.name up front means the rename below is a no-op
@@ -1667,8 +1728,8 @@ async function loadAndCacheMarketplace(
         await fs.mkdir(dirname(marketplacePath))
         // No `satisfies PluginMarketplace` here: source.plugins is the narrow
         // SettingsMarketplacePlugin type (no strict/.default(), no manifest
-        // fields). The parseFileWithSchema(PluginMarketplaceSchema()) call
-        // below widens and validates — that's the real check.
+        // fields). The parseMarketplaceFile call below widens and validates —
+        // that's the real check.
         await writeFile(
           marketplacePath,
           jsonStringify(
@@ -1692,10 +1753,7 @@ async function loadAndCacheMarketplace(
     logForDebugging(`Reading marketplace from ${marketplacePath}`)
     let marketplace: PluginMarketplace
     try {
-      marketplace = await parseFileWithSchema(
-        marketplacePath,
-        PluginMarketplaceSchema(),
-      )
+      marketplace = await parseMarketplaceFile(marketplacePath)
     } catch (e) {
       if (isENOENT(e)) {
         throw new Error(`Marketplace file not found at ${marketplacePath}`)
@@ -2064,13 +2122,13 @@ async function readCachedMarketplace(
   // (ENOTDIR) or the nested file is simply missing (ENOENT).
   const nestedPath = join(installLocation, '.claude-plugin', 'marketplace.json')
   try {
-    return await parseFileWithSchema(nestedPath, PluginMarketplaceSchema())
+    return await parseMarketplaceFile(nestedPath)
   } catch (e) {
     if (e instanceof ConfigParseError) throw e
     const code = getErrnoCode(e)
     if (code !== 'ENOENT' && code !== 'ENOTDIR') throw e
   }
-  return await parseFileWithSchema(installLocation, PluginMarketplaceSchema())
+  return await parseMarketplaceFile(installLocation)
 }
 
 /**

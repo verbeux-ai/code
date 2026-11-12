@@ -1296,6 +1296,97 @@ export const PluginMarketplaceEntrySchema = lazySchema(() =>
 )
 
 /**
+ * A plugin entry that failed validation and was dropped from a manifest.
+ */
+export type SkippedMarketplaceEntry = {
+  /** The entry's `name`, or a positional placeholder when it had none. */
+  name: string
+  /** Why the entry was dropped, in the same shape as a schema error. */
+  reason: string
+}
+
+/**
+ * Entries dropped while parsing a manifest, keyed by the `plugins` array they
+ * were dropped from.
+ *
+ * Keyed by the array rather than by marketplace name on purpose: callers that
+ * enforce delisting resolve marketplaces by their config key in
+ * known_marketplaces.json, which can diverge from the name a manifest declares
+ * (hand-edited or seed-managed config, upstream self-rename). A name lookup
+ * would silently miss and let a dropped entry be treated as a deletion.
+ */
+const skippedEntriesByPluginsArray = new WeakMap<
+  readonly PluginMarketplaceEntry[],
+  readonly SkippedMarketplaceEntry[]
+>()
+
+const NO_SKIPPED_ENTRIES: readonly SkippedMarketplaceEntry[] = []
+
+/**
+ * Plugin entries that were dropped from a marketplace manifest as invalid.
+ * Empty for marketplaces that parsed cleanly.
+ */
+export function getSkippedMarketplaceEntries(
+  marketplace: Pick<PluginMarketplace, 'plugins'>,
+): readonly SkippedMarketplaceEntry[] {
+  return (
+    skippedEntriesByPluginsArray.get(marketplace.plugins) ?? NO_SKIPPED_ENTRIES
+  )
+}
+
+/**
+ * Schema for the `plugins` array of a marketplace manifest.
+ *
+ * Entries are validated one at a time and unparseable ones are dropped rather
+ * than failing the array. A marketplace is a single document owned by someone
+ * else, and one entry we can't handle — a source type this build doesn't know
+ * yet (e.g. `command`), a field that stopped matching the schema — must not
+ * take the whole marketplace down. When the array fails, every plugin installed
+ * from that marketplace resolves to `plugin-not-found` and disappears from the
+ * session, which is a much worse failure than losing one entry.
+ *
+ * Dropped entries are recorded so the drop is observable: callers log them, and
+ * delisting enforcement uses them to tell "the marketplace removed this plugin"
+ * apart from "we couldn't parse its entry".
+ *
+ * Callers that surface authoring feedback (`verboo plugin validate`) rebuild the
+ * array with strict entries, so typos in a manifest under development are still
+ * reported.
+ */
+const PluginMarketplaceEntriesSchema = lazySchema(() =>
+  z
+    .array(z.unknown())
+    .describe('Collection of available plugins in this marketplace')
+    .transform(entries => {
+      const plugins: PluginMarketplaceEntry[] = []
+      const skipped: SkippedMarketplaceEntry[] = []
+
+      entries.forEach((entry, index) => {
+        const parsed = PluginMarketplaceEntrySchema().safeParse(entry)
+        if (parsed.success) {
+          plugins.push(parsed.data)
+          return
+        }
+        const rawName =
+          entry && typeof entry === 'object'
+            ? (entry as { name?: unknown }).name
+            : undefined
+        skipped.push({
+          name: typeof rawName === 'string' ? rawName : `plugins[${index}]`,
+          reason: parsed.error.issues
+            .map(issue => `${issue.path.join('.') || 'entry'}: ${issue.message}`)
+            .join(', '),
+        })
+      })
+
+      if (skipped.length > 0) {
+        skippedEntriesByPluginsArray.set(plugins, skipped)
+      }
+      return plugins
+    }),
+)
+
+/**
  * Schema for plugin marketplace configuration
  *
  * Defines the structure for curated collections of plugins that can
@@ -1307,9 +1398,7 @@ export const PluginMarketplaceSchema = lazySchema(() =>
     owner: PluginAuthorSchema().describe(
       'Marketplace maintainer or curator information',
     ),
-    plugins: z
-      .array(PluginMarketplaceEntrySchema())
-      .describe('Collection of available plugins in this marketplace'),
+    plugins: PluginMarketplaceEntriesSchema(),
     forceRemoveDeletedPlugins: z
       .boolean()
       .optional()

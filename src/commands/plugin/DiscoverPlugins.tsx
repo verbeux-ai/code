@@ -128,7 +128,8 @@ export function DiscoverPlugins({
         // Load marketplaces with graceful degradation
         const {
           marketplaces,
-          failures
+          failures,
+          skippedEntries
         } = await loadMarketplacesWithGracefulDegradation(config);
 
         // Collect all plugins from all marketplaces
@@ -205,7 +206,11 @@ export function DiscoverPlugins({
 
         // Handle marketplace loading errors/warnings
         const successCount = count(marketplaces, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(failures, successCount);
+        const errorResult = formatMarketplaceLoadingErrors(
+          failures,
+          successCount,
+          skippedEntries
+        );
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setWarning(errorResult.message + '. Showing available plugins.');

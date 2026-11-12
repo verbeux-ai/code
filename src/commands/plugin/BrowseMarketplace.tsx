@@ -130,7 +130,8 @@ export function BrowseMarketplace({
         // Load marketplaces with graceful degradation
         const {
           marketplaces: marketplaces_0,
-          failures
+          failures,
+          skippedEntries
         } = await loadMarketplacesWithGracefulDegradation(config);
         const marketplaceInfos: MarketplaceInfo[] = [];
         for (const {
@@ -164,7 +165,11 @@ export function BrowseMarketplace({
 
         // Handle marketplace loading errors/warnings
         const successCount = count(marketplaces_0, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(failures, successCount);
+        const errorResult = formatMarketplaceLoadingErrors(
+          failures,
+          successCount,
+          skippedEntries
+        );
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setWarning(errorResult.message + '. Showing available marketplaces.');

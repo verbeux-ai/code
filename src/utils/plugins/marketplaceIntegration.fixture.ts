@@ -31,8 +31,12 @@ process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR = join(root, 'plugins')
 
 const pluginsDir = join(root, 'plugins')
 
-const { addMarketplaceSource, getMarketplace, getMarketplaceCacheOnly } =
-  await import('./marketplaceManager.js')
+const {
+  addMarketplaceSource,
+  getMarketplace,
+  getMarketplaceCacheOnly,
+  getPluginByIdCacheOnly,
+} = await import('./marketplaceManager.js')
 const { detectAndUninstallDelistedPlugins } = await import('./pluginBlocklist.js')
 const { getSkippedMarketplaceEntries } = await import('./schemas.js')
 const { getInMemoryErrors } = await import('../../utils/log.js')
@@ -111,6 +115,13 @@ try {
       const marketplace = await getMarketplace('directory-marketplace')
       const names = new Set(marketplace.plugins.map(plugin => plugin.name))
 
+      // The incident's literal symptom was `plugin-not-found` from the loader,
+      // so assert the plugin resolves through the same lookup the loader uses —
+      // not merely that its entry survived the parse.
+      const installedLookup = await getPluginByIdCacheOnly(
+        'superpowers@directory-marketplace',
+      )
+
       return {
         scenario: 'directory',
         addedName: added.name,
@@ -119,6 +130,7 @@ try {
           name,
           names.has(name),
         ]),
+        installedPluginResolves: installedLookup !== null,
         skipped: getSkippedMarketplaceEntries(marketplace).map(entry => ({
           name: entry.name,
           reason: entry.reason,
@@ -394,23 +406,61 @@ try {
         onlySkipped: formatMarketplaceLoadingErrors(
           [],
           1,
-          [{ name: 'claude-plugins-official', entries: ['xcode'] }],
+          [
+            {
+              name: 'claude-plugins-official',
+              entries: ['xcode'],
+              unidentifiable: 0,
+            },
+          ],
         ),
         skippedNotInstalled: formatMarketplaceLoadingErrors(
           [],
           1,
-          [{ name: 'claude-plugins-official', entries: ['some-uninstalled'] }],
+          [
+            {
+              name: 'claude-plugins-official',
+              entries: ['some-uninstalled'],
+              unidentifiable: 0,
+            },
+          ],
         ),
         skippedWithFailure: formatMarketplaceLoadingErrors(
           [{ name: 'other-marketplace', error: 'boom' }],
           1,
-          [{ name: 'claude-plugins-official', entries: ['xcode', 'y'] }],
+          [
+            {
+              name: 'claude-plugins-official',
+              entries: ['xcode'],
+              unidentifiable: 0,
+            },
+          ],
+        ),
+        // An entry that lost its name can't be matched to a plugin, but the user
+        // has a plugin installed from that marketplace, so they still need to be
+        // told something may not load.
+        unidentifiableWithInstalled: formatMarketplaceLoadingErrors(
+          [],
+          1,
+          [{ name: 'claude-plugins-official', entries: [], unidentifiable: 2 }],
+        ),
+        // ...but not when they have nothing installed from it.
+        unidentifiableWithoutInstalled: formatMarketplaceLoadingErrors(
+          [],
+          1,
+          [{ name: 'nothing-installed-here', entries: [], unidentifiable: 2 }],
         ),
         clean: formatMarketplaceLoadingErrors([], 2, []),
         allFailed: formatMarketplaceLoadingErrors(
           [{ name: 'other-marketplace', error: 'boom' }],
           0,
-          [{ name: 'claude-plugins-official', entries: ['xcode'] }],
+          [
+            {
+              name: 'claude-plugins-official',
+              entries: ['xcode'],
+              unidentifiable: 0,
+            },
+          ],
         ),
       }
     }),

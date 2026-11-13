@@ -93,6 +93,12 @@ describe('marketplace loading with an unparseable entry', () => {
     ])
   })
 
+  test('an installed plugin still resolves through the loader lookup', () => {
+    // The incident's symptom was `plugin-not-found`, so the entry surviving the
+    // parse is not the assertion that matters — resolution is.
+    expect(scenario('directory').installedPluginResolves).toBe(true)
+  })
+
   test('applies the same tolerance to url sources', () => {
     const result = scenario('url')
 
@@ -167,6 +173,21 @@ describe('marketplace loading warnings', () => {
     expect(scenario('formatting').clean).toBeNull()
   })
 
+  test('warns at marketplace level when a drop lost its name', () => {
+    // The entry can't be matched to a plugin, so the warning can't name it —
+    // but an installed plugin may have stopped loading, and silence would leave
+    // the user with no explanation.
+    expect(scenario('formatting').unidentifiableWithInstalled).toEqual({
+      type: 'warning',
+      message:
+        "Warning: Skipped 2 unreadable plugin entries in marketplace 'claude-plugins-official'; an installed plugin from it may not load",
+    })
+  })
+
+  test('stays silent about a nameless drop when nothing is installed from it', () => {
+    expect(scenario('formatting').unidentifiableWithoutInstalled).toBeNull()
+  })
+
   test('a total load failure is still an error', () => {
     expect(scenario('formatting').allFailed).toEqual({
       type: 'error',
@@ -181,7 +202,7 @@ describe('observability of a skipped entry', () => {
     const result = scenario('graceful')
 
     expect(result.skippedEntries).toEqual([
-      { name: 'guarded-marketplace', entries: ['xcode'] },
+      { name: 'guarded-marketplace', entries: ['xcode'], unidentifiable: 0 },
     ])
   })
 

@@ -404,10 +404,19 @@ export async function validateMarketplaceManifest(
   //
   // `owner` is re-declared without the runtime `.catch(undefined)` leniency:
   // that leniency exists so a malformed owner can't take a user's marketplace
-  // down, but an author still needs to be told their manifest is wrong.
+  // down, but an author still needs to be told their manifest is wrong. Same
+  // for the display-only members of `metadata` — the runtime schema tolerates a
+  // bad `version`/`description`, an author should not get away with one.
   const strictMarketplaceSchema = PluginMarketplaceSchema()
     .extend({
       owner: PluginAuthorSchema(),
+      metadata: z
+        .object({
+          pluginRoot: z.string().optional(),
+          version: z.string().optional(),
+          description: z.string().optional(),
+        })
+        .optional(),
       plugins: z.array(PluginMarketplaceEntrySchema().strict()),
     })
     .strict()

@@ -97,12 +97,14 @@ export async function detectAndUninstallDelistedPlugins(): Promise<string[]> {
       // common case.
       const unidentifiable = skippedEntries.filter(entry => !entry.identifiable)
       if (unidentifiable.length > 0) {
-        logForDebugging(
-          `Not enforcing delisting for "${marketplaceName}": ${unidentifiable.length} ` +
-            `dropped entr${unidentifiable.length === 1 ? 'y has' : 'ies have'} no usable ` +
-            `name, so a removal cannot be told apart from a parse failure`,
-          { level: 'warn' },
-        )
+        if (delisted.length > 0) {
+          logForDebugging(
+            `Not enforcing delisting for "${marketplaceName}": ${unidentifiable.length} ` +
+              `dropped entr${unidentifiable.length === 1 ? 'y has' : 'ies have'} no usable ` +
+              `name, so a removal cannot be told apart from a parse failure`,
+            { level: 'warn' },
+          )
+        }
         continue
       }
 

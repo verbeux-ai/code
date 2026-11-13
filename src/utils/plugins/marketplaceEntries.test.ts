@@ -86,13 +86,58 @@ describe('PluginMarketplaceSchema plugin entries', () => {
     expect(result.success).toBe(false)
   })
 
-  test('still rejects a manifest without a name or owner', () => {
+  test('still rejects a manifest without a name', () => {
     expect(
       PluginMarketplaceSchema().safeParse({ plugins: [validEntry] }).success,
     ).toBe(false)
+  })
+
+  test('parses a manifest whose owner metadata is missing', () => {
+    // `owner` is display-only — nothing reads it. Requiring it means a
+    // marketplace that drops or renames the field costs the user every plugin,
+    // which is the same failure this file exists to prevent.
+    const result = PluginMarketplaceSchema().safeParse({
+      name: 'test-marketplace',
+      plugins: [validEntry],
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data?.plugins.map(p => p.name)).toEqual(['superpowers'])
+    expect(result.data?.owner).toBeUndefined()
+  })
+
+  test('parses a manifest whose owner metadata is malformed', () => {
+    const result = PluginMarketplaceSchema().safeParse({
+      name: 'test-marketplace',
+      owner: 'Anthropic',
+      plugins: [validEntry],
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data?.owner).toBeUndefined()
+  })
+
+  test('keeps the owner when it is well formed', () => {
+    const result = PluginMarketplaceSchema().safeParse({
+      name: 'test-marketplace',
+      owner: { name: 'Anthropic', email: 'support@anthropic.com' },
+      plugins: [validEntry],
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data?.owner).toEqual({
+      name: 'Anthropic',
+      email: 'support@anthropic.com',
+    })
+  })
+
+  test('still rejects a manifest without a name or with a bad plugins field', () => {
     expect(
       PluginMarketplaceSchema().safeParse({ name: 'x', plugins: [validEntry] })
         .success,
+    ).toBe(true)
+    expect(
+      PluginMarketplaceSchema().safeParse({ name: 'x', plugins: null }).success,
     ).toBe(false)
   })
 

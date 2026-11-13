@@ -131,13 +131,14 @@ describe('PluginMarketplaceSchema plugin entries', () => {
     })
   })
 
-  test('still rejects a manifest without a name or with a bad plugins field', () => {
-    expect(
-      PluginMarketplaceSchema().safeParse({ name: 'x', plugins: [validEntry] })
-        .success,
-    ).toBe(true)
+  test('rejects a manifest whose plugins field is not an array', () => {
+    // Tolerating this would read a missing catalog as "every plugin was
+    // removed", which is the opposite of the intent.
     expect(
       PluginMarketplaceSchema().safeParse({ name: 'x', plugins: null }).success,
+    ).toBe(false)
+    expect(
+      PluginMarketplaceSchema().safeParse({ name: 'x' }).success,
     ).toBe(false)
   })
 
@@ -148,6 +149,83 @@ describe('PluginMarketplaceSchema plugin entries', () => {
 
     expect(result.success).toBe(true)
     expect(result.data?.plugins[0]?.strict).toBe(true)
+  })
+
+  test('marks a dropped entry identifiable only when its name is usable', () => {
+    const result = PluginMarketplaceSchema().safeParse(
+      marketplaceWith([
+        validEntry,
+        unknownSourceEntry, // valid name, bad source
+        { source: './plugins/nameless' },
+        { name: 'x code', source: './plugins/spaces' },
+      ]),
+    )
+
+    expect(result.success).toBe(true)
+    expect(
+      getSkippedMarketplaceEntries(result.data!).map(e => ({
+        name: e.name,
+        identifiable: e.identifiable,
+      })),
+    ).toEqual([
+      { name: 'xcode', identifiable: true },
+      { name: 'plugins[2]', identifiable: false },
+      { name: 'x code', identifiable: false },
+    ])
+  })
+
+  test('strips control characters out of a rejected entry name', () => {
+    // The name comes from a document we just rejected, so it is
+    // attacker-controlled: an ESC sequence would otherwise reach the TUI and
+    // the log verbatim.
+    const result = PluginMarketplaceSchema().safeParse(
+      marketplaceWith([
+        validEntry,
+        {
+          name: 'evil\u001b[2Jname',
+          source: { source: 'command', command: 'x' },
+        },
+      ]),
+    )
+
+    expect(result.success).toBe(true)
+    const [skipped] = getSkippedMarketplaceEntries(result.data!)
+    expect(skipped!.name).toBe('evil?[2Jname')
+    expect(skipped!.identifiable).toBe(false)
+  })
+
+  test('parses a manifest whose display-only metadata is malformed', () => {
+    // Same rule as `owner`: these fields are never read functionally, so a bad
+    // value must not cost the user every plugin. `pluginRoot` is functional and
+    // stays strict — covered below.
+    const cases: Array<Record<string, unknown>> = [
+      { version: 2 },
+      { description: 5 },
+      { version: null },
+    ]
+
+    for (const metadata of cases) {
+      const result = PluginMarketplaceSchema().safeParse({
+        name: 'test-marketplace',
+        plugins: [validEntry],
+        metadata,
+      })
+
+      expect({ metadata, success: result.success }).toEqual({
+        metadata,
+        success: true,
+      })
+    }
+  })
+
+  test('still rejects a malformed functional pluginRoot', () => {
+    const result = PluginMarketplaceSchema().safeParse({
+      name: 'test-marketplace',
+      plugins: [validEntry],
+      metadata: { pluginRoot: 1 },
+    })
+
+    expect(result.success).toBe(false)
   })
 
   test('keeps the entries a user has installed alongside the bad one', () => {
@@ -180,7 +258,11 @@ describe('PluginMarketplaceSchema plugin entries', () => {
     expect(getSkippedMarketplaceEntries(result.data!)).toEqual([
       // Assert on the failing field, not the exact Zod message: the message
       // text is Zod's, the field is ours.
-      { name: 'xcode', reason: expect.stringMatching(/^source: /) },
+      {
+        name: 'xcode',
+        identifiable: true,
+        reason: expect.stringMatching(/^source: /),
+      },
     ])
   })
 
@@ -251,5 +333,37 @@ describe('validateMarketplaceManifest strictness', () => {
 
     expect(result.success).toBe(true)
     expect(result.errors).toEqual([])
+  })
+
+  test('still reports owner problems to the author', async () => {
+    // The runtime schema tolerates a broken owner so it can't take a user's
+    // marketplace down. An author still needs to be told.
+    const cases: Array<[string, unknown]> = [
+      ['missing', undefined],
+      ['wrong type', 'Anthropic'],
+      ['missing name', { email: 'support@anthropic.com' }],
+    ]
+
+    for (const [label, owner] of cases) {
+      const dir = await mkdtemp(join(tmpdir(), 'marketplace-validate-'))
+      tempDirs.push(dir)
+      const filePath = join(dir, 'marketplace.json')
+      const manifest: Record<string, unknown> = {
+        name: 'test-marketplace',
+        plugins: [validEntry],
+      }
+      if (owner !== undefined) {
+        manifest.owner = owner
+      }
+      await writeFile(filePath, JSON.stringify(manifest, null, 2))
+
+      const result = await validateMarketplaceManifest(filePath)
+
+      expect({ label, success: result.success }).toEqual({
+        label,
+        success: false,
+      })
+      expect(result.errors.some(e => e.path.startsWith('owner'))).toBe(true)
+    }
   })
 })

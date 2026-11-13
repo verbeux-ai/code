@@ -14,7 +14,7 @@ import { count } from '../../utils/array.js';
 import { shouldSkipPluginAutoupdate } from '../../utils/config.js';
 import { errorMessage } from '../../utils/errors.js';
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js';
-import { createPluginId, formatMarketplaceLoadingErrors, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
+import { createPluginId, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { loadKnownMarketplacesConfig, refreshMarketplace, removeMarketplaceSource, setMarketplaceAutoUpdate } from '../../utils/plugins/marketplaceManager.js';
 import { nativeMarketplacePriority, VERBOO_MARKETPLACE_NAME } from '../../utils/plugins/officialMarketplace.js';
 import { updatePluginsForMarketplaces } from '../../utils/plugins/pluginAutoupdate.js';
@@ -83,8 +83,7 @@ export function ManageMarketplaces({
         // Load marketplaces with graceful degradation
         const {
           marketplaces,
-          failures,
-          skippedEntries
+          warning
         } = await loadMarketplacesWithGracefulDegradation(config);
         const states: MarketplaceState[] = [];
         for (const {
@@ -118,12 +117,7 @@ export function ManageMarketplaces({
         setMarketplaceStates(states);
 
         // Handle marketplace loading errors/warnings
-        const successCount = count(marketplaces, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(
-          failures,
-          successCount,
-          skippedEntries
-        );
+        const errorResult = warning;
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setProcessError(errorResult.message);

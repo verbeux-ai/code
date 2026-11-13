@@ -1299,10 +1299,35 @@ export const PluginMarketplaceEntrySchema = lazySchema(() =>
  * A plugin entry that failed validation and was dropped from a manifest.
  */
 export type SkippedMarketplaceEntry = {
-  /** The entry's `name`, or a positional placeholder when it had none. */
+  /** The entry's `name` (control characters stripped), or `plugins[N]`. */
   name: string
+  /**
+   * Whether `name` is a usable plugin name. When false the entry is a
+   * positional placeholder or a name the schema rejected, so there is no way to
+   * tell which plugin it described — delisting enforcement must not treat
+   * anything from that marketplace as removed. See pluginBlocklist.ts.
+   */
+  identifiable: boolean
   /** Why the entry was dropped, in the same shape as a schema error. */
   reason: string
+}
+
+/**
+ * Same shape as the plugin-name half of PluginIdSchema. Used only to decide
+ * whether a dropped entry's name can be matched against an installed plugin.
+ */
+const USABLE_PLUGIN_NAME = /^[a-z0-9][-a-z0-9._]*$/i
+
+/**
+ * Strip control characters from a name taken out of a rejected manifest entry.
+ *
+ * The value failed validation, so it is attacker-controlled: a third-party
+ * marketplace could otherwise put ANSI escapes into a warning we render in the
+ * TUI, or forge line breaks in the log.
+ */
+function sanitizeEntryName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
 }
 
 /**
@@ -1314,6 +1339,11 @@ export type SkippedMarketplaceEntry = {
  * known_marketplaces.json, which can diverge from the name a manifest declares
  * (hand-edited or seed-managed config, upstream self-rename). A name lookup
  * would silently miss and let a dropped entry be treated as a deletion.
+ *
+ * The trade-off is that a caller which copies the marketplace object and
+ * replaces `plugins` loses the record silently. Nothing does that today, and
+ * delisting enforcement is written to fail closed when it can't be sure, so
+ * the loss cannot turn into an uninstall.
  */
 const skippedEntriesByPluginsArray = new WeakMap<
   readonly PluginMarketplaceEntry[],
@@ -1371,8 +1401,10 @@ const PluginMarketplaceEntriesSchema = lazySchema(() =>
           entry && typeof entry === 'object'
             ? (entry as { name?: unknown }).name
             : undefined
+        const name = typeof rawName === 'string' ? sanitizeEntryName(rawName) : ''
         skipped.push({
-          name: typeof rawName === 'string' ? rawName : `plugins[${index}]`,
+          name: name || `plugins[${index}]`,
+          identifiable: name !== '' && USABLE_PLUGIN_NAME.test(name),
           reason: parsed.error.issues
             .map(issue => `${issue.path.join('.') || 'entry'}: ${issue.message}`)
             .join(', '),
@@ -1412,12 +1444,24 @@ export const PluginMarketplaceSchema = lazySchema(() =>
       ),
     metadata: z
       .object({
+        // Functional: resolves relative plugin sources. A malformed value must
+        // be reported rather than ignored, or installs break silently.
         pluginRoot: z
           .string()
           .optional()
           .describe('Base path for relative plugin sources'),
-        version: z.string().optional().describe('Marketplace version'),
-        description: z.string().optional().describe('Marketplace description'),
+        // Display-only, like `owner`: a bad value must not cost the user every
+        // plugin in the marketplace.
+        version: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('Marketplace version'),
+        description: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('Marketplace description'),
       })
       .optional()
       .describe('Optional marketplace metadata'),

@@ -197,13 +197,16 @@ try {
     }),
   )
 
-  // 4. Delisting enforcement: a dropped entry is not a removal.
+  // 4. Delisting enforcement: a dropped entry is not a removal — including when
+  //    the drop is unidentifiable, which is the case that silently uninstalled
+  //    the user's plugin before the guard covered it.
   results.push(
     await scenario('delisting', async () => {
       await rm(pluginsDir, { recursive: true, force: true })
       await mkdir(pluginsDir, { recursive: true })
 
       const marketplaces = [
+        // Dropped entry still has a usable name.
         {
           name: 'guarded-marketplace',
           forceRemoveDeletedPlugins: true,
@@ -212,11 +215,33 @@ try {
             unknownSourceEntry,
           ],
         },
+        // Dropped because the entry lost its name entirely: we cannot tell which
+        // plugin it was, so nothing from this marketplace may be auto-uninstalled.
+        {
+          name: 'nameless-marketplace',
+          forceRemoveDeletedPlugins: true,
+          plugins: [
+            { name: 'superpowers', source: './plugins/superpowers' },
+            { source: './plugins/unnamed' },
+          ],
+        },
+        // Dropped because its name is no longer a valid plugin name (renamed
+        // upstream from `x-code` to `x code`): same ambiguity.
+        {
+          name: 'renamed-marketplace',
+          forceRemoveDeletedPlugins: true,
+          plugins: [
+            { name: 'superpowers', source: './plugins/superpowers' },
+            { name: 'x code', source: './plugins/xcode' },
+          ],
+        },
+        // Opted in, and genuinely no longer lists `gone`.
         {
           name: 'removing-marketplace',
           forceRemoveDeletedPlugins: true,
           plugins: [{ name: 'superpowers', source: './plugins/superpowers' }],
         },
+        // Not opted in: delisting is never enforced here.
         {
           name: 'passive-marketplace',
           forceRemoveDeletedPlugins: false,
@@ -247,6 +272,10 @@ try {
       await writeInstalled([
         'superpowers@guarded-marketplace',
         'xcode@guarded-marketplace',
+        'superpowers@nameless-marketplace',
+        'xcode@nameless-marketplace',
+        'superpowers@renamed-marketplace',
+        'x-code@renamed-marketplace',
         'superpowers@removing-marketplace',
         'gone@removing-marketplace',
         'superpowers@passive-marketplace',
@@ -278,16 +307,22 @@ try {
       const { loadMarketplacesWithGracefulDegradation } = await import(
         './marketplaceHelpers.js'
       )
-      const config = JSON.parse(
+      const allConfig = JSON.parse(
         await readFile(join(pluginsDir, 'known_marketplaces.json'), 'utf-8'),
       ) as Record<string, never>
+      // Focus this scenario on one marketplace: the delisting scenario seeded
+      // several, and their skips are covered by their own assertions.
+      const config = { 'guarded-marketplace': allConfig['guarded-marketplace']! }
 
-      const { skippedEntries } =
+      const { skippedEntries, warning } =
         await loadMarketplacesWithGracefulDegradation(config)
 
       return {
         scenario: 'graceful',
         skippedEntries,
+        // The formatted warning every `/plugin` screen renders, computed in the
+        // helper so no caller can forget to pass the skipped entries through.
+        warning,
         errorLogMentionsSkip: getInMemoryErrors().some(entry =>
           entry.error.includes(
             'guarded-marketplace" has 1 plugin entry this build cannot parse',
@@ -297,7 +332,55 @@ try {
     }),
   )
 
-  // 6. The user-facing warning, including the rule that keeps it actionable:
+  // 6. A catalog where nothing parsed is a different failure from one odd entry,
+  //    and the message must say so — that is the difference between "upgrade the
+  //    client" and "one plugin is unavailable".
+  results.push(
+    await scenario('wholesale', async () => {
+      await rm(pluginsDir, { recursive: true, force: true })
+      await mkdir(pluginsDir, { recursive: true })
+
+      const dir = join(root, 'wholesale-marketplace')
+      await writeManifestDir(
+        dir,
+        manifest('wholesale-marketplace', [
+          { name: 'a', source: { source: 'command', command: 'x' } },
+          { name: 'b', source: { source: 'command', command: 'y' } },
+        ]),
+      )
+      await writeFile(
+        join(pluginsDir, 'known_marketplaces.json'),
+        JSON.stringify({
+          'wholesale-marketplace': {
+            source: { source: 'directory', path: dir },
+            installLocation: dir,
+            lastUpdated: new Date().toISOString(),
+          },
+        }),
+      )
+
+      const before = getInMemoryErrors().length
+      const { loadMarketplacesWithGracefulDegradation } = await import(
+        './marketplaceHelpers.js'
+      )
+      await loadMarketplacesWithGracefulDegradation(
+        JSON.parse(
+          await readFile(join(pluginsDir, 'known_marketplaces.json'), 'utf-8'),
+        ),
+      )
+
+      return {
+        scenario: 'wholesale',
+        wholesaleMessageLogged: getInMemoryErrors()
+          .slice(before)
+          .some(entry =>
+            entry.error.includes('has no usable plugin entries'),
+          ),
+      }
+    }),
+  )
+
+  // 7. The user-facing warning, including the rule that keeps it actionable:
   //    only warn when the unreadable entry is a plugin this user installed.
   results.push(
     await scenario('formatting', async () => {

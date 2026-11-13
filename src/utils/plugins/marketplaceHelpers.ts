@@ -89,6 +89,11 @@ export async function loadMarketplacesWithGracefulDegradation(
    * see `formatMarketplaceLoadingErrors`.
    */
   skippedEntries: Array<{ name: string; entries: string[] }>
+  /**
+   * The warning to show the user, if any. Computed here so every caller renders
+   * the same thing and none can forget to pass `skippedEntries` through.
+   */
+  warning: { type: 'warning' | 'error'; message: string } | null
 }> {
   const marketplaces: Array<{
     name: string
@@ -135,7 +140,21 @@ export async function loadMarketplacesWithGracefulDegradation(
     })
   }
 
-  return { marketplaces, failures, skippedEntries }
+  return {
+    marketplaces,
+    failures,
+    skippedEntries,
+    /**
+     * The warning to show the user, already formatted. Computed here so every
+     * caller renders the same thing and none can forget to pass the skipped
+     * entries through.
+     */
+    warning: formatMarketplaceLoadingErrors(
+      failures,
+      marketplaces.filter(m => m.data !== null).length,
+      skippedEntries,
+    ),
+  }
 }
 
 /**

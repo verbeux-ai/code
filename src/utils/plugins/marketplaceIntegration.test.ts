@@ -123,9 +123,16 @@ describe('delisting enforcement with an unparseable entry', () => {
     expect(result.flagged).toEqual(['gone@removing-marketplace'])
     expect(result.installedAfter).toEqual([
       'superpowers@guarded-marketplace',
+      'superpowers@nameless-marketplace',
       'superpowers@passive-marketplace',
       'superpowers@removing-marketplace',
+      'superpowers@renamed-marketplace',
+      'x-code@renamed-marketplace',
       'xcode@guarded-marketplace',
+      // Kept: the entry lost its name, so we cannot tell whether this is the
+      // plugin that entry described. Deleting it would be irreversible.
+      'xcode@nameless-marketplace',
+      // `gone@removing-marketplace` is absent — the marketplace dropped it.
     ])
   })
 })
@@ -178,7 +185,21 @@ describe('observability of a skipped entry', () => {
     ])
   })
 
+  test('hands the caller a ready-to-render warning', () => {
+    // `xcode@guarded-marketplace` is installed in this fixture, so the drop
+    // costs the user a plugin and the warning must say so.
+    expect(scenario('graceful').warning).toEqual({
+      type: 'warning',
+      message:
+        "Warning: Skipped 1 unreadable plugin entry in marketplace 'guarded-marketplace': xcode",
+    })
+  })
+
   test('lands in the error log, not only in --debug output', () => {
     expect(scenario('graceful').errorLogMentionsSkip).toBe(true)
+  })
+
+  test('says when nothing parsed at all, not just "one entry skipped"', () => {
+    expect(scenario('wholesale').wholesaleMessageLogged).toBe(true)
   })
 })

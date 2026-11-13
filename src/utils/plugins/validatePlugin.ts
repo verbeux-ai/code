@@ -7,6 +7,7 @@ import { FRONTMATTER_REGEX } from '../frontmatterParser.js'
 import { jsonParse } from '../slowOperations.js'
 import { parseYaml } from '../yaml.js'
 import {
+  PluginAuthorSchema,
   PluginHooksSchema,
   PluginManifestSchema,
   PluginMarketplaceEntrySchema,
@@ -400,8 +401,13 @@ export async function validateMarketplaceManifest(
   // schema with .strict() here. Note .strict() on the outer object does NOT
   // propagate into z.array() elements, so we also override the plugins array
   // with strict entries to catch typos inside individual plugin entries too.
+  //
+  // `owner` is re-declared without the runtime `.catch(undefined)` leniency:
+  // that leniency exists so a malformed owner can't take a user's marketplace
+  // down, but an author still needs to be told their manifest is wrong.
   const strictMarketplaceSchema = PluginMarketplaceSchema()
     .extend({
+      owner: PluginAuthorSchema(),
       plugins: z.array(PluginMarketplaceEntrySchema().strict()),
     })
     .strict()

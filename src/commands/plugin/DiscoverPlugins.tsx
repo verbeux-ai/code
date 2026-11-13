@@ -18,7 +18,7 @@ import { errorMessage } from '../../utils/errors.js';
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js';
 import { formatInstallCount, getInstallCounts } from '../../utils/plugins/installCounts.js';
 import { isPluginGloballyInstalled } from '../../utils/plugins/installedPluginsManager.js';
-import { createPluginId, detectEmptyMarketplaceReason, type EmptyMarketplaceReason, formatFailureDetails, formatMarketplaceLoadingErrors, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
+import { createPluginId, detectEmptyMarketplaceReason, type EmptyMarketplaceReason, formatFailureDetails, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js';
 import { CLAUDE_MARKETPLACE_NAME, nativeMarketplacePriority } from '../../utils/plugins/officialMarketplace.js';
 import { installPluginFromMarketplace } from '../../utils/plugins/pluginInstallationHelpers.js';
@@ -129,7 +129,7 @@ export function DiscoverPlugins({
         const {
           marketplaces,
           failures,
-          skippedEntries
+          warning
         } = await loadMarketplacesWithGracefulDegradation(config);
 
         // Collect all plugins from all marketplaces
@@ -205,12 +205,7 @@ export function DiscoverPlugins({
         }
 
         // Handle marketplace loading errors/warnings
-        const successCount = count(marketplaces, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(
-          failures,
-          successCount,
-          skippedEntries
-        );
+        const errorResult = warning;
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setWarning(errorResult.message + '. Showing available plugins.');

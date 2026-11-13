@@ -1395,9 +1395,14 @@ const PluginMarketplaceEntriesSchema = lazySchema(() =>
 export const PluginMarketplaceSchema = lazySchema(() =>
   z.object({
     name: MarketplaceNameSchema(),
-    owner: PluginAuthorSchema().describe(
-      'Marketplace maintainer or curator information',
-    ),
+    // Display-only metadata: nothing reads it, so a marketplace that drops or
+    // renames the field must not cost the user every plugin. Malformed values
+    // degrade to `undefined` rather than failing the document — same blast
+    // radius rule as the per-entry validation below.
+    owner: PluginAuthorSchema()
+      .optional()
+      .catch(undefined)
+      .describe('Marketplace maintainer or curator information (display only)'),
     plugins: PluginMarketplaceEntriesSchema(),
     forceRemoveDeletedPlugins: z
       .boolean()

@@ -13,7 +13,7 @@ import { errorMessage } from '../../utils/errors.js';
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js';
 import { formatInstallCount, getInstallCounts } from '../../utils/plugins/installCounts.js';
 import { isPluginGloballyInstalled, isPluginInstalled } from '../../utils/plugins/installedPluginsManager.js';
-import { createPluginId, formatFailureDetails, formatMarketplaceLoadingErrors, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
+import { createPluginId, formatFailureDetails, getMarketplaceSourceDisplay, loadMarketplacesWithGracefulDegradation } from '../../utils/plugins/marketplaceHelpers.js';
 import { getMarketplace, loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js';
 import { CLAUDE_MARKETPLACE_NAME, nativeMarketplacePriority } from '../../utils/plugins/officialMarketplace.js';
 import { installPluginFromMarketplace } from '../../utils/plugins/pluginInstallationHelpers.js';
@@ -130,7 +130,7 @@ export function BrowseMarketplace({
         // Load marketplaces with graceful degradation
         const {
           marketplaces: marketplaces_0,
-          failures
+          warning
         } = await loadMarketplacesWithGracefulDegradation(config);
         const marketplaceInfos: MarketplaceInfo[] = [];
         for (const {
@@ -163,8 +163,7 @@ export function BrowseMarketplace({
         setMarketplaces(marketplaceInfos);
 
         // Handle marketplace loading errors/warnings
-        const successCount = count(marketplaces_0, m => m.data !== null);
-        const errorResult = formatMarketplaceLoadingErrors(failures, successCount);
+        const errorResult = warning;
         if (errorResult) {
           if (errorResult.type === 'warning') {
             setWarning(errorResult.message + '. Showing available marketplaces.');

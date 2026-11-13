@@ -86,6 +86,7 @@ import {
   type PluginMarketplace,
   type PluginMarketplaceEntry,
   PluginMarketplaceSchema,
+  sanitizeManifestText,
   validateOfficialNameSource,
 } from './schemas.js'
 
@@ -1396,19 +1397,23 @@ function reportSkippedMarketplaceEntries(
     return
   }
 
+  // Both values come from a third-party document: the marketplace name passed
+  // validation but isn't checked for control characters, and the entry names
+  // failed it. Strip both before they reach a log or a TUI warning.
+  const marketplaceName = sanitizeManifestText(marketplace.name)
   const detail = skipped
     .map(entry => `${entry.name} (${entry.reason})`)
     .join('; ')
   logForDebugging(
-    `Marketplace "${marketplace.name}": skipped ${skipped.length} invalid ` +
+    `Marketplace "${marketplaceName}": skipped ${skipped.length} invalid ` +
       `plugin entr${skipped.length === 1 ? 'y' : 'ies'} from ${filePath}: ` +
       `${detail}. The rest of the marketplace loaded normally.`,
     { level: 'warn' },
   )
 
-  const reportKey = `${marketplace.name}\0${skipped.length}\0${skipped
-    .map(entry => entry.name)
-    .join(',')}`
+  // Key on the full detail, not just the names: the same entries can start
+  // failing for a different reason after an upstream fix, and that is news.
+  const reportKey = `${marketplaceName}\0${detail}`
   if (reportedSkippedMarketplaces.has(reportKey)) {
     return
   }
@@ -1417,14 +1422,13 @@ function reportSkippedMarketplaceEntries(
   // Nothing parsed at all is a different failure from one odd entry: it means
   // the whole catalog moved to a shape this build doesn't understand, and the
   // user is looking at an empty marketplace rather than one missing a plugin.
-  const parsedCount = marketplace.plugins.length
-  const wholesale = parsedCount === 0
+  const wholesale = marketplace.plugins.length === 0
   logError(
     new Error(
       wholesale
-        ? `Marketplace "${marketplace.name}" has no usable plugin entries: all ` +
+        ? `Marketplace "${marketplaceName}" has no usable plugin entries: all ` +
           `${skipped.length} entries failed to parse and were skipped: ${detail}`
-        : `Marketplace "${marketplace.name}" has ${skipped.length} plugin ` +
+        : `Marketplace "${marketplaceName}" has ${skipped.length} plugin ` +
           `entr${skipped.length === 1 ? 'y' : 'ies'} this build cannot parse and ` +
           `skipped: ${detail}`,
     ),

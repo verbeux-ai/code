@@ -202,13 +202,18 @@ describe('PluginMarketplaceSchema plugin entries', () => {
       { version: 2 },
       { description: 5 },
       { version: null },
+      // The container itself: `"metadata": null` is an ordinary way to encode
+      // "no metadata" and must not be fatal.
+      { metadata: null },
+      { metadata: 'v1' },
+      { metadata: [] },
     ]
 
     for (const metadata of cases) {
       const result = PluginMarketplaceSchema().safeParse({
         name: 'test-marketplace',
         plugins: [validEntry],
-        metadata,
+        ...metadata,
       })
 
       expect({ metadata, success: result.success }).toEqual({
@@ -333,6 +338,28 @@ describe('validateMarketplaceManifest strictness', () => {
 
     expect(result.success).toBe(true)
     expect(result.errors).toEqual([])
+  })
+
+  test('still reports display-only metadata problems to the author', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'marketplace-validate-'))
+    tempDirs.push(dir)
+    const filePath = join(dir, 'marketplace.json')
+    await writeFile(
+      filePath,
+      JSON.stringify(
+        {
+          ...marketplaceWith([validEntry]),
+          metadata: { version: 2 },
+        },
+        null,
+        2,
+      ),
+    )
+
+    const result = await validateMarketplaceManifest(filePath)
+
+    expect(result.success).toBe(false)
+    expect(result.errors.some(e => e.path.startsWith('metadata'))).toBe(true)
   })
 
   test('still reports owner problems to the author', async () => {

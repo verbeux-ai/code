@@ -71,6 +71,19 @@ export function createPluginId(
 }
 
 /**
+ * Dropped entries, grouped by marketplace.
+ *
+ * `entries` are the drops whose name we could read, so they can be matched
+ * against installed plugins. `unidentifiable` counts the drops that lost their
+ * name — we know an entry was skipped, not which plugin it described.
+ */
+type SkippedEntries = Array<{
+  name: string
+  entries: string[]
+  unidentifiable: number
+}>
+
+/**
  * Load marketplaces with graceful degradation for individual failures.
  * Blocked marketplaces (per enterprise policy) are excluded from the results.
  */
@@ -88,7 +101,7 @@ export async function loadMarketplacesWithGracefulDegradation(
    * Not narrowed to installed plugins — that filter belongs to the warning,
    * see `formatMarketplaceLoadingErrors`.
    */
-  skippedEntries: Array<{ name: string; entries: string[] }>
+  skippedEntries: SkippedEntries
   /**
    * The warning to show the user, if any. Computed here so every caller renders
    * the same thing and none can forget to pass `skippedEntries` through.
@@ -101,7 +114,7 @@ export async function loadMarketplacesWithGracefulDegradation(
     data: Awaited<ReturnType<typeof getMarketplace>> | null
   }> = []
   const failures: Array<{ name: string; error: string }> = []
-  const skippedEntries: Array<{ name: string; entries: string[] }> = []
+  const skippedEntries: SkippedEntries = []
 
   for (const [name, marketplaceConfig] of Object.entries(config)) {
     // Skip marketplaces blocked by enterprise policy
@@ -128,7 +141,10 @@ export async function loadMarketplacesWithGracefulDegradation(
       if (skipped.length > 0) {
         skippedEntries.push({
           name,
-          entries: skipped.map(entry => entry.name),
+          entries: skipped
+            .filter(entry => entry.identifiable)
+            .map(entry => entry.name),
+          unidentifiable: skipped.filter(entry => !entry.identifiable).length,
         })
       }
     }
@@ -163,7 +179,7 @@ export async function loadMarketplacesWithGracefulDegradation(
 export function formatMarketplaceLoadingErrors(
   failures: Array<{ name: string; error: string }>,
   successCount: number,
-  skippedEntries: Array<{ name: string; entries: string[] }> = [],
+  skippedEntries: SkippedEntries = [],
 ): { type: 'warning' | 'error'; message: string } | null {
   const skippedMessage = formatSkippedEntries(
     filterSkippedEntriesAffectingInstalledPlugins(skippedEntries),
@@ -199,19 +215,32 @@ export function formatMarketplaceLoadingErrors(
  * nothing looks broken, but the affected plugins report "not found".
  */
 function formatSkippedEntries(
-  skippedEntries: Array<{ name: string; entries: string[] }>,
+  skippedEntries: SkippedEntries,
 ): string | null {
-  if (skippedEntries.length === 0) {
-    return null
-  }
-  return skippedEntries
-    .map(
-      skipped =>
+  const messages: string[] = []
+
+  for (const skipped of skippedEntries) {
+    if (skipped.entries.length > 0) {
+      messages.push(
         `Warning: Skipped ${skipped.entries.length} unreadable plugin ` +
-        `entr${skipped.entries.length === 1 ? 'y' : 'ies'} in marketplace ` +
-        `'${skipped.name}': ${skipped.entries.join(', ')}`,
-    )
-    .join('. ')
+          `entr${skipped.entries.length === 1 ? 'y' : 'ies'} in marketplace ` +
+          `'${skipped.name}': ${skipped.entries.join(', ')}`,
+      )
+    }
+    if (skipped.unidentifiable > 0) {
+      // The entry lost its name, so we can't say which plugin it was — only
+      // that an installed plugin from this marketplace may not load. Saying it
+      // is the difference between the user understanding the failure and filing
+      // a "plugin disappeared" ticket.
+      messages.push(
+        `Warning: Skipped ${skipped.unidentifiable} unreadable plugin ` +
+          `entr${skipped.unidentifiable === 1 ? 'y' : 'ies'} in marketplace ` +
+          `'${skipped.name}'; an installed plugin from it may not load`,
+      )
+    }
+  }
+
+  return messages.length > 0 ? messages.join('. ') : null
 }
 
 /**
@@ -228,32 +257,42 @@ function formatSkippedEntries(
  * explains why. Those stay, and they stay even though the plugin is installed
  * from a manifest that no longer lists it (the delisting guard in
  * pluginBlocklist.ts keeps it installed).
+ *
+ * A dropped entry that lost its name can't be matched, so it is reported at the
+ * marketplace level instead — but only when the user has *some* plugin installed
+ * from that marketplace, since otherwise it can't have cost them anything.
  */
 function filterSkippedEntriesAffectingInstalledPlugins(
-  skippedEntries: Array<{ name: string; entries: string[] }>,
-): Array<{ name: string; entries: string[] }> {
+  skippedEntries: SkippedEntries,
+): SkippedEntries {
   if (skippedEntries.length === 0) {
     return skippedEntries
   }
 
-  let installed: InstalledPluginsFileV2
+  let installedPluginIds: Set<string>
   try {
-    installed = loadInstalledPluginsV2()
+    installedPluginIds = new Set(Object.keys(loadInstalledPluginsV2().plugins))
   } catch {
     // Can't tell what's installed — say nothing rather than warn about
     // entries that may not affect anyone.
     return []
   }
-  const installedPluginIds = new Set(Object.keys(installed.plugins))
 
   return skippedEntries
-    .map(skipped => ({
-      name: skipped.name,
-      entries: skipped.entries.filter(entry =>
-        installedPluginIds.has(`${entry}@${skipped.name}`),
-      ),
-    }))
-    .filter(skipped => skipped.entries.length > 0)
+    .map(skipped => {
+      const suffix = `@${skipped.name}`
+      const hasInstalledFromMarketplace = [...installedPluginIds].some(
+        pluginId => pluginId.endsWith(suffix),
+      )
+      return {
+        name: skipped.name,
+        entries: skipped.entries.filter(entry =>
+          installedPluginIds.has(`${entry}${suffix}`),
+        ),
+        unidentifiable: hasInstalledFromMarketplace ? skipped.unidentifiable : 0,
+      }
+    })
+    .filter(skipped => skipped.entries.length > 0 || skipped.unidentifiable > 0)
 }
 
 function formatFailureNames(

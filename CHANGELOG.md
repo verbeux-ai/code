@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.15.42](https://github.com/verbeux-ai/code/compare/v0.15.41...v0.15.42) (2026-11-15)
+
+### Alterações
+
+* **CLI antiga:** mostra um aviso de descontinuação (deprecated) na abertura de cada sessão interativa, com o link https://verboo.ai/download para o novo aplicativo. O aviso é apenas informativo e não bloqueia o uso.
+
 ## [0.15.41](https://github.com/verbeux-ai/code/compare/v0.15.40...v0.15.41) (2026-10-30)
 
 ### Correções

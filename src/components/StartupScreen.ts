@@ -186,6 +186,7 @@ export function renderStartupScreen(
   const bold = `${ESC}1m`
   const PURPLE = rgb(...ACCENT)
   const DIMP = `${DIM}${rgb(...DIMCOL)}`
+  const WARNING = `${ESC}33m`
   const STATUS_C = p.isLocal ? rgb(130, 200, 140) : PURPLE
   const statusLabel = p.isLocal ? 'local' : 'cloud'
   const providerAndModel = `${p.name} · ${p.model}`
@@ -199,6 +200,9 @@ export function renderStartupScreen(
   out.push(`     👻  ${bold}${PURPLE}Verboo Code${RESET} ${DIMP}v${shownVersion}${RESET}`)
   out.push(`     ${STATUS_C}●${RESET} ${DIMP}${model} · ${statusLabel}${RESET}`)
   out.push(`     ${DIMP}${cwd}${RESET}`)
+  out.push('')
+  out.push(`     ${WARNING}Aviso: esta CLI foi descontinuada (deprecated).${RESET}`)
+  out.push(`     ${WARNING}Baixe o novo app: https://verboo.ai/download${RESET}`)
 
   out.push('')
 

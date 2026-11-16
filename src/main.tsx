@@ -211,6 +211,7 @@ import { isInBundledMode, isRunningWithBun } from './utils/bundledMode.js';
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js';
 import { filterExistingPaths, getKnownPathsForRepo } from './utils/githubRepoPathMapping.js';
 import { areExternalPluginsDisabledForVerboo, clearPluginCache, loadAllPluginsCacheOnly } from './utils/plugins/pluginLoader.js';
+import { getAddDirEnabledPlugins } from './utils/plugins/addDirPluginSettings.js';
 import { migrateChangelogFromConfig } from './utils/releaseNotes.js';
 import { SandboxManager } from './utils/sandbox/sandbox-adapter.js';
 import { fetchSession, prepareApiRequest } from './utils/teleport/api.js';
@@ -290,7 +291,7 @@ if ("external" !== 'ant' && isBeingDebugged()) {
  * main.tsx but branch before the interactive startup path, so it needs two
  * call sites here rather than one here + one in QueryEngine.
  */
-function logSessionTelemetry(): void {
+function logSessionTelemetry(interactive: boolean): void {
   const model = parseUserSpecifiedModel(getInitialMainLoopModel() ?? getDefaultMainLoopModel());
   void logSkillsLoaded(getCwd(), getContextWindowForModel(model, getSdkBetas()));
   void loadAllPluginsCacheOnly().then(({
@@ -300,6 +301,26 @@ function logSessionTelemetry(): void {
     const managedNames = getManagedPluginNames();
     logPluginsEnabledForSession(enabled, managedNames, getPluginSeedDirs());
     logPluginLoadErrors(errors, managedNames);
+    const configuredPlugins = {
+      ...getAddDirEnabledPlugins(),
+      ...(getInitialSettings().enabledPlugins ?? {}),
+    };
+    const startupLoadFailures = errors.filter(
+      error =>
+        configuredPlugins[error.source] === true &&
+        (error.type === 'plugin-not-found' ||
+          error.type === 'marketplace-not-found' ||
+          error.type === 'marketplace-load-failed' ||
+          error.type === 'path-not-found' ||
+          error.type === 'manifest-parse-error' ||
+          error.type === 'manifest-validation-error'),
+    );
+    if (interactive && startupLoadFailures.length > 0) {
+      // eslint-disable-next-line custom-rules/no-console -- Surface plugin startup failures that were previously telemetry-only.
+      console.warn(
+        'Warning: some enabled plugins could not be loaded. Run /plugin or verboo doctor to inspect them. Project and local plugins load only from their matching project.',
+      );
+    }
   }).catch(err => logError(err));
 }
 function getCertEnvVarTelemetry(): Record<string, boolean> {
@@ -2935,7 +2956,7 @@ async function run(): Promise<CommanderCommand> {
           void import('./utils/sdkHeapDumpMonitor.js').then(m => m.startSdkMemoryMonitor());
         }
       }
-      logSessionTelemetry();
+      logSessionTelemetry(false);
       profileCheckpoint('before_print_import');
       const {
         runHeadless
@@ -3164,7 +3185,7 @@ async function run(): Promise<CommanderCommand> {
     }));
     setImmediate(() => {
       void logStartupTelemetry();
-      logSessionTelemetry();
+      logSessionTelemetry(true);
     });
 
     // Set up per-turn session environment data uploader (internal-only build).

@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 
 /**
  * Full-stack check that a marketplace survives one unparseable plugin entry.
@@ -13,6 +13,9 @@ import { describe, expect, test } from 'bun:test'
  */
 const fixturePath = join(import.meta.dir, 'marketplaceIntegration.fixture.ts')
 const RESULT_MARKER = '__MARKETPLACE_FIXTURE__'
+
+// This suite starts a cold Bun subprocess; allow time for it to load the CLI.
+setDefaultTimeout(15_000)
 
 type FixtureResult = Record<string, unknown>
 

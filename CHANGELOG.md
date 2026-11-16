@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.43](https://github.com/verbeux-ai/code/compare/v0.15.42...v0.15.43) (2026-11-16)
+
+### Correções
+
+* **plugins:** a limpeza do cache preserva versões quando o manifesto de instalações está ausente ou inválido e remove somente versões marcadas explicitamente como órfãs.
+* **plugins:** a CLI interativa avisa quando um plugin habilitado não pôde ser carregado e orienta a verificar `/plugin` ou `verboo doctor`.
+
 ## [0.15.42](https://github.com/verbeux-ai/code/compare/v0.15.41...v0.15.42) (2026-11-15)
 
 ### Alterações

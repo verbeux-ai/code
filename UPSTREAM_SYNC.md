@@ -88,6 +88,49 @@ git grep "VERBOO-BRAND" src/
 Antes de cada sync, rode esse comando e mantenha um inventário mental dos
 pontos que devem ser preservados.
 
+## Pontos adicionados na 0.15.42
+
+Hunks `VERBOO-BRAND` em arquivos upstream. Depois de um merge do upstream, confira
+se cada um continua lá.
+
+#### Confiança de pasta
+- `src/interactiveHelpers.tsx` — mostra o `TrustDialog` no modo Verboo, usando
+  `getRequiredSetupScreens` de `src/utils/setupScreenGates.ts` (vindo do upstream).
+
+#### Troca de modelo quando o limite acaba
+- `src/screens/REPL.tsx` — efeito que abre `LimitSwitchDialog`, reenvio no render
+  seguinte (`limitResendPrompt`) e fila parada enquanto a escolha está pendente
+  (`isLimitSwitchPending`).
+- `src/services/api/withRetry.ts` — `insufficient_quota` e limite do plano não têm
+  retry. `src/services/api/errors.ts` — `PROVIDER_LIMIT_MESSAGE_PREFIX` conta como
+  erro de API, o que protege o `/compact`.
+- `src/utils/config.ts` e `src/utils/model/model.ts` — `lastRouterModel`.
+
+#### Esc e chaves digitadas
+- `src/utils/QueryGuard.ts` — `isRunning`. `src/screens/REPL.tsx` — `canCancelWork`
+  ignora a trava enquanto um diálogo de comando espera resposta, então Esc e Ctrl+C
+  ficam com o diálogo.
+- `src/screens/REPL.tsx` — `onSubmit` passa por `redactProviderKeyInCommand`: chave
+  digitada depois de `/claude` ou `/openai` não vai para tela, histórico nem
+  transcrição.
+
+#### Conta própria (chave Anthropic, chave OpenAI, Codex)
+- `src/utils/betas.ts` — `claude-code-20250219` nunca é enviado, inclusive em
+  chamadas agênticas.
+- `src/utils/permissions/yoloClassifier.ts` (`getClassifierModel`) — em sessão com
+  conta própria, o classificador usa o modelo da conversa, e nada vai para o
+  roteador.
+
+#### Auto mode: o que a pessoa vê
+- `src/utils/messages.ts` — `getClassifierDenialReason`.
+  `src/components/messages/UserToolResultMessage/UserToolErrorMessage.tsx` — mostra
+  o motivo do bloqueio.
+
+#### Dependências
+- `src/services/mcp/client.ts` — `maxBufferSize` do transporte stdio.
+- `src/services/api/codexShim.ts` — `enforceStrictSchema` troca `oneOf` por `anyOf`
+  (zod 4).
+
 ## Política sobre identifiers Anthropic
 
 Os bundle IDs e endpoints de telemetria com prefixo `com.anthropic.claude_code.*`

@@ -190,3 +190,40 @@ test('an agent hitting max_turns reports its limit and confirmed usage', { timeo
     for (const record of records) assert.equal(record.tokenUsage.confirmed, 144)
   } finally { await cli.stop() }
 })
+
+// Workspace trust: a freshly cloned repository must not run project hooks
+// before the user accepts the trust prompt (regression: Verboo mode used to
+// mark every folder as trusted without asking).
+const hookProject = {
+  '.verboo/settings.json': JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo ran > hook-ran.txt' }] }] } }),
+}
+const hookRan = async cli => readdir(cli.project).then(files => files.includes('hook-ran.txt'))
+
+test('untrusted project: declining the trust prompt exits before project hooks run', { timeout: 60_000 }, async () => {
+  const cli = await startCli({ columns: 120, rows: 40, trusted: false, settingSources: 'user,project', projectFiles: hookProject })
+  try {
+    await cli.waitFor(() => cli.screen().includes('Yes, I trust this folder'))
+    assert.equal(await hookRan(cli), false)
+    cli.write('\x1b[B')
+    await cli.waitFor(() => /❯ 2\. No, exit/.test(cli.screen()))
+    cli.write('\r')
+    const { exitCode } = await cli.exit
+    assert.equal(exitCode, 1)
+    assert.equal(await hookRan(cli), false)
+    assert.deepEqual(cli.router.requests, [])
+  } finally { await cli.stop() }
+})
+
+test('untrusted project: accepting the trust prompt runs hooks and remembers the folder', { timeout: 60_000 }, async () => {
+  const cli = await startCli({ columns: 120, rows: 40, trusted: false, settingSources: 'user,project', projectFiles: hookProject })
+  try {
+    await cli.waitFor(() => cli.screen().includes('Yes, I trust this folder'))
+    assert.equal(await hookRan(cli), false)
+    cli.write('\r')
+    await cli.waitFor(() => cli.screen().includes('❯') && !cli.screen().includes('Yes, I trust this folder'))
+    await cli.waitFor(() => hookRan(cli))
+    const config = JSON.parse(await readFile(join(cli.config, '.config.json'), 'utf8'))
+    const key = cli.project.replaceAll('\\', '/')
+    assert.equal(config.projects?.[key]?.hasTrustDialogAccepted, true)
+  } finally { await cli.stop() }
+})

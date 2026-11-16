@@ -20,6 +20,7 @@ import { onChangeAppState } from './state/onChangeAppState.js';
 import { normalizeApiKeyForConfig } from './utils/authPortable.js';
 import { getExternalClaudeMdIncludes, getMemoryFiles, shouldShowClaudeMdExternalIncludesWarning } from './utils/claudemd.js';
 import { checkHasTrustDialogAccepted, getCustomApiKeyStatus, getGlobalConfig, saveGlobalConfig } from './utils/config.js';
+import { getRequiredSetupScreens } from './utils/setupScreenGates.js';
 import { updateDeepLinkTerminalPreference } from './utils/deepLink/terminalPreference.js';
 import { isEnvTruthy, isRunningOnHomespace } from './utils/envUtils.js';
 import { type FpsMetrics, FpsTracker } from './utils/fpsTracker.js';
@@ -142,15 +143,25 @@ export async function showSetupScreens(root: Root, permissionMode: PermissionMod
   // Note: non-interactive sessions (CI/CD with -p) never reach showSetupScreens at all.
   // Skip permission checks in claubbit
   if (!isEnvTruthy(process.env.CLAUBBIT)) {
-    // Skip trust dialog UI for third-party providers (no Anthropic auth), but still
-    // run trust state initialization below so the REPL mounts correctly.
-    if (usesAnthropicSetup && !checkHasTrustDialogAccepted()) {
+    // VERBOO-BRAND: a confiança de pasta vale para qualquer provedor (upstream
+    // #1864). Antes o modo Verboo pulava o TrustDialog e marcava a confiança
+    // como aceita, então hooks/helpers/env de um repo clonado rodavam sem
+    // pergunta. O gate agora é o mesmo do upstream e não depende do provedor.
+    const setupScreens = getRequiredSetupScreens({
+      theme: config.theme,
+      hasCompletedOnboarding: config.hasCompletedOnboarding,
+      trustDialogAccepted: checkHasTrustDialogAccepted(),
+      isClaubbit: isEnvTruthy(process.env.CLAUBBIT)
+    });
+    if (setupScreens.trustDialog) {
       const {
         TrustDialog
       } = await import('./components/TrustDialog/TrustDialog.js');
       await showSetupDialog(root, done => <TrustDialog commands={commands} onDone={done} />);
     }
 
+    // Only reached after the dialog was accepted (or trust was already saved):
+    // "No", Esc and Ctrl+C in TrustDialog call gracefulShutdownSync.
     // Signal that trust has been verified for this session.
     // GrowthBook checks this to decide whether to include auth headers.
     // Critical for third-party providers: without this, downstream config lookups

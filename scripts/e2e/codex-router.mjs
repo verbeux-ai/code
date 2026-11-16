@@ -50,7 +50,7 @@ function findUnsupportedSchemaKeywords(schema, path = '$') {
   return errors
 }
 
-function validateCodexRequest(req, body, headers) {
+function validateCodexRequest(req, body, headers, { anyEffort = false } = {}) {
   const problems = []
   const isStructuredTask = body.text?.format?.type === 'json_schema'
   if (req.method !== 'POST' || new URL(req.url, 'http://fixture').pathname !== '/backend-api/codex/responses') problems.push('request must be POST /backend-api/codex/responses')
@@ -62,8 +62,8 @@ function validateCodexRequest(req, body, headers) {
   if (body.stream !== true) problems.push('Codex requests must stream')
   if (body.store !== false) problems.push('Codex requests must set store=false')
   if (!Number.isSafeInteger(body.max_output_tokens) || body.max_output_tokens < 1024) problems.push('max_output_tokens must be an integer >= 1024')
-  if (!isStructuredTask && body.reasoning?.effort !== 'high') problems.push('user inference must preserve the explicitly selected high reasoning effort')
-  if (body.reasoning?.effort && body.reasoning.effort !== 'high') problems.push('Codex fixture must not downgrade reasoning below high')
+  if (!anyEffort && !isStructuredTask && body.reasoning?.effort !== 'high') problems.push('user inference must preserve the explicitly selected high reasoning effort')
+  if (!anyEffort && body.reasoning?.effort && body.reasoning.effort !== 'high') problems.push('Codex fixture must not downgrade reasoning below high')
   if (!Array.isArray(body.input) || body.input.length === 0) problems.push('input must contain the user conversation')
   if (!isStructuredTask && (!Array.isArray(body.tools) || body.tools.length < 5)) problems.push('expected the CLI toolset to be present in the Codex inference request')
   if (isStructuredTask && Array.isArray(body.tools) && body.tools.length > 0) problems.push('structured session-title requests must remain tool-free')
@@ -136,7 +136,7 @@ export function createCodexFixtureCredentialRecord() {
   }
 }
 
-export async function createCodexRouter({ projectRoot, onChunkDelayMs = 15 } = {}) {
+export async function createCodexRouter({ projectRoot, onChunkDelayMs = 15, anyEffort = false } = {}) {
   const requests = []
   const catalogRequests = []
   const violations = []
@@ -199,7 +199,7 @@ export async function createCodexRouter({ projectRoot, onChunkDelayMs = 15 } = {
         return
       }
       const id = `codex-fixture-${++sequence}`
-      const problems = validateCodexRequest(req, body, req.headers)
+      const problems = validateCodexRequest(req, body, req.headers, { anyEffort })
       const record = { id, path: new URL(req.url, 'http://fixture').pathname, at: Date.now(), currentUserPrompt: latestUserText(body.input), headers: { authorizationPresent: Boolean(req.headers.authorization), accountId: req.headers['chatgpt-account-id'], originator: req.headers.originator }, body }
       requests.push(record)
       if (problems.length) {

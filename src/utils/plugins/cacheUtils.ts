@@ -8,7 +8,7 @@ import { resetSentSkillNames } from '../attachments.js'
 import { logForDebugging } from '../debug.js'
 import { getErrnoCode } from '../errors.js'
 import { logError } from '../log.js'
-import { loadInstalledPluginsFromDisk } from './installedPluginsManager.js'
+import { loadInstalledPluginsFromDiskForCacheCleanup } from './installedPluginsManager.js'
 import { clearPluginAgentCache } from './loadPluginAgents.js'
 import { clearPluginCommandCache } from './loadPluginCommands.js'
 import {
@@ -67,9 +67,8 @@ export async function markPluginVersionOrphaned(
  * Clean up orphaned plugin versions that have been orphaned for more than 7 days.
  *
  * Pass 1: Remove .orphaned_at from installed versions (clears stale markers)
- * Pass 2: For each cached version not in installed_plugins.json:
- *   - If no .orphaned_at exists: create it (handles old CC versions, manual edits)
- *   - If .orphaned_at exists and > 7 days old: delete the version
+ * Pass 2: Delete only versions explicitly marked by uninstall/update. An
+ * unlisted cache entry may reflect a damaged or out-of-sync manifest.
  */
 export async function cleanupOrphanedPluginVersionsInBackground(): Promise<void> {
   // Zip cache mode stores plugins as .zip files, not directories. readSubdirs
@@ -133,7 +132,13 @@ async function removeOrphanedAtMarker(versionPath: string): Promise<void> {
 function getInstalledVersionPaths(): Set<string> | null {
   try {
     const paths = new Set<string>()
-    const diskData = loadInstalledPluginsFromDisk()
+    const diskData = loadInstalledPluginsFromDiskForCacheCleanup()
+    if (!diskData) {
+      logForDebugging(
+        'Skipping plugin cache cleanup because installed_plugins.json is missing',
+      )
+      return null
+    }
     for (const installations of Object.values(diskData.plugins)) {
       for (const entry of installations) {
         paths.add(entry.installPath)
@@ -141,7 +146,9 @@ function getInstalledVersionPaths(): Set<string> | null {
     }
     return paths
   } catch (error) {
-    logForDebugging(`Failed to load installed plugins: ${error}`)
+    logForDebugging(
+      `Skipping plugin cache cleanup because installed_plugins.json is invalid: ${error}`,
+    )
     return null
   }
 }
@@ -158,7 +165,6 @@ async function processOrphanedPluginVersion(
   } catch (error) {
     const code = getErrnoCode(error)
     if (code === 'ENOENT') {
-      await markPluginVersionOrphaned(versionPath)
       return
     }
     logForDebugging(`Failed to stat orphaned marker: ${versionPath}: ${error}`)

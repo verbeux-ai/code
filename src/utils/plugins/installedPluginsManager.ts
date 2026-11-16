@@ -524,6 +524,24 @@ export function loadInstalledPluginsFromDisk(): InstalledPluginsFileV2 {
 }
 
 /**
+ * Read a trusted manifest snapshot for cache cleanup.
+ *
+ * Missing or invalid state must not be treated as an empty installation list:
+ * doing so would let background cleanup delete plugin versions after a damaged
+ * installed_plugins.json. Missing files return null; invalid files throw.
+ */
+export function loadInstalledPluginsFromDiskForCacheCleanup(): InstalledPluginsFileV2 | null {
+  const rawData = readInstalledPluginsFileRaw()
+  if (!rawData) {
+    return null
+  }
+  if (rawData.version === 2) {
+    return InstalledPluginsFileSchemaV2().parse(rawData.data)
+  }
+  return migrateV1ToV2(InstalledPluginsFileSchemaV1().parse(rawData.data))
+}
+
+/**
  * Update a plugin's install path on disk only, without modifying in-memory state.
  * Used by background updater to record new version on disk while session
  * continues using the old version.

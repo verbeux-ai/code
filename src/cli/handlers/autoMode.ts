@@ -26,30 +26,24 @@ export function autoModeDefaultsHandler(): void {
 }
 
 /**
- * Dump the effective auto mode config: user settings where provided, external
- * defaults otherwise. Per-section REPLACE semantics — matches how
- * buildYoloSystemPrompt resolves the external template (a non-empty user
- * section replaces that section's defaults entirely; an empty/absent section
- * falls through to defaults).
+ * Dump the effective auto mode config: the external defaults plus the user's
+ * rules. VERBOO-BRAND: additive, matching how buildYoloSystemPrompt resolves
+ * the template, so custom rules never drop a default protection.
  */
 export function autoModeConfigHandler(): void {
   const config = getAutoModeConfig()
   const defaults = getDefaultExternalAutoModeRules()
   writeRules({
-    allow: config?.allow?.length ? config.allow : defaults.allow,
-    soft_deny: config?.soft_deny?.length
-      ? config.soft_deny
-      : defaults.soft_deny,
-    environment: config?.environment?.length
-      ? config.environment
-      : defaults.environment,
+    allow: [...defaults.allow, ...(config?.allow ?? [])],
+    soft_deny: [...defaults.soft_deny, ...(config?.soft_deny ?? [])],
+    environment: [...defaults.environment, ...(config?.environment ?? [])],
   })
 }
 
 const CRITIQUE_SYSTEM_PROMPT =
-  'You are an expert reviewer of auto mode classifier rules for Claude Code.\n' +
+  'You are an expert reviewer of auto mode classifier rules for Verboo Code.\n' +
   '\n' +
-  'Claude Code has an "auto mode" that uses an AI classifier to decide whether ' +
+  'Verboo Code has an "auto mode" that uses an AI classifier to decide whether ' +
   'tool calls should be auto-approved or require user confirmation. Users can ' +
   'write custom rules in three categories:\n' +
   '\n' +
@@ -125,7 +119,7 @@ export async function autoModeCritiqueHandler(options: {
             '<classifier_system_prompt>\n' +
             classifierPrompt +
             '\n</classifier_system_prompt>\n\n' +
-            "Here are the user's custom rules that REPLACE the corresponding default sections:\n\n" +
+            "Here are the user's custom rules, which are ADDED to the corresponding default sections:\n\n" +
             userRulesSummary +
             '\nPlease critique these custom rules.',
         },
@@ -158,11 +152,11 @@ function formatRulesForCritique(
   return (
     '## ' +
     section +
-    ' (custom rules replacing defaults)\n' +
+    ' (custom rules added to the defaults)\n' +
     'Custom:\n' +
     customLines +
     '\n\n' +
-    'Defaults being replaced:\n' +
+    'Defaults that stay in effect:\n' +
     defaultLines +
     '\n\n'
   )

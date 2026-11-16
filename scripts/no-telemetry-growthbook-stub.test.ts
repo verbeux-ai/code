@@ -145,4 +145,20 @@ describe('growthbook stub — local feature flag overrides', () => {
     writeFileSync(flagsFile, JSON.stringify({ tengu_disable_bypass_permissions_mode: true }))
     expect(await stub.checkSecurityRestrictionGate('tengu_disable_bypass_permissions_mode')).toBe(false)
   })
+
+  // VERBOO-BRAND: an object override is merged over the open-build default, so
+  // tuning one auto mode key does not silently turn auto mode off.
+  test('object overrides merge over the open-build auto mode default', () => {
+    expect(
+      stub.getFeatureValue_CACHED_MAY_BE_STALE('tengu_auto_mode_config', {}),
+    ).toEqual({ enabled: 'enabled', jsonlTranscript: true })
+    writeFileSync(
+      flagsFile,
+      JSON.stringify({ tengu_auto_mode_config: { model: 'some/model' } }),
+    )
+    stub.resetGrowthBook()
+    expect(
+      stub.getFeatureValue_CACHED_MAY_BE_STALE('tengu_auto_mode_config', {}),
+    ).toEqual({ enabled: 'enabled', jsonlTranscript: true, model: 'some/model' })
+  })
 })

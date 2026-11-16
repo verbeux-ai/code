@@ -285,6 +285,14 @@ function isGithubModelsMode(): boolean {
   return isEnvTruthy(process.env.CLAUDE_CODE_USE_GITHUB)
 }
 
+/** The function name when the caller forced one specific tool, if any. */
+function forcedToolName(params: { tool_choice?: unknown }): string | undefined {
+  const choice = params.tool_choice as { type?: string; name?: string } | undefined
+  return choice?.type === 'tool' && typeof choice.name === 'string'
+    ? choice.name
+    : undefined
+}
+
 function filterAnthropicHeaders(
   headers: Record<string, string> | undefined,
 ): Record<string, string> {
@@ -2862,6 +2870,7 @@ class OpenAIShimMessages {
             request.resolvedModel,
             advertisedToolNames,
             recoverableToolNames,
+            forcedToolName(params),
           ))
         }
       }
@@ -2874,6 +2883,7 @@ class OpenAIShimMessages {
           request.resolvedModel,
           advertisedToolNames,
           recoverableToolNames,
+          forcedToolName(params),
         ))
       }
 
@@ -3880,6 +3890,7 @@ class OpenAIShimMessages {
     model: string,
     advertisedToolNames: readonly string[] = [],
     recoverableToolNames: readonly string[] = [],
+    forcedTool?: string,
   ) {
     const choice = data.choices?.[0]
     const toolArgumentCharsLimit = maxBufferedToolArgumentChars()
@@ -3946,9 +3957,6 @@ class OpenAIShimMessages {
       }
     }
 
-    const isToolFinish =
-      choice?.finish_reason === 'tool_calls' ||
-      choice?.finish_reason === 'function_call'
     const completedToolCalls: Array<{
       id: string
       function: { name: string; arguments: string }
@@ -3964,6 +3972,19 @@ class OpenAIShimMessages {
           ]
         : []),
     ]
+    // VERBOO-BRAND: many OpenAI-compatible servers answer a forced function
+    // call (tool_choice naming one function) with finish_reason "stop". When
+    // every returned call is that forced function, the call is complete and is
+    // committed instead of discarded (the auto mode classifier relies on it).
+    const isForcedToolStop =
+      forcedTool !== undefined &&
+      choice?.finish_reason === 'stop' &&
+      completedToolCalls.length > 0 &&
+      completedToolCalls.every(call => call.function?.name === forcedTool)
+    const isToolFinish =
+      choice?.finish_reason === 'tool_calls' ||
+      choice?.finish_reason === 'function_call' ||
+      isForcedToolStop
     if (isToolFinish) {
       if (completedToolCalls.length === 0) {
         throw new Error(
@@ -4052,8 +4073,7 @@ class OpenAIShimMessages {
     }
 
     const stopReason =
-      choice?.finish_reason === 'tool_calls' ||
-      choice?.finish_reason === 'function_call'
+      isToolFinish
         ? 'tool_use'
         : choice?.finish_reason === 'length'
           ? 'max_tokens'

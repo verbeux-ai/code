@@ -53,7 +53,9 @@ describe('buildTranscriptForClassifier', () => {
       },
     ] as any
 
-    const transcript = buildTranscriptForClassifier(messages, tools, 32)
+    // VERBOO-BRAND: the JSONL transcript is the default (each pair is ~40
+    // chars), so the budget fits only the most recent pair.
+    const transcript = buildTranscriptForClassifier(messages, tools, 48)
 
     expect(transcript).toContain('new-user')
     expect(transcript).toContain('new-tool')

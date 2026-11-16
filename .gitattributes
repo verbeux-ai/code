@@ -6,3 +6,5 @@
 *.mjs diff
 *.json diff=json
 .gitattributes diff
+# VERBOO-BRAND: classifier prompts are reviewable policy, not binary blobs.
+*.txt diff

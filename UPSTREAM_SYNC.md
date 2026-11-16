@@ -53,6 +53,23 @@ em volta. Use `git grep "VERBOO-BRAND"` para localizar todos os pontos editados.
 - `src/commands/provider/` — arquivos **NÃO foram deletados** (upstream
   continua mexendo neles; deletar gera conflitos "deleted file modified upstream").
 
+#### Auto mode (comportamento próximo ao do Claude Code)
+- `src/utils/messages.ts` — instrução do auto mode reescrita (não pedir
+  licença para o que foi pedido; pergunta encerra a vez).
+- `src/utils/permissions/yoloClassifier.ts` — modelo do papel `classifier` do
+  roteador (`VERBOO_AUTO_MODE_MODEL` para diagnóstico); `classifierSideQuery`
+  com prazo e uma nova tentativa; resposta fora do formato = `unavailable`;
+  regras do usuário somam às padrão.
+- `src/utils/permissions/permissions.ts` — classificador indisponível pergunta
+  ao usuário na sessão interativa (headless continua negando).
+- `src/services/api/openaiShim.ts` — tool call forçado com `finish_reason:
+  stop` é aceito.
+- `src/utils/settings/settings.ts` — `localSettings` não conta para o opt-in
+  nem para regras do classificador.
+- `src/services/analytics/growthbook.ts` e `scripts/no-telemetry-plugin.ts` —
+  `jsonlTranscript: true`; overrides de objeto mesclam; arquivo em
+  `~/.verboo/feature-flags.json`.
+
 #### Mensagens reescritas
 - `src/utils/providerValidation.ts` (3 ocorrências)
 - `src/services/api/withRetry.ts`

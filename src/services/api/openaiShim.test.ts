@@ -9082,3 +9082,57 @@ test.each([
 
   expect(events.filter((e) => e.type === 'message_stop')).toHaveLength(0)
 })
+
+// VERBOO-BRAND: OpenAI-compatible servers often finish a forced function call
+// with finish_reason "stop". The auto mode classifier forces one tool; its
+// answer must be committed, not discarded as an unfinished call.
+test.each([
+  { forced: true, callName: 'classify_result', committed: true },
+  { forced: false, callName: 'classify_result', committed: false },
+  { forced: true, callName: 'other_tool', committed: false },
+])('forced tool call finished with "stop" (forced=$forced, call=$callName)', async ({ forced, callName, committed }) => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'http://forced-tool.test/v1'
+  process.env.OPENAI_API_KEY = 'test-key'
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({
+      id: 'chatcmpl-forced',
+      model: 'some-model',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: { name: callName, arguments: '{"shouldBlock":false,"reason":"ok"}' },
+          }],
+        },
+        finish_reason: 'stop',
+      }],
+    }), { headers: { 'Content-Type': 'application/json' } })) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  const tool = (name: string) => ({
+    name,
+    description: `${name} tool`,
+    input_schema: { type: 'object', properties: { shouldBlock: { type: 'boolean' }, reason: { type: 'string' } } },
+  })
+  const result = await client.beta.messages.create({
+    model: 'some-model',
+    messages: [{ role: 'user', content: 'classify' }],
+    max_tokens: 64,
+    stream: false,
+    tools: [tool('classify_result'), tool('other_tool')],
+    ...(forced ? { tool_choice: { type: 'tool', name: 'classify_result' } } : {}),
+  }) as { content: Array<{ type: string; name?: string }>; stop_reason: string }
+
+  const toolUses = result.content.filter(block => block.type === 'tool_use')
+  if (committed) {
+    expect(toolUses.map(block => block.name)).toEqual(['classify_result'])
+    expect(result.stop_reason).toBe('tool_use')
+  } else {
+    expect(toolUses).toEqual([])
+    expect(result.stop_reason).toBe('end_turn')
+  }
+})

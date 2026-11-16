@@ -30,6 +30,8 @@ export const VERBOO_AGENT_MODEL_ROLES = [
   'review',
   'coding',
   'testing',
+  // VERBOO-BRAND: model for the auto mode safety classifier.
+  'classifier',
 ] as const
 
 export type VerbooAgentModelRole = (typeof VERBOO_AGENT_MODEL_ROLES)[number]

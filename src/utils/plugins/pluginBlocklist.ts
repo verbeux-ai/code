@@ -21,6 +21,7 @@ import {
   getFlaggedPlugins,
   loadFlaggedPlugins,
 } from './pluginFlagging.js'
+import { getSkippedMarketplaceEntries } from './schemas.js'
 import type { InstalledPluginsFileV2, PluginMarketplace } from './schemas.js'
 
 /**
@@ -83,8 +84,42 @@ export async function detectAndUninstallDelistedPlugins(): Promise<string[]> {
         marketplace,
         marketplaceName,
       )
+      // A plugin whose marketplace entry failed validation is missing from the
+      // parsed manifest, but the marketplace didn't remove it — dropping the
+      // entry is our fallback, so never treat it as a removal.
+      const skippedEntries = getSkippedMarketplaceEntries(marketplace)
+
+      // If any dropped entry has no usable name, we cannot tell which plugin it
+      // described: it could be the very plugin that now looks delisted. Deleting
+      // a user's plugin is irreversible, so fail closed for this marketplace and
+      // let a later parse (one without drops) decide. Entries that kept a usable
+      // name are matched individually below, so delisting still works for the
+      // common case.
+      const unidentifiable = skippedEntries.filter(entry => !entry.identifiable)
+      if (unidentifiable.length > 0) {
+        if (delisted.length > 0) {
+          logForDebugging(
+            `Not enforcing delisting for "${marketplaceName}": ${unidentifiable.length} ` +
+              `dropped entr${unidentifiable.length === 1 ? 'y has' : 'ies have'} no usable ` +
+              `name, so a removal cannot be told apart from a parse failure`,
+            { level: 'warn' },
+          )
+        }
+        continue
+      }
+
+      const skipped = new Set(skippedEntries.map(entry => entry.name))
+      const suffix = `@${marketplaceName}`
 
       for (const pluginId of delisted) {
+        const pluginName = pluginId.slice(0, -suffix.length)
+        if (skipped.has(pluginName)) {
+          logForDebugging(
+            `Not uninstalling ${pluginId}: its marketplace entry is invalid, not removed`,
+            { level: 'warn' },
+          )
+          continue
+        }
         if (pluginId in alreadyFlagged) continue
 
         // Skip managed-only plugins — enterprise admin should handle those

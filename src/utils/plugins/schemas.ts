@@ -1257,10 +1257,9 @@ export function isLocalMarketplaceSource(
  * When strict=false: Plugin.json is optional, marketplace provides full manifest
  *
  * Unknown fields are silently stripped (zod default) rather than rejected.
- * Marketplace entries are validated as an array — if one entry rejected
- * unknown keys, the whole marketplace.json would fail to parse and ALL
- * plugins from that marketplace would become unavailable. Stripping keeps
- * the blast radius to zero for custom/future fields.
+ * Stripping keeps custom/future fields from turning into a validation failure;
+ * combined with the per-entry validation in PluginMarketplaceSchema, an entry
+ * that still fails costs only itself rather than the whole marketplace.
  */
 export const PluginMarketplaceEntrySchema = lazySchema(() =>
   PluginManifestSchema()
@@ -1296,6 +1295,130 @@ export const PluginMarketplaceEntrySchema = lazySchema(() =>
 )
 
 /**
+ * A plugin entry that failed validation and was dropped from a manifest.
+ */
+export type SkippedMarketplaceEntry = {
+  /** The entry's `name` (control characters stripped), or `plugins[N]`. */
+  name: string
+  /**
+   * Whether `name` is a usable plugin name. When false the entry is a
+   * positional placeholder or a name the schema rejected, so there is no way to
+   * tell which plugin it described — delisting enforcement must not treat
+   * anything from that marketplace as removed. See pluginBlocklist.ts.
+   */
+  identifiable: boolean
+  /** Why the entry was dropped, in the same shape as a schema error. */
+  reason: string
+}
+
+/**
+ * Same shape as the plugin-name half of PluginIdSchema. Used only to decide
+ * whether a dropped entry's name can be matched against an installed plugin.
+ */
+const USABLE_PLUGIN_NAME = /^[a-z0-9][-a-z0-9._]*$/i
+
+/**
+ * Strip control characters from a string taken out of a manifest.
+ *
+ * Used for values that failed validation (an entry's `name`) and for values that
+ * passed it but aren't checked for control characters (`marketplace.name`).
+ * Either way the text comes from a third-party document: an ESC sequence would
+ * otherwise reach a TUI warning verbatim, and a newline could forge a log line.
+ */
+export function sanitizeManifestText(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
+}
+
+/**
+ * Entries dropped while parsing a manifest, keyed by the `plugins` array they
+ * were dropped from.
+ *
+ * Keyed by the array rather than by marketplace name on purpose: callers that
+ * enforce delisting resolve marketplaces by their config key in
+ * known_marketplaces.json, which can diverge from the name a manifest declares
+ * (hand-edited or seed-managed config, upstream self-rename). A name lookup
+ * would silently miss and let a dropped entry be treated as a deletion.
+ *
+ * The trade-off is that a caller which copies the marketplace object and
+ * replaces `plugins` loses the record silently — nothing does that today, and a
+ * caller that did would let a dropped entry be read as a removal, because the
+ * delisting guard can only fail closed on drops it can still see.
+ */
+const skippedEntriesByPluginsArray = new WeakMap<
+  readonly PluginMarketplaceEntry[],
+  readonly SkippedMarketplaceEntry[]
+>()
+
+const NO_SKIPPED_ENTRIES: readonly SkippedMarketplaceEntry[] = []
+
+/**
+ * Plugin entries that were dropped from a marketplace manifest as invalid.
+ * Empty for marketplaces that parsed cleanly.
+ */
+export function getSkippedMarketplaceEntries(
+  marketplace: Pick<PluginMarketplace, 'plugins'>,
+): readonly SkippedMarketplaceEntry[] {
+  return (
+    skippedEntriesByPluginsArray.get(marketplace.plugins) ?? NO_SKIPPED_ENTRIES
+  )
+}
+
+/**
+ * Schema for the `plugins` array of a marketplace manifest.
+ *
+ * Entries are validated one at a time and unparseable ones are dropped rather
+ * than failing the array. A marketplace is a single document owned by someone
+ * else, and one entry we can't handle — a source type this build doesn't know
+ * yet (e.g. `command`), a field that stopped matching the schema — must not
+ * take the whole marketplace down. When the array fails, every plugin installed
+ * from that marketplace resolves to `plugin-not-found` and disappears from the
+ * session, which is a much worse failure than losing one entry.
+ *
+ * Dropped entries are recorded so the drop is observable: callers log them, and
+ * delisting enforcement uses them to tell "the marketplace removed this plugin"
+ * apart from "we couldn't parse its entry".
+ *
+ * Callers that surface authoring feedback (`verboo plugin validate`) rebuild the
+ * array with strict entries, so typos in a manifest under development are still
+ * reported.
+ */
+const PluginMarketplaceEntriesSchema = lazySchema(() =>
+  z
+    .array(z.unknown())
+    .describe('Collection of available plugins in this marketplace')
+    .transform(entries => {
+      const plugins: PluginMarketplaceEntry[] = []
+      const skipped: SkippedMarketplaceEntry[] = []
+
+      entries.forEach((entry, index) => {
+        const parsed = PluginMarketplaceEntrySchema().safeParse(entry)
+        if (parsed.success) {
+          plugins.push(parsed.data)
+          return
+        }
+        const rawName =
+          entry && typeof entry === 'object'
+            ? (entry as { name?: unknown }).name
+            : undefined
+        const name = typeof rawName === 'string' ? sanitizeManifestText(rawName) : ''
+        skipped.push({
+          name: name || `plugins[${index}]`,
+          identifiable: name !== '' && USABLE_PLUGIN_NAME.test(name),
+          reason: parsed.error.issues
+            .map(issue => `${issue.path.join('.') || 'entry'}: ${issue.message}`)
+            .join(', '),
+        })
+      })
+
+      if (skipped.length > 0) {
+        skippedEntriesByPluginsArray.set(plugins, skipped)
+      }
+      return plugins
+    }),
+)
+
+/**
  * Schema for plugin marketplace configuration
  *
  * Defines the structure for curated collections of plugins that can
@@ -1304,12 +1427,15 @@ export const PluginMarketplaceEntrySchema = lazySchema(() =>
 export const PluginMarketplaceSchema = lazySchema(() =>
   z.object({
     name: MarketplaceNameSchema(),
-    owner: PluginAuthorSchema().describe(
-      'Marketplace maintainer or curator information',
-    ),
-    plugins: z
-      .array(PluginMarketplaceEntrySchema())
-      .describe('Collection of available plugins in this marketplace'),
+    // Display-only metadata: nothing reads it, so a marketplace that drops or
+    // renames the field must not cost the user every plugin. Malformed values
+    // degrade to `undefined` rather than failing the document — same blast
+    // radius rule as the per-entry validation below.
+    owner: PluginAuthorSchema()
+      .optional()
+      .catch(undefined)
+      .describe('Marketplace maintainer or curator information (display only)'),
+    plugins: PluginMarketplaceEntriesSchema(),
     forceRemoveDeletedPlugins: z
       .boolean()
       .optional()
@@ -1317,15 +1443,39 @@ export const PluginMarketplaceSchema = lazySchema(() =>
         'When true, plugins removed from this marketplace will be automatically uninstalled and flagged for users',
       ),
     metadata: z
-      .object({
-        pluginRoot: z
-          .string()
-          .optional()
-          .describe('Base path for relative plugin sources'),
-        version: z.string().optional().describe('Marketplace version'),
-        description: z.string().optional().describe('Marketplace description'),
-      })
-      .optional()
+      // The container itself is display-only; `"metadata": null` or a stray
+      // string is an ordinary encoding of "no metadata" and must not cost the
+      // user every plugin. Non-objects become "absent" before the object schema
+      // runs, so a malformed `pluginRoot` *inside* a real object is still
+      // reported (plain `.catch()` on the object would swallow that too).
+      .preprocess(
+        value =>
+          value !== null && typeof value === 'object' && !Array.isArray(value)
+            ? value
+            : undefined,
+        z
+          .object({
+            // Functional: resolves relative plugin sources. A malformed value
+            // must be reported rather than ignored, or installs break silently.
+            pluginRoot: z
+              .string()
+              .optional()
+              .describe('Base path for relative plugin sources'),
+            // Display-only, like `owner`: a bad value must not cost the user
+            // every plugin in the marketplace.
+            version: z
+              .string()
+              .optional()
+              .catch(undefined)
+              .describe('Marketplace version'),
+            description: z
+              .string()
+              .optional()
+              .catch(undefined)
+              .describe('Marketplace description'),
+          })
+          .optional(),
+      )
       .describe('Optional marketplace metadata'),
     allowCrossMarketplaceDependenciesOn: z
       .array(z.string())

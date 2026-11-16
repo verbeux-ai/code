@@ -4,8 +4,14 @@ import { logError } from '../log.js'
 import { getSettingsForSource } from '../settings/settings.js'
 import { plural } from '../stringUtils.js'
 import { checkGitAvailable } from './gitAvailability.js'
+import { loadInstalledPluginsV2 } from './installedPluginsManager.js'
 import { getMarketplace } from './marketplaceManager.js'
-import type { KnownMarketplace, MarketplaceSource } from './schemas.js'
+import {
+  getSkippedMarketplaceEntries,
+  type InstalledPluginsFileV2,
+  type KnownMarketplace,
+  type MarketplaceSource,
+} from './schemas.js'
 
 /**
  * Format plugin failure details for user display
@@ -65,6 +71,19 @@ export function createPluginId(
 }
 
 /**
+ * Dropped entries, grouped by marketplace.
+ *
+ * `entries` are the drops whose name we could read, so they can be matched
+ * against installed plugins. `unidentifiable` counts the drops that lost their
+ * name — we know an entry was skipped, not which plugin it described.
+ */
+type SkippedEntries = Array<{
+  name: string
+  entries: string[]
+  unidentifiable: number
+}>
+
+/**
  * Load marketplaces with graceful degradation for individual failures.
  * Blocked marketplaces (per enterprise policy) are excluded from the results.
  */
@@ -77,6 +96,17 @@ export async function loadMarketplacesWithGracefulDegradation(
     data: Awaited<ReturnType<typeof getMarketplace>> | null
   }>
   failures: Array<{ name: string; error: string }>
+  /**
+   * Entries each marketplace declared but this build could not parse.
+   * Not narrowed to installed plugins — that filter belongs to the warning,
+   * see `formatMarketplaceLoadingErrors`.
+   */
+  skippedEntries: SkippedEntries
+  /**
+   * The warning to show the user, if any. Computed here so every caller renders
+   * the same thing and none can forget to pass `skippedEntries` through.
+   */
+  warning: { type: 'warning' | 'error'; message: string } | null
 }> {
   const marketplaces: Array<{
     name: string
@@ -84,6 +114,7 @@ export async function loadMarketplacesWithGracefulDegradation(
     data: Awaited<ReturnType<typeof getMarketplace>> | null
   }> = []
   const failures: Array<{ name: string; error: string }> = []
+  const skippedEntries: SkippedEntries = []
 
   for (const [name, marketplaceConfig] of Object.entries(config)) {
     // Skip marketplaces blocked by enterprise policy
@@ -91,7 +122,9 @@ export async function loadMarketplacesWithGracefulDegradation(
       continue
     }
 
-    let data = null
+    // Annotated rather than inferred: `null` alone narrows later reads to
+    // `never`, which hides mistakes in how `data` is used below.
+    let data: Awaited<ReturnType<typeof getMarketplace>> | null = null
     try {
       data = await getMarketplace(name)
     } catch (err) {
@@ -103,6 +136,19 @@ export async function loadMarketplacesWithGracefulDegradation(
       logError(toError(err))
     }
 
+    if (data) {
+      const skipped = getSkippedMarketplaceEntries(data)
+      if (skipped.length > 0) {
+        skippedEntries.push({
+          name,
+          entries: skipped
+            .filter(entry => entry.identifiable)
+            .map(entry => entry.name),
+          unidentifiable: skipped.filter(entry => !entry.identifiable).length,
+        })
+      }
+    }
+
     marketplaces.push({
       name,
       config: marketplaceConfig,
@@ -110,7 +156,21 @@ export async function loadMarketplacesWithGracefulDegradation(
     })
   }
 
-  return { marketplaces, failures }
+  return {
+    marketplaces,
+    failures,
+    skippedEntries,
+    /**
+     * The warning to show the user, already formatted. Computed here so every
+     * caller renders the same thing and none can forget to pass the skipped
+     * entries through.
+     */
+    warning: formatMarketplaceLoadingErrors(
+      failures,
+      marketplaces.filter(m => m.data !== null).length,
+      skippedEntries,
+    ),
+  }
 }
 
 /**
@@ -119,9 +179,14 @@ export async function loadMarketplacesWithGracefulDegradation(
 export function formatMarketplaceLoadingErrors(
   failures: Array<{ name: string; error: string }>,
   successCount: number,
+  skippedEntries: SkippedEntries = [],
 ): { type: 'warning' | 'error'; message: string } | null {
+  const skippedMessage = formatSkippedEntries(
+    filterSkippedEntriesAffectingInstalledPlugins(skippedEntries),
+  )
+
   if (failures.length === 0) {
-    return null
+    return skippedMessage ? { type: 'warning', message: skippedMessage } : null
   }
 
   // If some marketplaces succeeded, show warning
@@ -130,7 +195,10 @@ export function formatMarketplaceLoadingErrors(
       failures.length === 1
         ? `Warning: Failed to load marketplace '${failures[0]!.name}': ${failures[0]!.error}`
         : `Warning: Failed to load ${failures.length} marketplaces: ${formatFailureNames(failures)}`
-    return { type: 'warning', message }
+    return {
+      type: 'warning',
+      message: skippedMessage ? `${message}. ${skippedMessage}` : message,
+    }
   }
 
   // All marketplaces failed - this is a critical error
@@ -138,6 +206,93 @@ export function formatMarketplaceLoadingErrors(
     type: 'error',
     message: `Failed to load all marketplaces. Errors: ${formatFailureErrors(failures)}`,
   }
+}
+
+/**
+ * Describe plugin entries a marketplace declared but this build couldn't parse.
+ *
+ * Without this the entries vanish silently: the marketplace still loads, so
+ * nothing looks broken, but the affected plugins report "not found".
+ */
+function formatSkippedEntries(
+  skippedEntries: SkippedEntries,
+): string | null {
+  const messages: string[] = []
+
+  for (const skipped of skippedEntries) {
+    if (skipped.entries.length > 0) {
+      messages.push(
+        `Warning: Skipped ${skipped.entries.length} unreadable plugin ` +
+          `entr${skipped.entries.length === 1 ? 'y' : 'ies'} in marketplace ` +
+          `'${skipped.name}': ${skipped.entries.join(', ')}`,
+      )
+    }
+    if (skipped.unidentifiable > 0) {
+      // The entry lost its name, so we can't say which plugin it was — only
+      // that an installed plugin from this marketplace may not load. Saying it
+      // is the difference between the user understanding the failure and filing
+      // a "plugin disappeared" ticket.
+      messages.push(
+        `Warning: Skipped ${skipped.unidentifiable} unreadable plugin ` +
+          `entr${skipped.unidentifiable === 1 ? 'y' : 'ies'} in marketplace ` +
+          `'${skipped.name}'; an installed plugin from it may not load`,
+      )
+    }
+  }
+
+  return messages.length > 0 ? messages.join('. ') : null
+}
+
+/**
+ * Narrow skipped entries to the ones that actually cost this user something.
+ *
+ * A marketplace can carry entries this build can't parse without the user
+ * noticing — the rest of the catalog loads, and an entry for a plugin they never
+ * installed is invisible. Warning about those on every `/plugin` open would be
+ * permanent noise nobody can act on: the entry won't start parsing until the
+ * client learns the source type, and the fix isn't the user's to make.
+ *
+ * An entry that matches an installed plugin is the opposite — that plugin just
+ * became "not found" in this session, and the warning is the only thing that
+ * explains why. Those stay, and they stay even though the plugin is installed
+ * from a manifest that no longer lists it (the delisting guard in
+ * pluginBlocklist.ts keeps it installed).
+ *
+ * A dropped entry that lost its name can't be matched, so it is reported at the
+ * marketplace level instead — but only when the user has *some* plugin installed
+ * from that marketplace, since otherwise it can't have cost them anything.
+ */
+function filterSkippedEntriesAffectingInstalledPlugins(
+  skippedEntries: SkippedEntries,
+): SkippedEntries {
+  if (skippedEntries.length === 0) {
+    return skippedEntries
+  }
+
+  let installedPluginIds: Set<string>
+  try {
+    installedPluginIds = new Set(Object.keys(loadInstalledPluginsV2().plugins))
+  } catch {
+    // Can't tell what's installed — say nothing rather than warn about
+    // entries that may not affect anyone.
+    return []
+  }
+
+  return skippedEntries
+    .map(skipped => {
+      const suffix = `@${skipped.name}`
+      const hasInstalledFromMarketplace = [...installedPluginIds].some(
+        pluginId => pluginId.endsWith(suffix),
+      )
+      return {
+        name: skipped.name,
+        entries: skipped.entries.filter(entry =>
+          installedPluginIds.has(`${entry}${suffix}`),
+        ),
+        unidentifiable: hasInstalledFromMarketplace ? skipped.unidentifiable : 0,
+      }
+    })
+    .filter(skipped => skipped.entries.length > 0 || skipped.unidentifiable > 0)
 }
 
 function formatFailureNames(

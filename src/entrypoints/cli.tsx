@@ -436,6 +436,7 @@ async function main(): Promise<void> {
   // - auth <qualquer>: login, logout, status precisam funcionar offline.
   // - logout: alias top-level para `auth logout`.
   // - update: atualização do binário não precisa de sessão.
+  // - privacy: o próprio comando exige sessão para gravar, sem depender de licença ou termos.
   // - provider-accounts: protocolo versionado do desktop. capabilities é
   //   intencionalmente auth-free; os demais subcomandos devolvem envelope
   //   JSON verboo_auth_required (handler responsável pelo gate, não o
@@ -446,6 +447,7 @@ async function main(): Promise<void> {
     args[0] === 'auth' ||
     args[0] === 'logout' ||
     args[0] === 'update' ||
+    args[0] === 'privacy' ||
     args[0] === 'provider-accounts';
   if (isVerbooMode() && !skipsAuth) {
     const { ensureVerbooAuthenticated } = await import(

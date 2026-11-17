@@ -46,6 +46,7 @@ function createToolUseContext(): ToolUseContext {
 describe('query empty model response recovery', () => {
   test('retries once, then returns a visible API error instead of silently completing', async () => {
     let callCount = 0
+    let observed = 0
     const deps = {
       callModel: async function* () {
         callCount++
@@ -92,12 +93,14 @@ describe('query empty model response recovery', () => {
       canUseTool: async () => ({ behavior: 'allow' }) as never,
       toolUseContext: createToolUseContext(),
       querySource: 'repl_main_thread',
+      onProductResponse: () => { observed++ },
       deps,
     })) {
       messages.push(message)
     }
 
     expect(callCount).toBe(2)
+    expect(observed).toBe(0)
     const visibleError = messages.find(
       (message: any) =>
         message?.type === 'assistant' && message.isApiErrorMessage === true,
@@ -107,4 +110,26 @@ describe('query empty model response recovery', () => {
       'no assistant response after 2 attempts',
     )
   })
+  test('observes a complete response without passing its text to the callback', async () => {
+    let observations = 0
+    const deps = {
+      callModel: async function* () {
+        yield { type: 'assistant', uuid: 'fixture-response', isApiErrorMessage: false, message: {
+          id: 'message-fixture', role: 'assistant', model: 'fixture-model', stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'private response' }], usage: { input_tokens: 1, output_tokens: 1 },
+        } }
+      },
+      microcompact: async messages => ({ messages }),
+      autocompact: async () => ({ wasCompacted: false }),
+      uuid: () => 'fixture',
+    } as unknown as QueryDeps
+    for await (const _message of query({
+      messages: [{ type: 'user', message: { role: 'user', content: 'private prompt' } }],
+      systemPrompt: [] as unknown as SystemPrompt, userContext: {}, systemContext: {},
+      canUseTool: async () => ({ behavior: 'allow' }) as never, toolUseContext: createToolUseContext(),
+      querySource: 'repl_main_thread', onProductResponse: (...args: unknown[]) => { expect(args).toEqual([]); observations++ }, deps,
+    })) { /* Consume the real query loop. */ }
+    expect(observations).toBe(1)
+  })
+
 })

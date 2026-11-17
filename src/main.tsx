@@ -4495,6 +4495,36 @@ async function run(): Promise<CommanderCommand> {
   });
   // END internal-only
 
+  // Product usage is optional and independent of advertising preferences.
+  program.command('privacy').description('View or change optional product analytics').option('--allow', 'Allow product usage metrics').option('--deny', 'Decline product usage metrics').action(async (options: { allow?: boolean; deny?: boolean }) => {
+    let exitCode = 0;
+    let text = '';
+    if (options.allow && options.deny) {
+      text = 'Choose either --allow or --deny.\n';
+      exitCode = 2;
+    } else {
+      try {
+        const { productAnalytics } = await import('./services/productAnalytics/runtime.js');
+        const analytics = productAnalytics();
+        const consent = options.allow ? await analytics.choose('granted') : options.deny ? await analytics.choose('denied') : await analytics.status();
+        if (!consent) text = 'Sign in to your Verboo account to view product analytics preferences.\n';
+        else if (!consent.enabled && !options.deny) text = 'Product analytics is currently unavailable.\n';
+        else {
+          const label = consent.decision === 'granted' ? 'allowed' : consent.decision === 'denied' ? 'declined' : 'not chosen';
+          text = `Product usage metrics: ${label}. Use verboo privacy --allow or --deny to change your choice. Prompts, responses, code, and credentials are not collected.\n`;
+        }
+      } catch {
+        text = 'Could not confirm the product privacy preference. Please try again.\n';
+        exitCode = 1;
+      }
+    }
+    const output = exitCode ? process.stderr : process.stdout;
+    await new Promise<void>(resolve => output.write(text, () => resolve()));
+    // Auxiliary startup handles can remain open; this command must terminate after flushing its result.
+    // eslint-disable-next-line custom-rules/no-process-exit
+    process.exit(exitCode);
+  });
+
   // Setup token command
   program.command('setup-token').description('Set up a long-lived authentication token (requires Verboo subscription)').action(async () => {
     const [{

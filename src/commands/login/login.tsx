@@ -3,6 +3,7 @@ import * as React from 'react'
 
 import { resetCostState } from '../../bootstrap/state.js'
 import { isVerbooMode } from '../../constants/oauth.js'
+import { captureInteractiveProductCheckpoint, observeInteractiveProductLogin, prepareInteractiveProductAnalytics } from '../../services/productAnalytics/runtime.js'
 import {
   markVerbooSessionValidated,
   preflightVerbooLogin,
@@ -13,6 +14,7 @@ import {
 } from '../../services/oauth/cliEntitlement.js'
 import { PurchaseFlowView } from '../../services/oauth/purchaseFlow.js'
 import { getClaudeAIOAuthTokensAsync } from '../../utils/auth.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import {
   clearTrustedDeviceToken,
   enrollTrustedDevice,
@@ -47,6 +49,7 @@ type LoginCompletion =
   | {
       type: 'ready'
       refreshed: boolean
+      oauthCompleted?: boolean
     }
   | {
       type: 'unavailable'
@@ -57,6 +60,8 @@ export async function call(
   onDone: LocalJSXCommandOnDone,
   context: LocalJSXCommandContext,
 ): Promise<React.ReactNode> {
+  if (isVerbooMode()) prepareInteractiveProductAnalytics()
+  const productCheckpoint = isVerbooMode() ? captureInteractiveProductCheckpoint() : undefined
   return (
     <Login
       onDone={async result => {
@@ -129,6 +134,11 @@ export async function call(
 
         if (isVerbooMode()) {
           markVerbooSessionValidated()
+          if (result.type === 'oauth' || (result.type === 'ready' && result.oauthCompleted)) {
+            const accountId = getGlobalConfig().oauthAccount?.accountUuid
+            const observedAt = Date.now()
+            if (accountId) observeInteractiveProductLogin(observedAt, accountId, productCheckpoint)
+          }
         }
 
         onDone(result.type === 'ready' ? 'Sessão renovada.' : 'Login successful')
@@ -144,6 +154,7 @@ export function Login(props: {
   const mainLoopModel = useMainLoopModel()
   const [preflightDone, setPreflightDone] = React.useState(!isVerbooMode())
   const [postLoginToken, setPostLoginToken] = React.useState<string | null>(null)
+  const pendingOAuth = React.useRef(false)
 
   React.useEffect(() => {
     if (!isVerbooMode()) return
@@ -205,6 +216,7 @@ export function Login(props: {
             return
           }
           if (!entitlement.allowed) {
+            pendingOAuth.current = result.type === 'oauth'
             setPostLoginToken(storedTokens.accessToken)
             return
           }
@@ -236,7 +248,7 @@ export function Login(props: {
         }
         if (entitlement.allowed) {
           markVerbooSessionValidated()
-          props.onDone({ type: 'ready', refreshed: true }, mainLoopModel)
+          props.onDone({ type: 'ready', refreshed: true, oauthCompleted: pendingOAuth.current }, mainLoopModel)
           return
         }
       }

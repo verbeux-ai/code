@@ -57,6 +57,7 @@
     "web:preview": "bun run --cwd web preview",
     "web:typecheck": "bun run --cwd web typecheck",
     "test": "bun test",
+    "test:product-privacy": "bun test src/services/productAnalytics/client.test.ts src/services/productAnalytics/eligibility.test.ts src/query/emptyResponse.integration.test.ts && node scripts/test-product-privacy-smoke.mjs",
     "test:isolated": "bun run scripts/run-tests-isolated.ts",
     "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage --max-concurrency=1 && bun run scripts/render-coverage-heatmap.ts",
     "test:coverage:ui": "bun run scripts/render-coverage-heatmap.ts",

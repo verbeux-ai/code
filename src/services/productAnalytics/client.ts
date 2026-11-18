@@ -11,8 +11,12 @@ type EventBase = { schemaVersion: 1; eventId: string; consentRevision: number; c
 type ResponseEvent = EventBase & { name: 'product_response_completed'; operationId: string;
   modality: 'verboo_gateway' | 'external'; outcome: 'completed'; durationMs: number }
 type LifecycleEvent = EventBase & { name: 'product_opened' | 'product_first_open_observed' | 'product_login_completed' }
-type Queued = ResponseEvent | LifecycleEvent
+export type ProductFeature = 'conversation' | 'model_switch' | 'tool' | 'browser' | 'mcp' | 'plan' | 'goal' | 'checkout'
+export type ProductFeatureOutcome = 'started' | 'completed' | 'failed' | 'cancelled'
+type FeatureEvent = EventBase & { name: 'product_feature_used'; operationId: string; feature: ProductFeature; outcome: ProductFeatureOutcome }
+type Queued = ResponseEvent | LifecycleEvent | FeatureEvent
 export type ProductTurn = { subjectId: string; consent: ProductConsent; startedAt: number; operationId: string; consentProof: string }
+export type ProductFeatureTurn = ProductTurn & { feature: ProductFeature }
 /** A server reference already received before an observed action began. */
 export type ProductCheckpoint = Readonly<{ order: bigint; serverTime: number; proof: string }> | undefined
 export type ProductClientOptions = { root: string; apiOrigin: string; appVersion: string; token: () => Promise<string | undefined>;
@@ -22,6 +26,7 @@ const hex64 = /^[a-f0-9]{64}$/
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const eventKeys = ['schemaVersion','eventId','name','consentRevision','consentProof','occurredAt','surface','os','appVersion','operationId','modality','outcome','durationMs'].sort().join(',')
 const lifecycleKeys = ['schemaVersion','eventId','name','consentRevision','consentProof','occurredAt','surface','os','appVersion'].sort().join(',')
+const featureKeys = ['schemaVersion','eventId','name','consentRevision','consentProof','occurredAt','surface','os','appVersion','operationId','feature','outcome'].sort().join(',')
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 
 function positiveOrder(value: unknown): bigint | undefined {
@@ -50,6 +55,9 @@ function validEvent(value: unknown): value is Queued {
     Number.isSafeInteger(e.consentRevision) && e.consentRevision > 0 && /^v1\.[1-9][0-9]{0,18}\.[a-f0-9]{64}$/.test(e.consentProof) && Number.isFinite(Date.parse(e.occurredAt)) && e.surface === 'cli' &&
     ['macos','windows','linux','other'].includes(e.os) && /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$/.test(e.appVersion)
   if (!common) return false
+  if (e.name === 'product_feature_used') return Object.keys(e).sort().join(',') === featureKeys && uuid.test(e.operationId) &&
+    ['conversation','model_switch','tool','browser','mcp','plan','goal','checkout'].includes(e.feature) &&
+    ['started','completed','failed','cancelled'].includes(e.outcome)
   if (e.name !== 'product_response_completed') return ['product_opened','product_first_open_observed','product_login_completed'].includes(e.name) && Object.keys(e).sort().join(',') === lifecycleKeys
   return Object.keys(e).sort().join(',') === eventKeys && uuid.test(e.operationId) &&
     ['verboo_gateway','external'].includes(e.modality) && e.outcome === 'completed' && Number.isSafeInteger(e.durationMs) && e.durationMs >= 0 && e.durationMs <= 604800000
@@ -237,6 +245,25 @@ export class ProductAnalyticsClient {
       modality, outcome: 'completed', durationMs: Math.min(604800000, Math.max(0, Math.trunc(occurredAt - turn.startedAt))) }
     await this.enqueue(turn.subjectId, event)
   }
+  /** Capture a feature action against a server reference frozen before it began. */
+  async beginFeature(feature: ProductFeature, localOperation: string, startedAt: number, expectedAccountId: string,
+    checkpoint: ProductCheckpoint): Promise<ProductFeatureTurn | undefined> {
+    const turn = await this.beginTurn(localOperation, startedAt, expectedAccountId, checkpoint)
+    return turn ? { ...turn, feature } : undefined
+  }
+  /** Queue one bounded feature outcome; retries preserve its original ID and bytes. */
+  async completeFeature(turn: ProductFeatureTurn, outcome: ProductFeatureOutcome, occurredAt = this.now()): Promise<void> {
+    if (!hex64.test(turn.subjectId) || !(await this.current(turn.subjectId)) || await this.pendingDenial(turn.subjectId)) return
+    const now = this.now()
+    if (!turn.consent.enabled || turn.consent.decision !== 'granted' || turn.consent.subjectId !== turn.subjectId ||
+      now >= Date.parse(turn.consent.expiresAt) || occurredAt < turn.startedAt || occurredAt > now + 300000 ||
+      turn.startedAt < Date.parse(turn.consent.decidedAt)) return
+    const event: FeatureEvent = { schemaVersion: 1, eventId: turn.operationId, name: 'product_feature_used',
+      consentRevision: turn.consent.revision, consentProof: turn.consentProof, occurredAt: new Date(occurredAt).toISOString(),
+      surface: 'cli', os: this.os, appVersion: this.options.appVersion, operationId: turn.operationId,
+      feature: turn.feature, outcome }
+    await this.enqueue(turn.subjectId, event)
+  }
   /** Observe an authenticated interactive opening only if consent was valid at that instant. */
   async observeOpen(occurredAt: number, expectedAccountId: string, checkpoint: ProductCheckpoint): Promise<void> {
     const turn = await this.beginTurn(randomUUID(), occurredAt, expectedAccountId, checkpoint)
@@ -327,7 +354,7 @@ export class ProductAnalyticsClient {
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         const legacy = value as { schemaVersion?: unknown; eventId?: unknown; name?: unknown; surface?: unknown; consentProof?: unknown }
         if (legacy.schemaVersion === 1 && legacy.eventId === name.slice(0, -5) && legacy.surface === 'cli' &&
-          ['product_opened', 'product_first_open_observed', 'product_login_completed', 'product_response_completed'].includes(String(legacy.name)) &&
+          ['product_opened', 'product_first_open_observed', 'product_login_completed', 'product_response_completed', 'product_feature_used'].includes(String(legacy.name)) &&
           !Object.hasOwn(legacy, 'consentProof')) {
           const release = await lock(dir, { stale: 10000, retries: { retries: 2, minTimeout: 20, maxTimeout: 80 } })
           try {

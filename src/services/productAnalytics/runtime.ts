@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { VERBOO_API_BASE_URL, isVerbooMode } from '../../constants/oauth.js'
 import { getCachedVerbooModels } from '../api/verbooModels.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { publicBuildVersion } from '../../utils/version.js'
 import { logForDebugging } from '../../utils/debug.js'
-import { ProductAnalyticsClient, type ProductCheckpoint } from './client.js'
+import { ProductAnalyticsClient, type ProductCheckpoint, type ProductFeature, type ProductFeatureOutcome } from './client.js'
 import { hasHumanRequest } from './eligibility.js'
 
 let client: ProductAnalyticsClient | undefined
@@ -79,4 +80,26 @@ export function prepareInteractiveProductTurn(messages: unknown, model: string, 
   startRetries(analytics)
   const turn = analytics.beginTurn(user.uuid, startedAt, accountId, checkpoint).catch(() => { failed(); return undefined })
   return occurredAt => { void turn.then(snapshot => snapshot && analytics.completeTurn(snapshot, modality, occurredAt)).catch(failed) }
+}
+
+/** Capture a bounded feature action before it runs; missing consent never delays the command. */
+export function prepareInteractiveProductFeature(feature: ProductFeature, accountId: string, startedAt = Date.now()):
+  ((outcome: ProductFeatureOutcome, occurredAt?: number) => void) | undefined {
+  if (!accountId || !process.stdin.isTTY || !process.stdout.isTTY) return undefined
+  try {
+    const analytics = productAnalytics()
+    const checkpoint = analytics.captureCheckpoint()
+    const failed = () => { logForDebugging('optional_product_analytics_unavailable', { level: 'debug' }) }
+    startRetries(analytics)
+    const turn = analytics.beginFeature(feature, randomUUID(), startedAt, accountId, checkpoint).catch(() => {
+      failed()
+      return undefined
+    })
+    return (outcome, occurredAt = Date.now()) => {
+      void turn.then(snapshot => snapshot && analytics.completeFeature(snapshot, outcome, occurredAt)).catch(failed)
+    }
+  } catch {
+    logForDebugging('optional_product_analytics_unavailable', { level: 'debug' })
+    return undefined
+  }
 }

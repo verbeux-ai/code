@@ -93,6 +93,27 @@ describe('CLI product analytics', () => {
     expect(Object.keys(sent).sort()).toEqual(['appVersion','consentRevision','consentProof','durationMs','eventId','modality','name','occurredAt','operationId','os','outcome','schemaVersion','surface'].sort())
   })
 
+  test('records only allowlisted feature outcomes and retries the identical event', async () => {
+    const f = await fixture()
+    await f.client.choose('granted')
+    const turn = (await f.client.beginFeature('goal', 'private-local-objective', Date.parse('2026-11-17T12:00:00Z'), userA,
+      f.client.captureCheckpoint()))!
+    f.setFailEvents(true)
+    await f.client.completeFeature(turn, 'completed')
+    await settle()
+    expect(f.events).toHaveLength(1)
+    const original = f.events[0]!.raw
+    const sent = JSON.parse(original)
+    expect(sent).toMatchObject({ name: 'product_feature_used', surface: 'cli', feature: 'goal', outcome: 'completed' })
+    expect(sent.eventId).toBe(sent.operationId)
+    expect(original).not.toContain('private-local-objective')
+    expect(Object.keys(sent).sort()).toEqual(['appVersion','consentRevision','consentProof','eventId','feature','name','occurredAt','operationId','os','outcome','schemaVersion','surface'].sort())
+    f.setFailEvents(false)
+    await f.client.flush()
+    expect(f.events).toHaveLength(2)
+    expect(f.events[1]!.raw).toBe(original)
+  })
+
   test('retains original bytes on failure and never borrows another account token', async () => {
     const f = await fixture()
     await f.client.choose('granted')

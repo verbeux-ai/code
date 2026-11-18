@@ -120,6 +120,13 @@ describe('CLI product analytics', () => {
     const modelEvent = JSON.parse(f.events[2]!.raw)
     expect(modelEvent).toMatchObject({ name: 'product_feature_used', feature: 'model_switch', outcome: 'failed' })
     expect(f.events[2]!.raw).not.toContain('private-model-id')
+
+    const planTurn = (await f.client.beginFeature('plan', 'private-plan-description', Date.parse('2026-11-17T12:00:00Z'), userA,
+      f.client.captureCheckpoint()))!
+    await f.client.completeFeature(planTurn, 'completed')
+    await settle()
+    expect(JSON.parse(f.events[3]!.raw)).toMatchObject({ name: 'product_feature_used', feature: 'plan', outcome: 'completed' })
+    expect(f.events[3]!.raw).not.toContain('private-plan-description')
   })
 
   test('retains original bytes on failure and never borrows another account token', async () => {

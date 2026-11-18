@@ -451,10 +451,11 @@ export async function installVerbooOAuthTokens(
   tokens: OAuthTokens,
 ): Promise<void> {
   const storage = getSecureStorage()
-  const storageData = storage.read() || {}
-  const updatedStorageData = { ...storageData }
-  delete updatedStorageData.verbooApiKey
-  storage.update(updatedStorageData)
+  const storageData = storage.read()
+  if (storageData && Object.prototype.hasOwnProperty.call(storageData, 'verbooApiKey')) {
+    Reflect.deleteProperty(storageData, 'verbooApiKey')
+    storage.update(storageData)
+  }
 
   const result = saveOAuthTokensIfNeeded(tokens)
   if (!result.success) {

@@ -25,7 +25,9 @@ async function fixture() {
   const events: Array<{ token: string; raw: string }> = []
   const primingHeaders: Headers[] = []
   const decisions = new Map([[subject(userA), { decision: 'unknown', revision: 0, decisionOrder: '0' }], [subject(userB), { decision: 'unknown', revision: 0, decisionOrder: '0' }]])
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: typeof globalThis.fetch = Object.assign(async (
+    input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+  ) => {
     const token = new Headers(init?.headers).get('Authorization')?.slice(7) ?? ''
     if (!token && String(input).endsWith('/product-consent')) {
       primingHeaders.push(new Headers(init?.headers))
@@ -54,7 +56,7 @@ async function fixture() {
     if (failEvents) throw new Error('offline')
     return Response.json({ data: { status: 'accepted', receipt: { eventId: event.eventId,
       payloadSha256: wrongReceipt ? 'f'.repeat(64) : createHash('sha256').update(raw).digest('hex') } } }, { status: 202 })
-  }
+  }, { preconnect: () => undefined })
   const newClient = () => new ProductAnalyticsClient({ root, apiOrigin: 'http://127.0.0.1:1234', appVersion: '1.2.3', token: async () => jwt(user), fetch, now: () => now, os: 'linux' })
   const client = newClient()
   return { root, client, newClient, events, primingHeaders, decisions, setUser: (v: string) => { user = v }, setFailEvents: (v: boolean) => { failEvents = v },
@@ -328,8 +330,8 @@ describe('CLI product analytics', () => {
 
   test('does not capture a proof whose embedded order differs from the reference', async () => {
     const f = await fixture()
-    const fetch = (async () => Response.json({ data: { serverTime: '2026-11-17T12:00:00Z', serverOrder: '11',
-      serverProof: `v1.12.${'a'.repeat(64)}` } })) as typeof globalThis.fetch
+    const fetch: typeof globalThis.fetch = Object.assign(async () => Response.json({ data: { serverTime: '2026-11-17T12:00:00Z', serverOrder: '11',
+      serverProof: `v1.12.${'a'.repeat(64)}` } }), { preconnect: () => undefined })
     const client = new ProductAnalyticsClient({ root: f.root, apiOrigin: 'http://127.0.0.1:1234', appVersion: '1.2.3',
       token: async () => undefined, fetch })
     await client.primeCheckpoint()

@@ -127,6 +127,17 @@ describe('CLI product analytics', () => {
     await settle()
     expect(JSON.parse(f.events[3]!.raw)).toMatchObject({ name: 'product_feature_used', feature: 'plan', outcome: 'completed' })
     expect(f.events[3]!.raw).not.toContain('private-plan-description')
+
+    for (const [index, feature] of (['tool', 'mcp'] as const).entries()) {
+      const privateToolDetails = `private-${feature}-name-and-arguments`
+      const toolTurn = (await f.client.beginFeature(feature, privateToolDetails, Date.parse('2026-11-17T12:00:00Z'), userA,
+        f.client.captureCheckpoint()))!
+      await f.client.completeFeature(toolTurn, 'completed')
+      await settle()
+      const event = f.events[4 + index]!.raw
+      expect(JSON.parse(event)).toMatchObject({ name: 'product_feature_used', feature, outcome: 'completed' })
+      expect(event).not.toContain(privateToolDetails)
+    }
   })
 
   test('retains original bytes on failure and never borrows another account token', async () => {

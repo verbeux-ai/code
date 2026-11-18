@@ -35,6 +35,8 @@ import {
   type ToolProgressData,
   type ToolUseContext,
 } from '../../Tool.js'
+import { prepareInteractiveProductFeature } from '../productAnalytics/runtime.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import type { BashToolInput } from '../../tools/BashTool/BashTool.js'
 import { startSpeculativeClassifierCheck } from '../../tools/BashTool/bashPermissions.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
@@ -270,6 +272,19 @@ function messageContainsToolResult(message: Message, toolUseId: string): boolean
   )
 }
 
+function messageContainsFailedToolResult(message: Message, toolUseId: string): boolean {
+  return (
+    message.type === 'user' &&
+    Array.isArray(message.message.content) &&
+    message.message.content.some(
+      block =>
+        block.type === 'tool_result' &&
+        block.tool_use_id === toolUseId &&
+        block.is_error === true,
+    )
+  )
+}
+
 function createMissingToolResultMessage(
   toolUseId: string,
   assistantMessage: AssistantMessage,
@@ -482,6 +497,8 @@ export async function* runToolUse(
 
   const toolInput = toolUse.input as { [key: string]: string }
   let hasTerminalToolResult = false
+  let featureOutcome: 'completed' | 'failed' | 'cancelled' = 'failed'
+  let observeTool: ((outcome: 'started' | 'completed' | 'failed' | 'cancelled') => void) | undefined
   try {
     if (toolUseContext.abortController.signal.aborted) {
       logEvent('tengu_tool_use_cancelled', {
@@ -521,6 +538,16 @@ export async function* runToolUse(
         }),
       }
       return
+    }
+
+    try {
+      const accountId = getGlobalConfig().oauthAccount?.accountUuid ?? ''
+      observeTool = prepareInteractiveProductFeature(
+        tool.isMcp || tool.name.startsWith('mcp__') ? 'mcp' : 'tool',
+        accountId,
+      )
+    } catch {
+      // Product analytics is optional and must never affect tool execution.
     }
 
     logForDebugging(
@@ -569,6 +596,9 @@ export async function* runToolUse(
     )) {
       if (messageContainsToolResult(update.message, toolUse.id)) {
         hasTerminalToolResult = true
+        featureOutcome = messageContainsFailedToolResult(update.message, toolUse.id)
+          ? 'failed'
+          : 'completed'
       }
       yield update
     }
@@ -602,6 +632,9 @@ export async function* runToolUse(
         }),
       }
     }
+  } finally {
+    if (!hasTerminalToolResult && toolUseContext.abortController.signal.aborted) featureOutcome = 'cancelled'
+    observeTool?.(featureOutcome)
   }
 }
 

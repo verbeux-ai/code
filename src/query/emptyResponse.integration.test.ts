@@ -1,8 +1,14 @@
-import { describe, expect, test } from 'bun:test'
-import { getEmptyToolPermissionContext, type ToolUseContext } from '../Tool.js'
-import { query } from '../query.js'
+import { afterAll, describe, expect, mock, test } from 'bun:test'
+import type { ToolUseContext } from '../Tool.js'
 import type { SystemPrompt } from '../utils/systemPromptType.js'
 import type { QueryDeps } from './deps.js'
+
+// Open-source checkouts omit feature-gated modules that production builds stub.
+// This integration test covers response observation, which does not need them.
+mock.module('bun:bundle', () => ({ feature: () => false }))
+const { getEmptyToolPermissionContext } = await import('../Tool.js')
+const { query } = await import('../query.js')
+afterAll(() => mock.restore())
 
 function createToolUseContext(): ToolUseContext {
   return {

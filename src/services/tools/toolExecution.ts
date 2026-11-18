@@ -633,7 +633,7 @@ export async function* runToolUse(
       }
     }
   } finally {
-    if (!hasTerminalToolResult && toolUseContext.abortController.signal.aborted) featureOutcome = 'cancelled'
+    if (featureOutcome !== 'completed' && toolUseContext.abortController.signal.aborted) featureOutcome = 'cancelled'
     observeTool?.(featureOutcome)
   }
 }

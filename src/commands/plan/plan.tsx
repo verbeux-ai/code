@@ -11,6 +11,17 @@ import { prepareContextForPlanMode } from '../../utils/permissions/permissionSet
 import { getPlan, getPlanFilePath } from '../../utils/plans.js';
 import { editFileInEditor } from '../../utils/promptEditor.js';
 import { renderToString } from '../../utils/staticRender.js';
+import { prepareInteractiveProductFeature } from '../../services/productAnalytics/runtime.js';
+import { getGlobalConfig } from '../../utils/config.js';
+
+function preparePlanObservation() {
+  try {
+    return prepareInteractiveProductFeature('plan', getGlobalConfig().oauthAccount?.accountUuid ?? '');
+  } catch {
+    return undefined;
+  }
+}
+
 function PlanDisplay(t0) {
   const $ = _c(11);
   const {
@@ -71,6 +82,7 @@ export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXComma
 
   // If not in plan mode, enable it
   if (currentMode !== 'plan') {
+    const observePlan = preparePlanObservation();
     handlePlanModeTransition(currentMode, 'plan');
     setAppState(prev => ({
       ...prev,
@@ -80,6 +92,7 @@ export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXComma
         destination: 'session'
       })
     }));
+    observePlan?.('completed');
     const description = args.trim();
     if (description && description !== 'open') {
       onDone('Enabled plan mode', {

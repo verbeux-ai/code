@@ -1,3 +1,4 @@
+import { hasCompletedResponse } from './services/productAnalytics/eligibility.js'
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import type {
   ToolResultBlockParam,
@@ -213,6 +214,8 @@ export type QueryParams = {
   toolUseContext: ToolUseContext
   fallbackModel?: string
   querySource: QuerySource
+  /** Called only for a successful, nonempty final response; no text crosses this seam. */
+  onProductResponse?: () => void
   maxOutputTokensOverride?: number
   maxTurns?: number
   /** Optional mutable state shared across an agent's foreground/background lifecycle. */
@@ -1744,6 +1747,9 @@ async function* queryLoop(
         )
       }
 
+      if (!toolUseContext.abortController.signal.aborted && hasCompletedResponse(lastMessage)) {
+        try { params.onProductResponse?.() } catch { /* Optional analytics never interrupts a turn. */ }
+      }
       return { reason: 'completed' }
     }
 

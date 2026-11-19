@@ -39,6 +39,18 @@ To log in manually at any time:
 verboo /login
 ```
 
+## Product usage privacy
+
+Product usage metrics are optional and remain off until you explicitly allow them. The choice belongs to your Verboo account and is separate from advertising. View or change it without starting a coding session:
+
+```bash
+verboo privacy
+verboo privacy --allow
+verboo privacy --deny
+```
+
+The authenticated interactive CLI can record openings, the first opening observed after permission on that installation and account, completed interactive OAuth logins, and whether a human request received a completed, nonempty response through the Verboo gateway or an external provider. It does not send prompts, answers, source code, file paths, model names, or credentials as analytics properties. Automated and SDK runs are excluded. Standalone `verboo auth login` is not included in the login observation. An offline refusal blocks local delivery immediately and is synchronized when the account is reachable. Events queued under a revoked choice are not revived by a later grant.
+
 ## What Works
 
 - **Tool-driven coding workflows**: Bash, file read/write/edit, grep, glob, agents, tasks, MCP, and slash commands

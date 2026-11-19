@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { link, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { lock } from '../../utils/lockfile.js'
+import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
 
 type Decision = 'unknown' | 'granted' | 'denied'
 export type ProductConsent = { subjectId: string; decision: Decision; revision: number; policyVersion: 1; decidedAt: string; expiresAt: string; enabled: boolean; decisionOrder?: string }
@@ -140,16 +141,19 @@ export class ProductAnalyticsClient {
   }
   private async request(actor: { token: string; subject: string }, method: 'GET' | 'PUT', body?: unknown): Promise<ProductConsent> {
     if (!(await this.current(actor.subject))) throw new Error('identity_changed')
-    const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-consent', {
-      method, signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${actor.token}`, 'Content-Type': 'application/json' },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    })
-    if (!response.ok || !(await this.current(actor.subject))) throw new Error('consent_unavailable')
-    const result: unknown = await response.json()
-    const value = (result as { data?: unknown })?.data
-    if (!validConsent(value, actor.subject)) throw new Error('invalid_consent')
-    this.rememberReference(value)
-    return value
+    const timeout = createCombinedAbortSignal(undefined, { timeoutMs: 5000 })
+    try {
+      const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-consent', {
+        method, signal: timeout.signal, headers: { Authorization: `Bearer ${actor.token}`, 'Content-Type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+      if (!response.ok || !(await this.current(actor.subject))) throw new Error('consent_unavailable')
+      const result: unknown = await response.json()
+      const value = (result as { data?: unknown })?.data
+      if (!validConsent(value, actor.subject)) throw new Error('invalid_consent')
+      this.rememberReference(value)
+      return value
+    } finally { timeout.cleanup() }
   }
   private rememberReference(value: unknown): void {
     const candidate = (value as { serverTime?: unknown; serverOrder?: unknown; serverProof?: unknown })?.serverTime
@@ -166,13 +170,16 @@ export class ProductAnalyticsClient {
   captureCheckpoint(): ProductCheckpoint { return this.reference }
   /** Obtain a server reference without requiring an account or enabling analytics. */
   async primeCheckpoint(): Promise<void> {
-    const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-consent', {
-      method: 'GET', signal: AbortSignal.timeout(5000),
-      headers: { 'X-Verboo-Analytics-Scope': randomBytes(32).toString('hex') },
-    })
-    if (!response.ok) return
-    const result: unknown = await response.json()
-    this.rememberReference((result as { data?: unknown })?.data)
+    const timeout = createCombinedAbortSignal(undefined, { timeoutMs: 5000 })
+    try {
+      const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-consent', {
+        method: 'GET', signal: timeout.signal,
+        headers: { 'X-Verboo-Analytics-Scope': randomBytes(32).toString('hex') },
+      })
+      if (!response.ok) return
+      const result: unknown = await response.json()
+      this.rememberReference((result as { data?: unknown })?.data)
+    } finally { timeout.cleanup() }
   }
   /** Read the current account preference. A pending local refusal is applied first. */
   async status(): Promise<ProductConsent | undefined> {
@@ -374,14 +381,17 @@ export class ProductAnalyticsClient {
       try {
         const token = await this.current(actor.subject)
         if (!token) return
-        const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-events', { method: 'POST',
-          signal: AbortSignal.timeout(8000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: raw })
-        if (response.status !== 202 || !(await this.current(actor.subject))) continue
-        const receipt = (await response.json() as { data?: { status?: string; receipt?: { eventId?: string; payloadSha256?: string } } }).data
-        if (receipt?.status === 'accepted' && receipt.receipt?.eventId === value.eventId && receipt.receipt.payloadSha256 === sha(raw)) {
-          // Removal must still match the bytes acknowledged by the receiver.
-          if (await readFile(join(dir, name), 'utf8').catch(() => '') === raw) await unlink(join(dir, name)).catch(() => {})
-        }
+        const timeout = createCombinedAbortSignal(undefined, { timeoutMs: 8000 })
+        try {
+          const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-events', { method: 'POST',
+            signal: timeout.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: raw })
+          if (response.status !== 202 || !(await this.current(actor.subject))) continue
+          const receipt = (await response.json() as { data?: { status?: string; receipt?: { eventId?: string; payloadSha256?: string } } }).data
+          if (receipt?.status === 'accepted' && receipt.receipt?.eventId === value.eventId && receipt.receipt.payloadSha256 === sha(raw)) {
+            // Removal must still match the bytes acknowledged by the receiver.
+            if (await readFile(join(dir, name), 'utf8').catch(() => '') === raw) await unlink(join(dir, name)).catch(() => {})
+          }
+        } finally { timeout.cleanup() }
       } catch { /* Original bytes stay queued for a later retry. */ }
     }
   }

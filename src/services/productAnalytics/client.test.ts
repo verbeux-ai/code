@@ -333,6 +333,61 @@ describe('CLI product analytics', () => {
     expect(f.events[0]!.installation).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  test('independent CLI processes share one installation secret', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'verboo-cli-product-processes-'))
+    roots.push(root)
+    const entry = new URL('./client.ts', import.meta.url).href
+    const worker = `
+      import { ProductAnalyticsClient } from ${JSON.stringify(entry)}
+      import { createHash } from 'node:crypto'
+      import { join } from 'node:path'
+      const [root, user] = process.argv.slice(1)
+      const token = 'header.' + Buffer.from(JSON.stringify({ sub: user })).toString('base64url') + '.signature'
+      const subject = createHash('sha256').update('user:' + user).digest('hex')
+      const fetch = async (url, init = {}) => {
+        if (String(url).endsWith('/product-consent')) return Response.json({ data: {
+          subjectId: subject, decision: 'granted', revision: 1, policyVersion: 1,
+          decidedAt: '2020-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z', enabled: true,
+          decisionOrder: '1', serverTime: new Date().toISOString(), serverOrder: '2', serverProof: 'v1.2.' + 'a'.repeat(64),
+        } })
+        const raw = String(init.body), event = JSON.parse(raw)
+        console.log(new Headers(init.headers).get('X-Verboo-Analytics-Installation'))
+        return Response.json({ data: { status: 'accepted', receipt: { eventId: event.eventId,
+          payloadSha256: createHash('sha256').update(raw).digest('hex') } } }, { status: 202 })
+      }
+      const client = new ProductAnalyticsClient({ root, apiOrigin: 'http://127.0.0.1:1234', appVersion: '1.2.3', token: async () => token, fetch })
+      await client.status()
+      const turn = await client.beginFeature('goal', user, Date.now(), user, client.captureCheckpoint())
+      if (!turn) throw new Error('feature capture unavailable')
+      await Bun.write(join(root, 'ready-' + user), '')
+      while (!(await Bun.file(join(root, 'go')).exists())) await Bun.sleep(5)
+      await client.completeFeature(turn, 'completed')
+      await client.flush()
+    `
+    const children = [userA, userB].map(user => Bun.spawn([process.execPath, '-e', worker, root, user], { stdout: 'pipe', stderr: 'pipe' }))
+    const deadline = Date.now() + 10000
+    const timeout = setTimeout(() => { for (const child of children) if (child.exitCode === null) child.kill() }, 15000)
+    try {
+      while (!(await Promise.all([userA, userB].map(user => Bun.file(join(root, 'ready-' + user)).exists()))).every(Boolean)) {
+        if (Date.now() >= deadline || children.some(child => child.exitCode !== null)) throw new Error('CLI workers did not become ready')
+        await Bun.sleep(10)
+      }
+      await writeFile(join(root, 'go'), '')
+      const results = await Promise.all(children.map(async child => ({
+        code: await child.exited, out: await new Response(child.stdout).text(), err: await new Response(child.stderr).text(),
+      })))
+      for (const result of results) expect(result.code, result.err).toBe(0)
+      const installations = results.flatMap(result => result.out.trim().split('\n'))
+      expect(installations.length).toBeGreaterThanOrEqual(2)
+      expect(installations.every(value => /^[a-f0-9]{64}$/.test(value))).toBe(true)
+      expect(new Set(installations).size).toBe(1)
+    } finally {
+      clearTimeout(timeout)
+      for (const child of children) if (child.exitCode === null) child.kill()
+      await Promise.all(children.map(child => child.exited))
+    }
+  }, 20000)
+
   test('does not retroactively observe an open or login before the grant', async () => {
     const f = await fixture()
     const at = Date.parse('2026-11-17T12:00:00Z')

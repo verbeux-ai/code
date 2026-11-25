@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.15.44](https://github.com/verbeux-ai/code/compare/v0.15.43...v0.15.44) (2026-11-19)
+
+### Added
+
+* **product analytics:** opt-in CLI analytics records app opening, completed responses and feature categories only after explicit consent; prompts, responses and tool contents are excluded.
+
 ## [0.15.43](https://github.com/verbeux-ai/code/compare/v0.15.42...v0.15.43) (2026-11-16)
 
 ### Correções

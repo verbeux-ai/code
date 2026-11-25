@@ -1,4 +1,5 @@
 import { registerFreeTokenActivationPresenter } from '../services/oauth/freeTokenActivation.js';
+import { observeInteractiveProductOpen, prepareInteractiveProductTurn } from '../services/productAnalytics/runtime.js';
 import { FreeTokenActivationView } from '../components/FreeTokenActivation.js';
 import { c as _c } from "react-compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
@@ -602,6 +603,16 @@ export function REPL({
   thinkingConfig
 }: Props): React.ReactNode {
   const isRemoteSession = !!remoteSessionConfig;
+
+  // Only a locally owned interactive terminal is a CLI opening. The account
+  // and timestamp are captured before asynchronous consent lookup.
+  useEffect(() => {
+    if (disabled || isRemoteSession || directConnectConfig || sshSession || taskListId || getAgentName() || !process.stdin.isTTY || !process.stdout.isTTY) return;
+    const accountId = getGlobalConfig().oauthAccount?.accountUuid;
+    if (!accountId) return;
+    const observedAt = Date.now();
+    try { observeInteractiveProductOpen(observedAt, accountId); } catch {}
+  }, [disabled, isRemoteSession, directConnectConfig, sshSession, taskListId]);
 
   // Env-var gates hoisted to mount-time — isEnvTruthy does toLowerCase+trim+
   // includes, and these were on the render path (hot during PageUp spam).
@@ -2767,6 +2778,16 @@ export function REPL({
   }, [setMessages, setResponseLength, setStreamMode, setStreamingToolUses, setStreamingThinking, onStreamingText]);
   const onQueryImpl = useCallback(async (messagesIncludingNewMessages: MessageType[], newMessages: MessageType[], abortController: AbortController, shouldQuery: boolean, additionalAllowedTools: string[], mainLoopModelParam: string, effort?: EffortValue) => {
     if (abortController.signal.aborted || abortControllerRef.current !== abortController) return;
+    // Record turn start before any async setup; analytics runs independently of the conversation.
+    const productStartedAt = Date.now();
+    const initiatingAccount = getGlobalConfig().oauthAccount?.accountUuid;
+    let pendingProductTurn: ((occurredAt: number) => void) | undefined;
+    try {
+      if (shouldQuery && !getAgentName() && initiatingAccount) {
+        pendingProductTurn = prepareInteractiveProductTurn(newMessages, mainLoopModelParam, productStartedAt, initiatingAccount);
+      }
+    } catch {}
+    const onProductResponse = () => { try { pendingProductTurn?.(Date.now()); } catch {} };
     // Prepare IDE integration for new prompt. Read mcpClients fresh from
     // store — useManageMCPConnections may have populated it since the
     // render that captured this closure (same pattern as computeTools).
@@ -2923,7 +2944,8 @@ export function REPL({
       systemContext,
       canUseTool,
       toolUseContext,
-      querySource: getQuerySourceForREPL()
+      querySource: getQuerySourceForREPL(),
+      onProductResponse
     })) {
       if (!abortController.signal.aborted && abortControllerRef.current === abortController) onQueryEvent(event);
     }

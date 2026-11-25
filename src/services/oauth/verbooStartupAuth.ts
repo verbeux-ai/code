@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { captureInteractiveProductCheckpoint, observeInteractiveProductLogin, prepareInteractiveProductAnalytics } from '../productAnalytics/runtime.js'
 
 import { runOAuthLoginFlow } from '../../cli/handlers/auth.js'
 import {
@@ -17,7 +18,7 @@ import {
   saveOAuthTokensIfNeeded,
 } from '../../utils/auth.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
-import { saveGlobalConfig } from '../../utils/config.js'
+import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
@@ -450,10 +451,11 @@ export async function installVerbooOAuthTokens(
   tokens: OAuthTokens,
 ): Promise<void> {
   const storage = getSecureStorage()
-  const storageData = storage.read() || {}
-  const updatedStorageData = { ...storageData }
-  delete updatedStorageData.verbooApiKey
-  storage.update(updatedStorageData)
+  const storageData = storage.read()
+  if (storageData && Object.prototype.hasOwnProperty.call(storageData, 'verbooApiKey')) {
+    Reflect.deleteProperty(storageData, 'verbooApiKey')
+    storage.update(storageData)
+  }
 
   const result = saveOAuthTokensIfNeeded(tokens)
   if (!result.success) {
@@ -532,6 +534,8 @@ export async function ensureVerbooAuthenticated(
 ): Promise<void> {
   if (!isVerbooMode() || validated) return
 
+  prepareInteractiveProductAnalytics()
+
   const session = await validateVerbooSession()
 
   if (session.kind === 'ok') {
@@ -589,6 +593,7 @@ export async function ensureVerbooAuthenticated(
       process.stdout.write(`\nCaso o navegador não abra, acesse:\n${url}\n\n`)
     })
 
+  const productCheckpoint = captureInteractiveProductCheckpoint()
   const tokens = await runOAuthLoginFlow({
     loginWithClaudeAi: false,
     onAuthUrl,
@@ -621,4 +626,9 @@ export async function ensureVerbooAuthenticated(
   await primeCodexCatalogIfAuthenticated()
   await primeClaudeCatalogIfAuthenticated()
   validated = true
+  const accountId = getGlobalConfig().oauthAccount?.accountUuid
+  const observedAt = Date.now()
+  if (accountId && process.stdin.isTTY && process.stdout.isTTY) {
+    observeInteractiveProductLogin(observedAt, accountId, productCheckpoint)
+  }
 }

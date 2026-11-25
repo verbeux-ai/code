@@ -1,4 +1,6 @@
 import type { LocalJSXCommandCall } from '../../types/command.js'
+import { prepareInteractiveProductFeature } from '../../services/productAnalytics/runtime.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import {
   clearSessionGoal,
   createSessionGoal,
@@ -73,15 +75,18 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
       normalizedAction ?? '',
     )
   ) {
+    const observeGoal = prepareInteractiveProductFeature('goal', getGlobalConfig().oauthAccount?.accountUuid ?? '')
     let goal: SessionGoal | null
     try {
       goal = clearSessionGoal()
     } catch (error) {
+      observeGoal?.('failed')
       onDone(error instanceof Error ? error.message : String(error), {
         display: 'system',
       })
       return null
     }
+    if (goal) observeGoal?.('completed')
     onDone(
       goal
         ? `Goal cleared:\n${goal.objective}`
@@ -97,6 +102,7 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
       normalizedAction === 'pause' ||
       normalizedAction === 'resume')
   ) {
+    const observeGoal = prepareInteractiveProductFeature('goal', getGlobalConfig().oauthAccount?.accountUuid ?? '')
     const status =
       normalizedAction === 'complete'
         ? 'complete'
@@ -107,11 +113,13 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
     try {
       goal = setSessionGoalStatus(status)
     } catch (error) {
+      observeGoal?.('failed')
       onDone(error instanceof Error ? error.message : String(error), {
         display: 'system',
       })
       return null
     }
+    if (goal) observeGoal?.('completed')
     if (!goal) {
       const current = getSessionGoal()
       const message = current?.status === 'complete'
@@ -150,6 +158,7 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
     return null
   }
 
+  const observeGoal = prepareInteractiveProductFeature('goal', getGlobalConfig().oauthAccount?.accountUuid ?? '')
   try {
     const previous = getSessionGoal()
     const goal = previous
@@ -164,6 +173,7 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
         : sameObjective
           ? `Goal resumed:\n${goal.objective}`
           : `Goal replaced:\n${goal.objective}`
+    observeGoal?.('completed')
     onDone(result, {
       display: 'system',
       shouldQuery: true,
@@ -172,6 +182,7 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
       ],
     })
   } catch (error) {
+    observeGoal?.('failed')
     onDone(error instanceof Error ? error.message : String(error), {
       display: 'system',
     })

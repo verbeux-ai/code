@@ -26,6 +26,7 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../../services/analytics/index.js'
+import { prepareInteractiveProductFeature } from '../../services/productAnalytics/runtime.js'
 import { clearRouterRateLimit } from '../../services/routerRateLimit.js'
 import {
   fetchCodexModels,
@@ -76,6 +77,7 @@ import { getLocalOpenAICompatibleProviderLabel } from '../../utils/providerDisco
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { parseCustomHeadersEnv } from '../../utils/providerCustomHeaders.js'
 import { getClaudeAIOAuthTokensAsync } from '../../utils/auth.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import { readCodexCredentialsAsync } from '../../utils/codexCredentials.js'
 import { readClaudeNativeCredentialsAsync } from '../../utils/claudeNativeCredentials.js'
 import {
@@ -83,6 +85,19 @@ import {
   getActiveProviderProfile,
   setActiveOpenAIModelOptionsCache,
 } from '../../utils/providerProfiles.js'
+
+type ProductFeatureObserver = (outcome: 'started' | 'completed' | 'failed' | 'cancelled') => void
+
+function prepareModelSwitchObservation(): ProductFeatureObserver | undefined {
+  try {
+    return prepareInteractiveProductFeature(
+      'model_switch',
+      getGlobalConfig().oauthAccount?.accountUuid ?? '',
+    )
+  } catch {
+    return undefined
+  }
+}
 
 type ModelDiscoveryContext =
   | {
@@ -432,6 +447,11 @@ function ModelPickerWrapper({
       to_model: String(model) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
 
+    const observeModelSwitch =
+      model !== mainLoopModel || mainLoopModelForSession !== null
+        ? prepareModelSwitchObservation()
+        : undefined
+
     clearRouterRateLimitIfModelChanged(
       mainLoopModel,
       mainLoopModelForSession,
@@ -442,6 +462,7 @@ function ModelPickerWrapper({
       mainLoopModel: model,
       mainLoopModelForSession: null,
     }))
+    observeModelSwitch?.('completed')
 
     let message = `Set model to ${chalk.bold(renderModelLabel(model))}`
     if (effort !== undefined) {
@@ -601,9 +622,11 @@ function ModelPickerWrapper({
 function SetModelAndClose({
   args,
   onDone,
+  observeModelSwitch,
 }: {
   args: string
   onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void
+  observeModelSwitch?: ProductFeatureObserver
 }) {
   const isFastMode = useAppState((s: AppState) => s.fastMode)
   const currentMainLoopModel = useAppState((s: AppState) => s.mainLoopModel)
@@ -620,6 +643,7 @@ function SetModelAndClose({
   React.useEffect(() => {
     async function handleModelChange(): Promise<void> {
       if (model && !isModelAllowed(model)) {
+        observeModelSwitch?.('failed')
         onDone(
           `Model '${model}' is not available. Your organization restricts model selection.`,
           {
@@ -630,6 +654,7 @@ function SetModelAndClose({
       }
 
       if (model && isOpus1mUnavailable(model)) {
+        observeModelSwitch?.('failed')
         onDone(
           'Opus 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -639,6 +664,7 @@ function SetModelAndClose({
         return
       }
       if (model && isSonnet1mUnavailable(model)) {
+        observeModelSwitch?.('failed')
         onDone(
           'Sonnet 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -663,11 +689,13 @@ function SetModelAndClose({
         if (valid) {
           setModel(model)
         } else {
+          observeModelSwitch?.('failed')
           onDone(error || `Model '${model}' not found`, {
             display: 'system',
           })
         }
       } catch (error) {
+        observeModelSwitch?.('failed')
         onDone(`Failed to validate model: ${(error as Error).message}`, {
           display: 'system',
         })
@@ -676,6 +704,7 @@ function SetModelAndClose({
 
     function setModel(modelValue: string | null): void {
       const initialModelState = initialModelStateRef.current
+      const changed = modelValue !== initialModelState.mainLoopModel || initialModelState.mainLoopModelForSession !== null
       clearRouterRateLimitIfModelChanged(
         initialModelState.mainLoopModel,
         initialModelState.mainLoopModelForSession,
@@ -686,6 +715,7 @@ function SetModelAndClose({
         mainLoopModel: modelValue,
         mainLoopModelForSession: null,
       }))
+      if (changed) observeModelSwitch?.('completed')
 
       let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`
       let wasFastModeToggledOn: boolean | undefined
@@ -896,12 +926,17 @@ function VerbooModelPicker({
           })
           return
         }
+        const observeModelSwitch =
+          model !== mainLoopModel || mainLoopModelForSession !== null
+            ? prepareModelSwitchObservation()
+            : undefined
         saveLastVerbooModel(model)
         setAppState(prev => ({
           ...prev,
           mainLoopModel: model,
           mainLoopModelForSession: null,
         }))
+        observeModelSwitch?.('completed')
         onDone(`Modelo alterado para ${chalk.bold(model)}.`)
       }}
     />
@@ -937,6 +972,7 @@ async function callVerbooModel(
     return
   }
   if (trimmedArgs) {
+    const observeModelSwitch = prepareModelSwitchObservation()
     try {
       const models = await loadUnlockedModels()
       const model = models.find(candidate => candidate.id === trimmedArgs)
@@ -946,6 +982,9 @@ async function callVerbooModel(
         )
       }
       const current = context.getAppState()
+      const changed =
+        model.id !== current.mainLoopModel ||
+        current.mainLoopModelForSession !== null
       clearRouterRateLimitIfModelChanged(
         current.mainLoopModel,
         current.mainLoopModelForSession,
@@ -957,8 +996,10 @@ async function callVerbooModel(
         mainLoopModel: model.id,
         mainLoopModelForSession: null,
       }))
+      if (changed) observeModelSwitch?.('completed')
       onDone(`Modelo alterado para ${chalk.bold(model.id)}.`)
     } catch (error) {
+      observeModelSwitch?.('failed')
       onDone((error as Error).message, { display: 'system' })
     }
     return
@@ -1079,10 +1120,17 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
   }
 
   if (trimmedArgs) {
+    const observeModelSwitch = prepareModelSwitchObservation()
     logEvent('tengu_model_command_inline', {
       args: trimmedArgs as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     })
-    return <SetModelAndClose args={trimmedArgs} onDone={onDone} />
+    return (
+      <SetModelAndClose
+        args={trimmedArgs}
+        onDone={onDone}
+        observeModelSwitch={observeModelSwitch}
+      />
+    )
   }
 
   const discoveryContext = await loadModelDiscoveryContext()

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ProductAnalyticsClient } from './client.js'
@@ -175,6 +175,8 @@ describe('CLI product analytics', () => {
     expect(f.events).toHaveLength(1)
     const installation = f.events[0]!.installation
     expect(installation).toMatch(/^[a-f0-9]{64}$/)
+    if (process.platform !== 'win32') expect((await stat(join(f.root, 'product-analytics-v1', 'installation'))).mode & 0o777).toBe(0o600)
+    expect(f.events[0]!.raw).not.toContain(installation!)
 
     f.setUser(userB)
     const restarted = f.newClient()
@@ -184,8 +186,8 @@ describe('CLI product analytics', () => {
     await settle()
     expect(f.events).toHaveLength(2)
     expect(f.events[1]!.installation).toBe(installation)
-    expect(installation).not.toContain(userA)
-    expect(installation).not.toContain(userB)
+    expect(installation).not.toBe(subject(userA))
+    expect(installation).not.toBe(subject(userB))
   })
 
   test('keeps queued events local if the installation secret is malformed', async () => {

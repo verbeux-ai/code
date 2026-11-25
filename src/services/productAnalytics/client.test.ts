@@ -22,7 +22,7 @@ async function fixture() {
   let includeOrder = true
   let grantGate: Promise<void> | undefined
   let grantReached: (() => void) | undefined
-  const events: Array<{ token: string; raw: string }> = []
+  const events: Array<{ token: string; raw: string; installation: string | null }> = []
   const primingHeaders: Headers[] = []
   const decisions = new Map([[subject(userA), { decision: 'unknown', revision: 0, decisionOrder: '0' }], [subject(userB), { decision: 'unknown', revision: 0, decisionOrder: '0' }]])
   const fetch: typeof globalThis.fetch = Object.assign(async (
@@ -52,7 +52,7 @@ async function fixture() {
         ...(includeOrder ? { serverOrder: order, serverProof: `v1.${order}.${'a'.repeat(64)}` } : {}) } })
     }
     const raw = String(init?.body), event = JSON.parse(raw) as { eventId: string }
-    events.push({ token, raw })
+    events.push({ token, raw, installation: new Headers(init?.headers).get('X-Verboo-Analytics-Installation') })
     if (failEvents) throw new Error('offline')
     return Response.json({ data: { status: 'accepted', receipt: { eventId: event.eventId,
       payloadSha256: wrongReceipt ? 'f'.repeat(64) : createHash('sha256').update(raw).digest('hex') } } }, { status: 202 })
@@ -161,7 +161,43 @@ describe('CLI product analytics', () => {
     await f.client.flush()
     expect(f.events).toHaveLength(3)
     expect(f.events.every(event => event.token === jwt(userA) && event.raw === f.events[0]!.raw)).toBe(true)
+    expect(f.events[0]!.installation).toMatch(/^[a-f0-9]{64}$/)
+    expect(f.events.every(event => event.installation === f.events[0]!.installation)).toBe(true)
     expect((await readdir(join(f.root, 'product-analytics-v1', subject(userA)))).filter(name => /^[0-9a-f-]{36}\.json$/i.test(name))).toHaveLength(0)
+  })
+
+  test('uses the same anonymous installation after restart and an account switch', async () => {
+    const f = await fixture()
+    await f.client.choose('granted')
+    const first = (await f.client.beginFeature('goal', 'first-action', Date.parse('2026-11-17T12:00:00Z'), userA, f.client.captureCheckpoint()))!
+    await f.client.completeFeature(first, 'completed')
+    await settle()
+    expect(f.events).toHaveLength(1)
+    const installation = f.events[0]!.installation
+    expect(installation).toMatch(/^[a-f0-9]{64}$/)
+
+    f.setUser(userB)
+    const restarted = f.newClient()
+    await restarted.choose('granted')
+    const second = (await restarted.beginFeature('goal', 'second-action', Date.parse('2026-11-17T12:00:00Z'), userB, restarted.captureCheckpoint()))!
+    await restarted.completeFeature(second, 'completed')
+    await settle()
+    expect(f.events).toHaveLength(2)
+    expect(f.events[1]!.installation).toBe(installation)
+    expect(installation).not.toContain(userA)
+    expect(installation).not.toContain(userB)
+  })
+
+  test('keeps queued events local if the installation secret is malformed', async () => {
+    const f = await fixture()
+    await f.client.choose('granted')
+    await writeFile(join(f.root, 'product-analytics-v1', 'installation'), 'invalid')
+    const turn = (await f.client.beginFeature('goal', 'private-action', Date.parse('2026-11-17T12:00:00Z'), userA, f.client.captureCheckpoint()))!
+    await f.client.completeFeature(turn, 'completed')
+    await f.client.flush()
+    await settle()
+    expect(f.events).toHaveLength(0)
+    expect((await readdir(join(f.root, 'product-analytics-v1', subject(userA)))).filter(name => /^[0-9a-f-]{36}\.json$/i.test(name))).toHaveLength(1)
   })
 
   test('revocation blocks locally while offline and prevents old queued events from reappearing', async () => {
@@ -281,7 +317,7 @@ describe('CLI product analytics', () => {
     expect(firstOpens.every(item => item.raw === original)).toBe(true)
   })
 
-  test('concurrent processes share one first-open observation per local account', async () => {
+  test('concurrent clients share one installation and one first-open observation per local account', async () => {
     const f = await fixture()
     const at = Date.parse('2026-11-17T12:00:00Z')
     await f.client.choose('granted')
@@ -291,6 +327,8 @@ describe('CLI product analytics', () => {
     await settle()
     const firstOpens = f.events.map(item => JSON.parse(item.raw)).filter(event => event.name === 'product_first_open_observed')
     expect(new Set(firstOpens.map(event => event.eventId)).size).toBe(1)
+    expect(new Set(f.events.map(item => item.installation)).size).toBe(1)
+    expect(f.events[0]!.installation).toMatch(/^[a-f0-9]{64}$/)
   })
 
   test('does not retroactively observe an open or login before the grant', async () => {

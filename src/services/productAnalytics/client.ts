@@ -97,6 +97,29 @@ export class ProductAnalyticsClient {
     return actor?.subject === subject ? actor.token : undefined
   }
   private directory(subject: string) { if (!hex64.test(subject)) throw new Error('invalid_subject'); return join(this.options.root, 'product-analytics-v1', subject) }
+  private async installationSecret(): Promise<string> {
+    const dir = join(this.options.root, 'product-analytics-v1')
+    const target = join(dir, 'installation')
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    try {
+      const existing = await readFile(target, 'utf8')
+      if (!hex64.test(existing)) throw new Error('invalid_product_installation')
+      return existing
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    const temporary = join(dir, `installation.${randomUUID()}.tmp`)
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(randomBytes(32).toString('hex')); await file.sync() } finally { await file.close() }
+      try { await link(temporary, target) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+    } finally { await unlink(temporary).catch(() => {}) }
+    const secret = await readFile(target, 'utf8')
+    if (!hex64.test(secret)) throw new Error('invalid_product_installation')
+    return secret
+  }
   private async denialToken(subject: string): Promise<string | undefined> {
     try { return (await readFile(join(this.directory(subject), 'denied'), 'utf8')) || 'invalid' }
     catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'inaccessible' }
@@ -350,6 +373,8 @@ export class ProductAnalyticsClient {
     if (!actor || await this.pendingDenial(actor.subject)) return
     const consent = await this.status()
     if (!consent?.enabled || consent.subjectId !== actor.subject || consent.decision !== 'granted' || Date.parse(consent.expiresAt) <= this.now()) return
+    let installation: string
+    try { installation = await this.installationSecret() } catch { return }
     const dir = this.directory(actor.subject)
     const names = await readdir(dir).catch(() => [] as string[])
     for (const name of names.filter(name => name.endsWith('.json') && uuid.test(name.slice(0, -5))).slice(0, 12)) {
@@ -384,7 +409,8 @@ export class ProductAnalyticsClient {
         const timeout = createCombinedAbortSignal(undefined, { timeoutMs: 8000 })
         try {
           const response = await this.fetch(this.options.apiOrigin.replace(/\/$/, '') + '/api/analytics/product-events', { method: 'POST',
-            signal: timeout.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: raw })
+            signal: timeout.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+              'X-Verboo-Analytics-Installation': installation }, body: raw })
           if (response.status !== 202 || !(await this.current(actor.subject))) continue
           const receipt = (await response.json() as { data?: { status?: string; receipt?: { eventId?: string; payloadSha256?: string } } }).data
           if (receipt?.status === 'accepted' && receipt.receipt?.eventId === value.eventId && receipt.receipt.payloadSha256 === sha(raw)) {
